@@ -2,7 +2,7 @@
 // 사용법: node scripts/dev/shot.mjs URL 출력.png [조건 JS] [추가 JS] [폭x높이]
 //   예: node scripts/dev/shot.mjs "http://localhost:4361/?sample" out.png "window.opencad?.active" "" 1400x900
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,6 +26,7 @@ for (let i = 0; i < 50 && !wsUrl; i++) {
 }
 if (!wsUrl) {
   proc.kill();
+  rmSync(profile, { recursive: true, force: true });
   throw new Error('Chrome에 연결하지 못했습니다');
 }
 const ws = new WebSocket(wsUrl);
@@ -78,3 +79,6 @@ console.log(ok ? 'ok' : 'timeout', out);
 for (const l of logs.slice(-20)) console.log(l);
 ws.close();
 proc.kill();
+// Chrome이 프로필을 놓을 때까지 잠깐 기다렸다가 지운다(한 번에 수백 MB)
+await sleep(300);
+rmSync(profile, { recursive: true, force: true });
