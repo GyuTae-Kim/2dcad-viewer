@@ -116,6 +116,11 @@ async function autosaveTick(app: App, force = false): Promise<number> {
       if (!st.session?.dirty) continue;
       const prev = last.get(st);
       if (prev && prev.gen === st.gen) continue;
+      // 처음 바뀐 도면은 그때부터 SAVETIME 뒤에(AutoCAD와 같다)
+      if (!prev && !force) {
+        last.set(st, { gen: -1, at: Date.now() });
+        continue;
+      }
       const due = force || !prev || Date.now() - prev.at >= minutes * 60_000;
       if (!due) continue;
       const t = sameFormat(st) ?? { format: 'dxf' as const, version: 'AC1032', binary: false };
