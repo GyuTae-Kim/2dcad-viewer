@@ -5,6 +5,7 @@ import type { DisplayList, EntityBox } from '../render/displaylist';
 import { SceneBuilder } from '../render/build';
 import type { TextEngine } from '../text/layout';
 import type { LayerState, PlotStyle, StyleSpec } from '../render/styles';
+import type { CtbTable } from '../render/ctb';
 import { HIDDEN_STYLE, StyleTable, resolveStyles } from '../render/styles';
 import type { GLRenderer, GpuScene } from '../render/webgl';
 import type { SceneMessage } from '../worker/protocol';
@@ -34,11 +35,11 @@ export class SpaceScene {
   }
 
   /** 스타일 표(도면층 상태·배경·뷰포트 동결 기준). 같은 조건이면 캐시를 쓴다. */
-  styleData(layers: LayerState[], key: string, dark: boolean, bg: number, lwDisplay: boolean, vpFrozen?: Set<number>, plot?: PlotStyle): Float32Array {
-    const k = `${key}|${dark}|${bg}|${lwDisplay}|${vpFrozen ? [...vpFrozen].join(',') : ''}|${plot ?? ''}`;
+  styleData(layers: LayerState[], key: string, dark: boolean, bg: number, lwDisplay: boolean, vpFrozen?: Set<number>, plot?: PlotStyle, ctb?: CtbTable): Float32Array {
+    const k = `${key}|${dark}|${bg}|${lwDisplay}|${vpFrozen ? [...vpFrozen].join(',') : ''}|${plot ?? ''}|${ctb?.name ?? ''}`;
     let d = this.styleCache.get(k);
     if (!d) {
-      d = resolveStyles(this.styles, layers, { darkBackground: dark, backgroundRgb: bg, showLineweight: lwDisplay, defaultLineweight: 25, viewportFrozen: vpFrozen, plot: plot ? { style: plot } : undefined });
+      d = resolveStyles(this.styles, layers, { darkBackground: dark, backgroundRgb: bg, showLineweight: lwDisplay, defaultLineweight: 25, viewportFrozen: vpFrozen, plot: plot || ctb ? { style: plot ?? 'color', ctb } : undefined });
       this.styleCache.set(k, d);
     }
     return d;

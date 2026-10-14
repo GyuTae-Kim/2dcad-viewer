@@ -3,6 +3,7 @@
  * PDF는 직접 쓴다(선·채움만, 문자는 모양 그대로 그린다).
  */
 import { MODEL_SPACE } from '../core/model';
+import type { CtbTable } from '../render/ctb';
 import type { DisplayList } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
 import type { App } from './app';
@@ -123,6 +124,8 @@ export interface Page {
 
 export interface PageOptions {
   plotStyle?: PlotStyle;
+  /** 플롯 스타일 표(CTB): 있으면 ACI별 펜으로 색·선가중치를 정한다 */
+  ctb?: CtbTable;
   /** 선가중치 출력 */
   lineweights: boolean;
 }
@@ -134,7 +137,7 @@ export function modelPage(st: DocState, rect: [number, number, number, number], 
   const [x0, y0, x1, y1] = rect;
   const cx = (x0 + x1) / 2;
   const cy = (y0 + y1) / 2;
-  const styles = scene.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle ? 'plot' : 'export', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle);
+  const styles = scene.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle || opt.ctb ? 'plot' : 'export', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb);
   const m: Affine = [k, 0, 0, -k, width / 2 - cx * k, height / 2 + cy * k];
   const page: Page = { width, height, background: 0xffffff, lwScale: unitsPerMm, layers: [] };
   const L: Page['layers'][number] = { scene, m, styles, clipWorld: [x0, y0, x1, y1] };
@@ -178,7 +181,7 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
       page.layers.push({
         scene: model,
         m,
-        styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle),
+        styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle || opt.ctb ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle, opt.ctb),
         clipPx: [cx - hw * k, cy - hh * k, cx + hw * k, cy + hh * k],
         clipWorld: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
         // 다각형·원 뷰포트 경계(출력 좌표)
@@ -186,7 +189,7 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
       });
     }
   }
-  if (scene) page.layers.push({ scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(space), opt.plotStyle ? 'paper-plot' : 'paper', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle) });
+  if (scene) page.layers.push({ scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(space), opt.plotStyle || opt.ctb ? 'paper-plot' : 'paper', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb) });
   return page;
 }
 

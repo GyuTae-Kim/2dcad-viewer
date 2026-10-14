@@ -7,6 +7,7 @@ import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { type Page, type PageOptions, PT_PER_MM, baseName, download, exportPageSvg, layoutPage, modelPage, pdfDocument } from './export';
 import { form } from './ui/dom';
+import { ctbByName, ctbList, pickCtbFiles } from './ctblib';
 
 /** 용지(mm, 세로 방향 폭 × 높이) */
 export const PAPERS: { key: string; label: string; w: number; h: number }[] = [
@@ -46,6 +47,8 @@ export interface PlotSettings {
   landscape: boolean;
   scale: string;
   plotStyle: PlotStyle;
+  /** 불러온 플롯 스타일 표(CTB) 이름. 있으면 plotStyle 대신 쓴다 */
+  ctb?: string;
   lineweights: boolean;
   format: 'pdf' | 'svg';
   margin: number;
@@ -86,13 +89,18 @@ function modelPlotPage(app: App, st: DocState, s: PlotSettings, unitsPerMm: numb
   const hw = (pw - 2 * s.margin) / 2 / mmPerUnit;
   const hh = (ph - 2 * s.margin) / 2 / mmPerUnit;
   const area: [number, number, number, number] = s.scale === 'fit' ? rect : [cx - hw, cy - hh, cx + hw, cy + hh];
-  return modelPage(st, area, pw * unitsPerMm, ph * unitsPerMm, mmPerUnit * unitsPerMm, unitsPerMm, { plotStyle: s.plotStyle, lineweights: s.lineweights });
+  return modelPage(st, area, pw * unitsPerMm, ph * unitsPerMm, mmPerUnit * unitsPerMm, unitsPerMm, pageOptions(s));
+}
+
+function pageOptions(s: PlotSettings): PageOptions {
+  const ctb = ctbByName(s.ctb);
+  return ctb ? { ctb, lineweights: s.lineweights } : { plotStyle: s.plotStyle, lineweights: s.lineweights };
 }
 
 /** 설정대로 페이지들을 만든다(배치 장면이 없으면 그려 온다) */
 export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Promise<Page[]> {
   await app.edits.flush(st);
-  const opt: PageOptions = { plotStyle: s.plotStyle, lineweights: s.lineweights };
+  const opt = pageOptions(s);
   const pages: Page[] = [];
   if (s.what === 'layouts') {
     const lays = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).sort((a, b) => a.tabOrder - b.tabOrder);
@@ -134,6 +142,8 @@ export function registerPlotCommands(app: App): void {
       const layoutCount = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).length;
       const prev = lastSettings.get(st);
       const metric = !!st.units.measurement;
+      const sheet = st.layoutFor(st.space)?.plot.styleSheet;
+      const sheetCtb = ctbByName(sheet);
       const v = await form(
         '플롯',
         [
@@ -160,11 +170,13 @@ export function registerPlotCommands(app: App): void {
             key: 'plotStyle',
             label: '플롯 스타일',
             type: 'select',
-            value: prev?.plotStyle ?? styleSheetPlotStyle(st.layoutFor(st.space)?.plot.styleSheet) ?? 'mono',
+            value: prev?.ctb ? `ctb:${prev.ctb}` : (prev?.plotStyle ?? (sheetCtb ? `ctb:${sheetCtb.name}` : (styleSheetPlotStyle(sheet) ?? 'mono'))),
             options: [
               { value: 'mono', label: 'monochrome (흑백)' },
               { value: 'gray', label: 'grayscale (회색조)' },
               { value: 'color', label: '색 그대로' },
+              ...ctbList().map((t) => ({ value: `ctb:${t.name}`, label: `${t.name} (불러온 플롯 스타일 표)` })),
+              { value: 'load', label: 'CTB 파일 불러오기…' },
             ],
           },
           { key: 'lineweights', label: '선가중치 출력', type: 'check', value: prev?.lineweights ?? true },
@@ -182,12 +194,24 @@ export function registerPlotCommands(app: App): void {
         { ok: '플롯', note: '파일은 이 컴퓨터에서 만들어 바로 내려받습니다. 플롯하지 않는 도면층과 Defpoints는 빠집니다.' },
       );
       if (!v) return;
+      let styleKey = String(v.plotStyle);
+      if (styleKey === 'load') {
+        const loaded = await pickCtbFiles();
+        if (!loaded.length) {
+          ctx.print('CTB 파일을 읽지 못했습니다. 색 그대로 출력합니다.', 'err');
+          styleKey = 'color';
+        } else {
+          ctx.print(`플롯 스타일 표 ${loaded.map((t) => t.name).join(', ')}을(를) 불러왔습니다.`);
+          styleKey = `ctb:${loaded[0]!.name}`;
+        }
+      }
       const s: PlotSettings = {
         what: v.what as PlotSettings['what'],
         paper: String(v.paper),
         landscape: !!v.landscape,
         scale: String(v.scale),
-        plotStyle: v.plotStyle as PlotStyle,
+        plotStyle: styleKey.startsWith('ctb:') ? 'color' : (styleKey as PlotStyle),
+        ctb: styleKey.startsWith('ctb:') ? styleKey.slice(4) : undefined,
         lineweights: !!v.lineweights,
         format: v.format as 'pdf' | 'svg',
         margin: 5,

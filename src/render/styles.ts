@@ -3,7 +3,8 @@
  * 도면층 색·켜기/끄기·배경색이 바뀌면 다시 만들지 않고 이 표만 다시 계산한다.
  */
 import type { CadDocument } from '../core/model';
-import { aciToRgb } from '../core/color';
+import { aciToRgb, nearestAci } from '../core/color';
+import { type CtbPen, type CtbTable, penColor } from './ctb';
 
 export const enum ColorKind {
   /** 고정 RGB */
@@ -117,8 +118,8 @@ export interface ResolveOptions {
   defaultLineweight: number;
   /** 뷰포트별로 동결한 도면층 번호 */
   viewportFrozen?: Set<number>;
-  /** 출력(플롯): 플롯하지 않는 도면층과 Defpoints를 빼고, 플롯 스타일로 색을 바꾼다 */
-  plot?: { style: PlotStyle };
+  /** 출력(플롯): 플롯하지 않는 도면층과 Defpoints를 빼고, 플롯 스타일로 색을 바꾼다(CTB가 있으면 ACI별 펜) */
+  plot?: { style: PlotStyle; ctb?: CtbTable };
 }
 
 /** 플롯 스타일: 색 그대로, 흑백(monochrome), 회색조(grayscale) */
@@ -160,7 +161,18 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
       default:
         rgb = opt.backgroundRgb;
     }
-    if (opt.plot) rgb = plotColor(rgb, opt.plot.style);
+    let pen: CtbPen | undefined;
+    if (opt.plot?.ctb) {
+      // 객체의 ACI(도면층별이면 도면층 색, 트루컬러면 가장 가까운 ACI)로 펜을 고른다
+      let aci = 7;
+      if (s.colorKind === ColorKind.Aci) aci = s.color;
+      else if (s.colorKind === ColorKind.Layer) {
+        const cl = layers[s.color];
+        aci = cl ? (cl.hasRgb ? nearestAci(cl.rgb) : cl.aci) : 7;
+      } else if (s.colorKind === ColorKind.Rgb) aci = nearestAci(s.color);
+      pen = opt.plot.ctb.pens[Math.max(1, Math.min(255, Math.abs(aci) || 7)) - 1];
+      if (pen) rgb = penColor(pen, rgb);
+    } else if (opt.plot) rgb = plotColor(rgb, opt.plot.style);
     let visible = L ? L.on && !L.frozen : true;
     if (opt.plot && L && (L.plot === false || L.name.toUpperCase() === 'DEFPOINTS')) visible = false;
     if (visible && opt.viewportFrozen?.has(s.layer)) visible = false;
@@ -176,6 +188,7 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
     else if (s.widthKind === WidthKind.Layer) lw = layers[s.width]?.lineweight ?? -3;
     else lw = -3;
     if (lw < 0) lw = opt.defaultLineweight;
+    if (pen?.lineweight != null) lw = pen.lineweight * 100;
     if (s.flags & STYLE_FLAG_HIDDEN) visible = false;
     const alpha = s.alpha < 0 ? (L?.transparency ?? 255) : s.alpha;
     const o = i * 8;
