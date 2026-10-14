@@ -115,6 +115,8 @@ export interface DisplayList {
   images?: ImageDraw[];
   /** 외부 참조 인스턴스(참조 파일을 연결했을 때 그 모형 장면을 이 변환으로 그린다) */
   xrefs?: XrefDraw[];
+  /** 선종류 무늬(점선 등)를 입힌 객체가 있으면 참(PSLTSCALE용 뷰포트 장면이 필요한지) */
+  dashed?: boolean;
 }
 
 /** 외부 참조 하나: 참조 모형 좌표 → 이 공간 좌표 2D 아핀 [a, b, c, d, e, f] */
@@ -384,6 +386,8 @@ export class DisplayListBuilder {
   }
 
   private images: ImageDraw[] = [];
+  /** 선종류 무늬를 입혔는지 */
+  dashed = false;
 
   /** 래스터 이미지(월드 좌표 [x, y, u, v, …] 삼각형) */
   image(key: string, tris: number[], style: number, opt: { brightness: number; contrast: number; fade: number; transparent: boolean }): void {
@@ -623,6 +627,7 @@ export class DisplayListBuilder {
       xlineHandles: this.xlineHandles,
       images: this.images.length ? this.images : undefined,
       xrefs: this.xrefs.length ? this.xrefs : undefined,
+      dashed: this.dashed || undefined,
     };
   }
 }

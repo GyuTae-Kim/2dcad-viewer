@@ -7,7 +7,7 @@ import type { EditOp } from '../edit/session';
 export type ToWorker =
   | { type: 'init'; fontBase: string }
   | { type: 'open'; id: number; name: string; data: ArrayBuffer }
-  | { type: 'build'; id: number; docId: number; space: string }
+  | { type: 'build'; id: number; docId: number; space: string; ltFactor?: number }
   /** 메인에서 적용한 편집을 워커 문서에도 적용한다(응답 없음) */
   | { type: 'edit'; docId: number; ops: EditOp[] }
   | { type: 'close'; docId: number }

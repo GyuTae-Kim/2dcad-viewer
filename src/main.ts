@@ -94,7 +94,7 @@ app.register({
   aliases: ['EXPORTSVG'],
   title: 'SVG로 내보내기',
   async run(ctx) {
-    const b = exportSvg(app);
+    const b = await exportSvg(app);
     if (!b) return;
     download(b, `${baseName(app.active!.name)}.svg`);
     ctx.print(app.active!.isModel ? '지금 화면 범위를 SVG로 저장했습니다.' : '배치 용지를 SVG로 저장했습니다(단위 mm).');

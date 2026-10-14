@@ -31,9 +31,9 @@ function post(msg: FromWorker, transfer: Transferable[] = []): void {
 /** 파일이 연결된 래스터 이미지 */
 let imageKeys: ReadonlySet<string> = new Set();
 
-function makeScene(doc: CadDocument, space: string): SceneMessage {
+function makeScene(doc: CadDocument, space: string, ltFactor?: number): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys });
+  const s = buildSpace(doc, space, { text, images: imageKeys, ltFactor });
   return {
     list: s.list,
     styles: s.styles.specs,
@@ -128,7 +128,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       case 'build': {
         const doc = docs.get(msg.docId);
         if (!doc) throw new Error('문서가 없습니다');
-        const scene = makeScene(doc, msg.space);
+        const scene = makeScene(doc, msg.space, msg.ltFactor);
         post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, transferables(scene.list));
         break;
       }

@@ -57,6 +57,8 @@ export interface BuildOptions {
   text: TextEngine;
   /** 파일이 연결된 래스터 이미지 열쇠(imageKey) */
   images?: ReadonlySet<string>;
+  /** 선종류 축척에 곱할 값(PSLTSCALE: 배치 뷰포트에서 무늬를 종이 단위로 맞출 때 1 / 뷰포트 축척) */
+  ltFactor?: number;
   /** 곡선 정밀도(도면 단위). 없으면 도면 범위로 정한다 */
   tolerance?: number;
   /** 해치 무늬 선 상한 */
@@ -145,7 +147,7 @@ export class SceneBuilder {
       const v = doc.header.get(k);
       return typeof v === 'number' && Number.isFinite(v) ? v : d;
     };
-    this.ltscale = num('$LTSCALE', 1) || 1;
+    this.ltscale = (num('$LTSCALE', 1) || 1) * (opt.ltFactor && opt.ltFactor > 0 ? opt.ltFactor : 1);
     this.pdmode = num('$PDMODE', 0);
     this.pdsize = num('$PDSIZE', 0);
     this.fill = num('$FILLMODE', 1) !== 0;
@@ -274,6 +276,7 @@ export class SceneBuilder {
       this.out.polyline(pts, closed, r.style);
       return;
     }
+    this.out.dashed = true;
     dashPolyline(
       pts,
       closed,

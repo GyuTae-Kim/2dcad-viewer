@@ -119,11 +119,11 @@ export class EngineClient {
     });
   }
 
-  build(docId: number, space: string): Promise<SceneMessage> {
+  build(docId: number, space: string, ltFactor?: number): Promise<SceneMessage> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.post({ type: 'build', id, docId, space });
+      this.post({ type: 'build', id, docId, space, ltFactor });
     });
   }
 }

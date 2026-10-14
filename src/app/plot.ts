@@ -1,6 +1,7 @@
 /**
  * 출력: PLOT(용지·축척·플롯 스타일을 골라 PDF·SVG로), PUBLISH(모든 배치를 한 PDF로)
  */
+import { ensureLayoutVariants } from './psltscale';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import type { PlotStyle } from '../render/styles';
 import type { App, CommandContext } from './app';
@@ -107,12 +108,14 @@ export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPe
     if (lays.length) await app.ensureScene(st, MODEL_SPACE);
     for (const l of lays) {
       await app.ensureScene(st, l.blockName);
+      await ensureLayoutVariants(app, st, l.blockName);
       const p = layoutPage(st, tableKey(l.blockName), unitsPerMm, opt);
       if (p) pages.push(p);
     }
     return pages;
   }
   if (s.what === 'layout' && !st.isModel) {
+    await ensureLayoutVariants(app, st, st.space);
     const p = layoutPage(st, st.space, unitsPerMm, opt);
     if (p) pages.push(p);
     return pages;

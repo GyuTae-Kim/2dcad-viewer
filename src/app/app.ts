@@ -1,6 +1,7 @@
 /**
  * 앱 컨트롤러: 문서·화면·명령·선택·스냅을 묶는다.
  */
+import { viewportModel } from './psltscale';
 import type { Entity } from '../core/model';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import { errorMessage } from '../core/errors';
@@ -178,8 +179,12 @@ export class App {
       this.view.requestOverlay();
     };
     this.view.onRestore = () => {
-      for (const d of this.docs) for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
+      for (const d of this.docs) {
+        for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
+        for (const v of d.ltVariants.values()) v.scene.reupload(this.view.renderer);
+      }
     };
+    this.view.viewportModel = (st, vx) => viewportModel(this, st, vx);
     window.addEventListener('keydown', (ev) => this.onKey(ev));
     window.addEventListener('beforeunload', (ev) => {
       if (this.docs.some((d) => d.session?.dirty)) ev.preventDefault();

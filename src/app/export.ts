@@ -2,6 +2,7 @@
  * 내보내기: PNG(화면 그대로), SVG·PDF(벡터, 표시 목록에서).
  * PDF는 직접 쓴다(선·채움만, 문자는 모양 그대로 그린다).
  */
+import { ensureLayoutVariants, viewportModel } from './psltscale';
 import { MODEL_SPACE } from '../core/model';
 import { imageDataUrl, imagePixels, xrefOfDoc } from './refs';
 import type { CtbTable } from '../render/ctb';
@@ -176,11 +177,13 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
   // 용지 1단위 = mmPerUnit mm
   const k = paper.mmPerUnit * unitsPerMm;
   const page: Page = { width: pw * k, height: ph * k, background: 0xffffff, lwScale: unitsPerMm, layers: [] };
-  const model = st.scenes.get(MODEL_SPACE);
-  if (model) {
-    const idx = st.sceneLayerIndex(MODEL_SPACE);
+  if (st.scenes.has(MODEL_SPACE)) {
     for (const vp of layoutViewports(st.doc, lay)) {
       const vx = viewportXf(st.doc, vp);
+      const vm = viewportModel(null, st, vx);
+      if (!vm) continue;
+      const model = vm.scene;
+      const idx = vm.index;
       const frozen = new Set<number>();
       for (const n of vx.frozen) {
         const i = idx.get(n);
@@ -200,7 +203,7 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
       const vl: Page['layers'][number] = {
         scene: model,
         m,
-        styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle || opt.ctb ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle, opt.ctb),
+        styles: model.styleData(vm.layers, opt.plotStyle || opt.ctb ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle, opt.ctb),
         clipPx: [cx - hw * k, cy - hh * k, cx + hw * k, cy + hh * k],
         clipWorld: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
         // 다각형·원 뷰포트 경계(출력 좌표)
@@ -241,10 +244,11 @@ function css(styles: Float32Array, s: number): string {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
-export function exportSvg(app: App): Blob | null {
+export async function exportSvg(app: App): Promise<Blob | null> {
   // SVG 단위 = mm(배치) 또는 화면 픽셀(모형)
   const st = app.active;
   if (!st) return null;
+  if (!st.isModel) await ensureLayoutVariants(app, st, st.space);
   const page = pageFor(app, 1);
   if (!page) return null;
   return exportPageSvg(page, st.isModel ? 'px' : 'mm');
@@ -370,6 +374,7 @@ export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
 export async function exportPdf(app: App): Promise<Blob | null> {
   const st = app.active;
   if (!st) return null;
+  if (!st.isModel) await ensureLayoutVariants(app, st, st.space);
   // 모형: 지금 화면을 A3 가로(420 mm) 폭에 맞춘다
   const page = pageFor(app, PT_PER_MM, st.isModel ? 420 * PT_PER_MM : undefined);
   if (!page) return null;

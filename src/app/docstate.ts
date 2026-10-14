@@ -1,4 +1,5 @@
 /** 열린 도면 하나의 상태(메인 스레드) */
+import type { LtVariant } from './psltscale';
 import type { CadDocument, Layout } from '../core/model';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import { type UnitSettings, unitSettings } from '../core/units';
@@ -37,6 +38,9 @@ export class DocState {
   /** 도면층 이름(대문자) → 상태(모든 공간이 함께 쓴다) */
   readonly layers = new Map<string, LayerState>();
   readonly scenes = new Map<string, SpaceScene>();
+  /** PSLTSCALE: 뷰포트 축척별 모형 장면(선종류 배율 → 장면). 편집하면 버린다 */
+  readonly ltVariants = new Map<string, LtVariant>();
+  readonly ltPending = new Map<string, Promise<SpaceScene | null>>();
   /** 공간별 장면의 도면층 이름 목록(스타일 표의 도면층 번호 순) */
   private readonly sceneLayerNames = new Map<string, string[]>();
   readonly cameras = new Map<string, Camera>();
@@ -120,7 +124,15 @@ export class DocState {
     for (const s of this.scenes.values()) s.invalidateStyles();
   }
 
+  /** 선종류 배율 장면을 버린다 */
+  dropLtVariants(renderer: GLRenderer): void {
+    for (const v of this.ltVariants.values()) v.scene.dispose(renderer);
+    this.ltVariants.clear();
+    this.ltPending.clear();
+  }
+
   dispose(renderer: GLRenderer): void {
+    this.dropLtVariants(renderer);
     for (const s of this.scenes.values()) s.dispose(renderer);
     for (const e of this.edits.values()) e.overlay?.dispose(renderer);
     this.scenes.clear();

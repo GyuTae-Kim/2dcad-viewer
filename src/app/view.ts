@@ -1,6 +1,7 @@
 /**
  * 도면 영역: 카메라(확대·이동), WebGL 그리기, 배치·뷰포트, 오버레이(커서·선택·스냅·고무줄).
  */
+import type { ViewportModel } from './psltscale';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
@@ -115,6 +116,8 @@ export class CadView {
   onRestore: (() => void) | null = null;
   /** 외부 참조 장면(앱이 연결한 참조 파일). 문서 번호·참조 블록 이름(대문자)으로 찾는다 */
   xrefScene: ((docId: number, key: string) => { scene: SpaceScene; layers: LayerState[] } | null) | null = null;
+  /** 뷰포트에서 쓸 모형 장면(PSLTSCALE 변형 포함) */
+  viewportModel: ((st: DocState, vx: ViewportXf) => ViewportModel | null) | null = null;
 
   /**
    * 표시 목록의 외부 참조 인스턴스를 그린다(참조 장면을 인스턴스 변환으로).
@@ -412,13 +415,11 @@ export class CadView {
     r.screenFill(quad(ax + sh, ay + sh, bx + sh, by + sh), [0, 0, 0, 0.45]);
     r.screenFill(quad(ax, ay, bx, by), [1, 1, 1, 1]);
     const lwScale = (this.camera().scale * this.dpr) / paper.mmPerUnit;
-    const model = s.scenes.get(MODEL_SPACE);
-    if (model) {
-      const vps = layoutViewports(s.doc, lay);
-      const layerIdx = s.sceneLayerIndex(MODEL_SPACE);
-      for (const vp of vps) {
+    if (s.scenes.has(MODEL_SPACE)) {
+      for (const vp of layoutViewports(s.doc, lay)) {
         const vx = viewportXf(s.doc, vp);
-        this.drawViewport(vx, model, layerIdx, lwScale);
+        const vm = this.viewportModel ? this.viewportModel(s, vx) : null;
+        if (vm) this.drawViewport(vx, vm, lwScale);
       }
     }
     r.scissor(null);
@@ -444,8 +445,9 @@ export class CadView {
     r.draw(ov.gpu, xf, { lwScale, visible: visible ?? undefined });
   }
 
-  private drawViewport(vx: ViewportXf, model: NonNullable<ReturnType<DocState['scenes']['get']>>, layerIdx: Map<string, number>, lwScale: number): void {
-    const s = this.state!;
+  private drawViewport(vx: ViewportXf, vm: ViewportModel, lwScale: number): void {
+    const model = vm.scene;
+    const layerIdx = vm.index;
     const r = this.renderer;
     const vp = vx.vp;
     const hw = vp.width / 2;
@@ -476,7 +478,7 @@ export class CadView {
       const i = layerIdx.get(n);
       if (i !== undefined) frozen.add(i);
     }
-    r.setStyles(model.styleData(s.sceneLayers(MODEL_SPACE), 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined));
+    r.setStyles(model.styleData(vm.layers, 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined));
     const cam = this.camera();
     const ps = cam.scale * this.dpr; // 종이 단위 → 장치 픽셀
     const k = ps * vx.k;
@@ -491,7 +493,7 @@ export class CadView {
     const vis: [number, number, number, number] = [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad];
     // 모형의 외부 참조(뷰포트 안). 다각형 뷰포트의 스텐실과 겹치지 않게 XCLIP 없는 것만 자르기 없이
     if (model.source.xrefs?.length) {
-      const styles = model.styleData(s.sceneLayers(MODEL_SPACE), 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined);
+      const styles = model.styleData(vm.layers, 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined);
       const toS = (x: number, y: number): [number, number] => [A[0] * (x - xf.refX) + A[2] * (y - xf.refY) + xf.tx, A[1] * (x - xf.refX) + A[3] * (y - xf.refY) + xf.ty];
       if (this.drawXrefs(vx.clip ? { ...model.source, xrefs: model.source.xrefs.map((q) => ({ ...q, clip: undefined })) } : model.source, xf, lwScale, false, 0xffffff, styles, toS)) {
         r.setStyles(styles);
