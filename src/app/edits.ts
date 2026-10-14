@@ -6,7 +6,7 @@
 import type { Entity } from '../core/model';
 import { tableKey } from '../core/model';
 import { unitSettings } from '../core/units';
-import { type ChangeSummary, EditSession, type Transaction, isLayoutBlock } from '../edit/session';
+import { type ChangeSummary, EditSession, type Transaction } from '../edit/session';
 import type { App } from './app';
 import type { DocState } from './docstate';
 import { OverlayScene } from './scene';
@@ -48,8 +48,8 @@ export class EditManager {
     if (app.lastCreated.length > 50) app.lastCreated.splice(0, app.lastCreated.length - 50);
     const renderer = app.view.renderer;
     for (const [space, ch] of sum.spaces) {
-      // 블록 정의 안의 변경은 블록 편집기로 열려 있을 때만 덧그린다
-      if (!isLayoutBlock(space) && !st.scenes.has(space)) continue;
+      // 아직 그리지 않은 공간(처음 여는 배치, 열지 않은 블록)은 나중에 워커가 편집된 문서로 그린다
+      if (!st.scenes.has(space)) continue;
       const ed = st.spaceEdits(space);
       const base = st.scenes.get(space);
       const dead = this.deadOf(st, space);
@@ -68,6 +68,12 @@ export class EditManager {
       this.rebuildOverlay(st, space, [...ch.removed, ...ch.changed.map((e) => e.handle)]);
     }
     if (sum.tablesChanged || sum.layersChanged) this.syncLayers(st);
+    if (sum.layoutsChanged) {
+      // 보고 있던 배치가 없어졌으면 모형으로
+      if (!st.blockEdit && !st.isModel && !st.layoutFor(st.space)) st.space = tableKey('*Model_Space');
+      app.ui.refreshLayouts();
+      app.view.setState(st);
+    }
     if (tx.ops.some((o) => o.kind === 'header' && /^\$(LUNITS|LUPREC|AUNITS|AUPREC|INSUNITS|ANGBASE|ANGDIR|MEASUREMENT)$/.test(o.name))) st.units = unitSettings(st.doc);
     // 지워진 객체는 선택에서 뺀다
     for (const h of [...st.selection]) if (!st.doc.entityIndex.has(h)) st.selection.delete(h);

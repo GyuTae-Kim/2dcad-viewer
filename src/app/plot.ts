@@ -23,6 +23,15 @@ export const PAPERS: { key: string; label: string; w: number; h: number }[] = [
   { key: 'ANSIE', label: 'ANSI E (34 × 44 in)', w: 863.6, h: 1117.6 },
 ];
 
+/** 플롯 스타일 표(CTB) 이름 → 출력 색 처리 */
+export function styleSheetPlotStyle(name: string | undefined): PlotStyle | null {
+  const n = (name ?? '').toLowerCase();
+  if (!n) return null;
+  if (n.startsWith('monochrome')) return 'mono';
+  if (n.startsWith('grayscale')) return 'gray';
+  return 'color';
+}
+
 const SCALES = ['fit', '1:1', '1:2', '1:5', '1:10', '1:20', '1:25', '1:50', '1:100', '1:200', '1:500', '1:1000', '2:1', '5:1', '10:1'];
 
 /** 도면 단위 1이 몇 mm인지(INSUNITS) */
@@ -151,7 +160,7 @@ export function registerPlotCommands(app: App): void {
             key: 'plotStyle',
             label: '플롯 스타일',
             type: 'select',
-            value: prev?.plotStyle ?? 'mono',
+            value: prev?.plotStyle ?? styleSheetPlotStyle(st.layoutFor(st.space)?.plot.styleSheet) ?? 'mono',
             options: [
               { value: 'mono', label: 'monochrome (흑백)' },
               { value: 'gray', label: 'grayscale (회색조)' },

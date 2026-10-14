@@ -7,6 +7,7 @@ import { registerEditCommands } from './app/editcmds';
 import { registerTableCommands } from './app/tables';
 import { registerPlotCommands } from './app/plot';
 import { registerAnnotateCommands } from './app/annotate';
+import { registerLayoutCommands } from './app/layoutcmds';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -38,6 +39,7 @@ registerEditCommands(app);
 registerTableCommands(app);
 registerPlotCommands(app);
 registerAnnotateCommands(app);
+registerLayoutCommands(app);
 
 app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pickFiles() });
 app.register({

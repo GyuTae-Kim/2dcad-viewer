@@ -4,7 +4,7 @@
  *
  * 변경 = 작업(op) 목록. 각 작업은 앞뒤 상태를 모두 담아 되돌리기가 그대로 반대 작업이다.
  */
-import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Linetype, TextStyle, DimStyle } from '../core/model';
+import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Layout, LayoutObject, Linetype, TextStyle, DimStyle } from '../core/model';
 import { tableKey, normalizeHandle } from '../core/model';
 
 export type EditOp =
@@ -22,7 +22,9 @@ export type EditOp =
   | { kind: 'blockRecord'; key: string; before: BlockRecord | null; after: BlockRecord | null }
   /** 객체(사전·배치·이미지 정의 등). key = 핸들 */
   | { kind: 'object'; key: string; before: CadObject | null; after: CadObject | null }
-  | { kind: 'header'; name: string; before: HeaderValue | undefined; after: HeaderValue | undefined };
+  | { kind: 'header'; name: string; before: HeaderValue | undefined; after: HeaderValue | undefined }
+  /** 배치(모형·종이 공간 탭). key = 배치 블록 이름(대문자). 같은 핸들의 LAYOUT 객체도 맞춘다 */
+  | { kind: 'layout'; key: string; before: Layout | null; after: Layout | null };
 
 export interface Transaction {
   /** 명령 이름(명령 취소 메시지용) */
@@ -44,6 +46,8 @@ export interface ChangeSummary {
   tablesChanged: boolean;
   /** 도면층 상태(켜기·동결·색 등)가 바뀌었으면(스타일 표만 다시 만들면 된다) */
   layersChanged: boolean;
+  /** 배치가 생기거나 없어지거나 바뀌었으면(배치 탭·용지) */
+  layoutsChanged?: boolean;
 }
 
 function invert(op: EditOp): EditOp {
@@ -168,6 +172,18 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
         if (op.after === undefined) doc.header.delete(op.name);
         else doc.header.set(op.name, op.after);
         break;
+      case 'layout': {
+        const i = doc.layouts.findIndex((l) => tableKey(l.blockName) === op.key);
+        if (op.after) {
+          if (i >= 0) doc.layouts[i] = op.after;
+          else doc.layouts.push(op.after);
+          const obj = doc.objects.get(op.after.handle);
+          if (obj?.type === 'LAYOUT') doc.objects.set(op.after.handle, { ...(obj as LayoutObject), layout: op.after });
+        } else if (i >= 0) doc.layouts.splice(i, 1);
+        doc.layouts.sort((a, b) => a.tabOrder - b.tabOrder);
+        if (summary) summary.layoutsChanged = true;
+        break;
+      }
     }
   }
 }

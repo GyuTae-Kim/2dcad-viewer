@@ -694,6 +694,27 @@ export class Shell implements UiHooks {
       const label = key === MODEL_SPACE ? '모형' : l.name;
       const b = h('button', { class: `layouttab ${st.space === key ? 'active' : ''}` }, label);
       b.addEventListener('click', () => void app.setSpace(l.blockName));
+      b.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        const paper = key !== MODEL_SPACE;
+        const go = async (cmd: string, arg?: string) => {
+          if (paper && st.space !== key) await app.setSpace(l.blockName);
+          void app.run(cmd, arg);
+        };
+        showMenu(ev.clientX, ev.clientY - (paper ? 190 : 80), [
+          { label: '새 배치', run: () => void app.run('LAYOUT', 'N') },
+          ...(paper
+            ? [
+                { label: '배치 복사…', run: () => void go('LAYOUT', 'C') },
+                { label: '이름 바꾸기…', run: () => void go('LAYOUT', 'R') },
+                { label: '삭제', run: () => void go('LAYOUT', 'D') },
+              ]
+            : []),
+          { separator: true },
+          { label: '페이지 설정…', run: () => void go('PAGESETUP') },
+          { label: '플롯…', run: () => void go('PLOT') },
+        ]);
+      });
       this.layoutTabs.append(b);
     }
   }
