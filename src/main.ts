@@ -19,6 +19,7 @@ import { registerViewportCommands } from './app/vpcmds';
 import { registerViewCommands } from './app/viewcmds';
 import { registerDraftingCommands } from './app/drafting';
 import { registerUcsCommands } from './app/ucs';
+import { registerLayerToolCommands } from './app/laytools';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -62,6 +63,7 @@ registerViewportCommands(app);
 registerViewCommands(app);
 registerDraftingCommands(app);
 registerUcsCommands(app);
+registerLayerToolCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);
