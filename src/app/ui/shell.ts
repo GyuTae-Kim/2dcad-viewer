@@ -175,7 +175,61 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'LIST', label: '리스트', icon: 'list', tip: '객체 정보를 명령행에 보입니다 (LI)' },
             { cmd: 'SELECTALL', label: '모두 선택', icon: 'selectAll', tip: 'Ctrl+A' },
           ],
+          [
+            {
+              cmd: 'QSELECT',
+              label: '신속 선택',
+              icon: 'selectAll',
+              tip: '종류·특성·값으로 고르기 (QSELECT)',
+              menu: [
+                { label: '신속 선택', cmd: 'QSELECT', icon: 'selectAll' },
+                { label: '선택 필터', cmd: 'FILTER', icon: 'find' },
+              ],
+            },
+            { cmd: 'SELECTSIMILAR', label: '유사 선택', icon: 'selectAll', tip: '같은 종류·도면층·이름의 객체 고르기' },
+            { cmd: 'QUICKCALC', label: '계산기', icon: 'quick', tip: '계산기 (QC)' },
+          ],
         ],
+      },
+      {
+        title: '그룹',
+        cols: [
+          [
+            { cmd: 'GROUP', label: '그룹', icon: 'blocks', tip: '그룹 만들기 (G)' },
+            { cmd: 'UNGROUP', label: '그룹 해제', icon: 'explode' },
+            { cmd: 'PICKSTYLE', label: '그룹 선택', icon: 'selectAll', tip: '그룹 단위 고르기 켜기·끄기 (Ctrl+Shift+A)' },
+          ],
+        ],
+      },
+    ],
+  },
+  {
+    tab: '삽입',
+    panels: [
+      {
+        title: '블록',
+        large: [{ cmd: 'INSERT', label: '삽입', icon: 'insert', tip: '블록 삽입 (I)' }],
+        cols: [
+          [
+            { cmd: 'BLOCK', label: '만들기', icon: 'block', tip: '블록 만들기 (B)' },
+            { cmd: 'BEDIT', label: '편집', icon: 'block', tip: '블록 편집기 (BE)' },
+            { cmd: 'WBLOCK', label: '블록 쓰기', icon: 'save', tip: '블록·객체를 새 도면 파일로 (W)' },
+          ],
+          [
+            { cmd: 'BATTMAN', label: '속성 관리', icon: 'list', tip: '블록 속성 관리자' },
+            { cmd: 'ATTSYNC', label: '속성 동기화', icon: 'redo' },
+            { cmd: 'MINSERT', label: '다중 삽입', icon: 'arrayRect', tip: '행·열로 배열한 블록 참조' },
+          ],
+          [
+            { cmd: 'BCOUNT', label: '블록 개수', icon: 'list' },
+            { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
+            { cmd: 'BLOCKREPLACE', label: '블록 대치', icon: 'insert' },
+          ],
+        ],
+      },
+      {
+        title: '참조',
+        large: [{ cmd: 'EXTERNALREFERENCES', label: '외부 참조', icon: 'folder', tip: '외부 참조·이미지·PDF 언더레이 (XR)' }],
       },
     ],
   },
@@ -285,6 +339,34 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           { cmd: 'LWDISPLAY', label: '선가중치', icon: 'lineweight', noDoc: true, tip: '선가중치 표시 켜기·끄기' },
           { cmd: 'SHXFONTS', label: 'SHX 글꼴', icon: 'text', noDoc: true, tip: '이 컴퓨터의 SHX 글꼴을 불러와 도면 문자를 원래 글꼴로 그리기' },
           { cmd: 'FULLSCREEN', label: '전체 화면', icon: 'fullscreen', noDoc: true },
+        ],
+      },
+    ],
+  },
+  {
+    tab: '관리',
+    panels: [
+      {
+        title: '정리',
+        cols: [
+          [
+            { cmd: 'AUDIT', label: '감사', icon: 'info', tip: '도면 오류 찾기·고치기' },
+            { cmd: 'PURGE', label: '소거', icon: 'erase', tip: '쓰지 않는 블록·도면층·스타일 지우기' },
+          ],
+        ],
+      },
+      {
+        title: '도면',
+        cols: [
+          [
+            { cmd: 'RENAME', label: '이름 바꾸기', icon: 'text', tip: '도면층·블록·스타일 등의 이름 (REN)' },
+            { cmd: 'STATUS', label: '상태', icon: 'list' },
+            { cmd: 'LIMITS', label: '도면 한계', icon: 'rect' },
+          ],
+          [
+            { cmd: 'UNITS', label: '단위', icon: 'coord' },
+            { cmd: 'DWGINFO', label: '도면 정보', icon: 'info' },
+          ],
         ],
       },
     ],

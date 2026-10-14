@@ -136,6 +136,8 @@ export class App {
   private running: { name: string; ctrl: AbortController } | null = null;
   private lastCommand: string | null = null;
   private groupSerial = 0;
+  /** 고른 핸들을 넓히는 고리(PICKSTYLE 그룹 선택 등) */
+  selectionExpander: ((handles: string[]) => string[]) | null = null;
   /** 직전 선택(P 옵션) */
   lastSelection: string[] = [];
   lastPoint: Pt | null = null;
@@ -467,6 +469,11 @@ export class App {
         r.resolve({ handles: [...(this.active?.selection ?? [])] });
         return;
       }
+      // 객체 선택 중에도 투명 명령('FILTER 등)
+      if (t.startsWith("'")) {
+        void this.run(t.slice(1));
+        return;
+      }
       const up = t.toUpperCase();
       if (up === 'R' || up === 'REMOVE') {
         r.remove = true;
@@ -516,6 +523,7 @@ export class App {
       const pu = parsePointInput(wcs ? t.slice(1) : t, lastW && conv ? toUcs(u, lastW) : lastW, dir && conv ? dirToUcs(u, dir) : dir);
       const p = pu && conv ? toWcs(u, pu) : pu;
       if (p) {
+        if (this.outsideLimits(p)) return;
         this.cmd.print(`${this.promptOf(r)} ${t}`);
         this.lastPoint = p;
         r.resolve({ point: p });
@@ -1165,6 +1173,7 @@ export class App {
     const r = this.request;
     if (r?.kind === 'point') {
       const { p } = this.resolvePoint(w);
+      if (this.outsideLimits(p)) return;
       this.lastPoint = p;
       r.resolve({ point: p });
       return;
@@ -1184,7 +1193,7 @@ export class App {
       }
       const h = pk.pick(w.x, w.y, tol);
       if (h) {
-        this.setSelection([h], r.remove || ev.shiftKey ? 'remove' : 'add');
+        this.setSelection(this.expandPick([h]), r.remove || ev.shiftKey ? 'remove' : 'add');
         this.clearHover();
         return;
       }
@@ -1221,8 +1230,9 @@ export class App {
     }
     const h = pk.pick(w.x, w.y, tol);
     if (h) {
-      if (ev.shiftKey) this.setSelection([h], st.selection.has(h) ? 'remove' : 'add');
-      else this.setSelection([h], ev.ctrlKey || ev.metaKey ? 'add' : 'add');
+      const hs = this.expandPick([h]);
+      if (ev.shiftKey) this.setSelection(hs, st.selection.has(h) ? 'remove' : 'add');
+      else this.setSelection(hs, 'add');
       this.clearHover();
       return;
     }
@@ -1252,9 +1262,36 @@ export class App {
     const wb = this.view.screenToWorld(b.x, b.y);
     const crossing = b.x < a.x;
     const rect: [number, number, number, number] = [Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)];
-    const hits = pk.select(rect, crossing);
+    const hits = this.expandPick(pk.select(rect, crossing));
     this.setSelection(hits, ev.shiftKey || remove ? 'remove' : 'add');
     this.view.requestOverlay();
+  }
+
+  private expandPick(hs: string[]): string[] {
+    return this.selectionExpander ? this.selectionExpander(hs) : hs;
+  }
+
+  /** 한계 검사(LIMCHECK·PLIMCHECK)가 켜져 있고 점이 한계 밖이면 알리고 true */
+  private outsideLimits(p: Pt): boolean {
+    const st = this.active;
+    if (!st || st.blockEdit) return false;
+    const cmd = this.running?.name;
+    if (cmd === 'ZOOM' || cmd === 'PAN' || cmd === 'LIMITS') return false;
+    const model = st.space === MODEL_SPACE;
+    const h = st.doc.header;
+    if (Number(h.get(model ? '$LIMCHECK' : '$PLIMCHECK') ?? 0) !== 1) return false;
+    const v2 = (k: string) => {
+      const v = h.get(k);
+      return v && typeof v === 'object' ? { x: v.x, y: v.y } : null;
+    };
+    const layout = model ? null : st.layoutFor(st.space);
+    const lo = model ? v2('$LIMMIN') : (layout?.limitsMin ?? v2('$PLIMMIN'));
+    const hi = model ? v2('$LIMMAX') : (layout?.limitsMax ?? v2('$PLIMMAX'));
+    if (!lo || !hi) return false;
+    const e = 1e-9 * Math.max(1, Math.abs(hi.x - lo.x), Math.abs(hi.y - lo.y));
+    if (p.x >= lo.x - e && p.x <= hi.x + e && p.y >= lo.y - e && p.y <= hi.y + e) return false;
+    this.cmd.print('**한계 밖', 'err');
+    return true;
   }
 
   private onDblClick(w: Pt, sp: Pt): void {
