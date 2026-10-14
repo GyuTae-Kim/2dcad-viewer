@@ -35,7 +35,21 @@
 - [x] 페이지 설정, 배치 만들기·복사·이름 바꾸기·삭제, 흑백·회색조 플롯, 여러 배치를 한 PDF로
 - [x] 치수 연속·기준선(DIMCONTINUE·DIMBASELINE)
 - [x] 플롯 스타일 표(CTB) 파일 읽기(색·회색조·스크린·선가중치)
-- [ ] 이름 있는 플롯 스타일 표(STB)
+- [x] 플롯 미리보기(PREVIEW, 플롯 대화상자의 미리보기)
+- [x] 치수 스타일 관리자(DIMSTYLE: 선·기호·문자·맞춤·단위·공차, 고치면 그 스타일의 치수를 다시 만듦)
+- [x] 이름 있는 플롯 스타일 표(STB): 객체·도면층의 플롯 스타일 이름으로 펜을 고름
+
+## 3.5단계: 배치·뷰·제도 보조
+
+- [x] 배치 뷰포트: MVIEW(구석·맞춤·켜기/끄기·잠금·객체·폴리곤·2/3/4), VPCLIP, VPLAYER, LAYVPI, CHSPACE
+- [x] 뷰포트 안 모형 공간(MSPACE·PSPACE, 두 번 눌러 들어가고 나오기, 뷰포트 안 확대·이동이 뷰포트 뷰를 바꿈)
+- [x] 명명된 뷰(VIEW 뷰 관리자, -VIEW)
+- [x] 사용자 좌표계(UCS·UCSICON·UCSMAN, 2D 범위의 원점·회전)
+- [x] 격자(F7)·스냅(F9), 제도 설정(DSETTINGS), 객체 스냅 설정(OSNAP·-OSNAP)
+- [x] 객체 격리·숨기기(ISOLATEOBJECTS·HIDEOBJECTS·UNISOLATEOBJECTS)
+- [x] 도면층 도구(LAYLCK·LAYULK·LAYMCUR·LAYMCH·LAYCUR·LAYDEL·LAYMRG)
+- [x] 특성 변경(CHPROP·CHANGE·COLOR·DDPTYPE·ATTDISP), 2D 솔리드(SOLID), TIME
+- [ ] 모형 타일 뷰포트(VPORTS)
 
 ## 4단계: 저장 형식과 참조
 

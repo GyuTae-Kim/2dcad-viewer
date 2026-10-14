@@ -38,6 +38,8 @@ export interface StyleSpec {
   alpha: number;
   /** 강조·선택 등 */
   flags: number;
+  /** 이름 있는 플롯 스타일(대문자). 없으면 도면층의 플롯 스타일 */
+  plotStyle?: string;
 }
 
 export const STYLE_FLAG_NO_PLOT = 1;
@@ -60,6 +62,18 @@ export interface LayerState {
   lineweight: number;
   transparency: number;
   plot: boolean;
+  /** 도면층의 이름 있는 플롯 스타일(대문자, STB 출력용) */
+  plotStyleName?: string;
+}
+
+/** 이름 있는 플롯 스타일 핸들 → 이름(대문자): ACAD_PLOTSTYLENAME 사전의 항목 */
+export function plotStyleNames(doc: CadDocument): Map<string, string> {
+  const out = new Map<string, string>();
+  const root = doc.rootDictionary ? doc.objects.get(doc.rootDictionary) : undefined;
+  const dh = root && 'entries' in root ? (root as { entries: Map<string, string> }).entries.get('ACAD_PLOTSTYLENAME') : undefined;
+  const d = dh ? doc.objects.get(dh) : undefined;
+  if (d && 'entries' in d) for (const [n, h] of (d as { entries: Map<string, string> }).entries) out.set(h, n.toUpperCase());
+  return out;
 }
 
 export class StyleTable {
@@ -67,7 +81,7 @@ export class StyleTable {
   private readonly index = new Map<string, number>();
 
   intern(s: StyleSpec): number {
-    const key = `${s.colorKind}:${s.color}|${s.layer}|${s.freezeLayers.join(',')}|${s.widthKind}:${s.width}|${s.alpha}|${s.flags}`;
+    const key = `${s.colorKind}:${s.color}|${s.layer}|${s.freezeLayers.join(',')}|${s.widthKind}:${s.width}|${s.alpha}|${s.flags}|${s.plotStyle ?? ''}`;
     let i = this.index.get(key);
     if (i === undefined) {
       i = this.specs.length;
@@ -92,9 +106,11 @@ export class StyleTable {
 export function layerStates(doc: CadDocument): { states: LayerState[]; indexOf: Map<string, number> } {
   const states: LayerState[] = [];
   const indexOf = new Map<string, number>();
+  const psn = plotStyleNames(doc);
   for (const [key, l] of doc.layers) {
     indexOf.set(key, states.length);
     states.push({
+      plotStyleName: l.plotStyle ? psn.get(l.plotStyle) : undefined,
       name: l.name,
       rgb: l.color.rgb ?? 0,
       aci: l.color.aci,
@@ -162,7 +178,13 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
         rgb = opt.backgroundRgb;
     }
     let pen: CtbPen | undefined;
-    if (opt.plot?.ctb) {
+    const named = opt.plot?.ctb?.named;
+    if (named) {
+      // STB: 객체의 플롯 스타일, 없으면 도면층의 것, 그것도 없으면 Normal
+      const n = s.plotStyle ?? L?.plotStyleName ?? 'NORMAL';
+      pen = named.find(([k]) => k === n)?.[1];
+      if (pen) rgb = penColor(pen, rgb);
+    } else if (opt.plot?.ctb) {
       // 객체의 ACI(도면층별이면 도면층 색, 트루컬러면 가장 가까운 ACI)로 펜을 고른다
       let aci = 7;
       if (s.colorKind === ColorKind.Aci) aci = s.color;

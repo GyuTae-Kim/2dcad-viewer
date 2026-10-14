@@ -1,5 +1,5 @@
 /**
- * 불러온 플롯 스타일 표(CTB). 펜 표만 이 브라우저(localStorage)에 보관한다.
+ * 불러온 플롯 스타일 표(CTB·STB). 펜 표만 이 브라우저(localStorage)에 보관한다.
  */
 import { type CtbTable, readCtb } from '../render/ctb';
 import { h } from './ui/dom';
@@ -49,7 +49,7 @@ export function ctbByName(name: string | undefined): CtbTable | undefined {
 export function pickCtbFiles(): Promise<CtbTable[]> {
   restore();
   return new Promise((resolve) => {
-    const input = h('input', { type: 'file', multiple: true, accept: '.ctb', style: 'display:none' }) as HTMLInputElement;
+    const input = h('input', { type: 'file', multiple: true, accept: '.ctb,.stb', style: 'display:none' }) as HTMLInputElement;
     const done = async () => {
       const out: CtbTable[] = [];
       for (const f of [...(input.files ?? [])]) {

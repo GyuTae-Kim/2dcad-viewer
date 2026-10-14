@@ -1,5 +1,5 @@
 /**
- * 색상 종속 플롯 스타일 표(CTB) 읽기.
+ * 색상 종속 플롯 스타일 표(CTB)와 이름 있는 플롯 스타일 표(STB) 읽기.
  * 파일: 48바이트 서명("PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec"), 검사합·풀린 크기·압축 크기(각 4바이트), zlib 자료.
  * 풀린 본문은 `이름=값`과 `이름{ … }` 묶음의 문자열이다. plot_style의 0~254번이 ACI 1~255의 펜이다.
  */
@@ -17,7 +17,10 @@ export interface CtbPen {
 
 export interface CtbTable {
   name: string;
+  /** CTB: ACI 1~255의 펜 */
   pens: CtbPen[];
+  /** STB(이름 있는 플롯 스타일): 스타일 이름(대문자) → 펜. [이름, 펜] 목록(보관소에 JSON으로 넣기 쉽게) */
+  named?: [string, CtbPen][];
 }
 
 interface Node {
@@ -54,7 +57,7 @@ function parseBody(text: string): Node {
 }
 
 /** 풀린 CTB 본문 → 펜 표 */
-export function parseCtbText(text: string, name: string): CtbTable | null {
+export function parseCtbText(text: string, name: string, named = false): CtbTable | null {
   const root = parseBody(text);
   const ps = root.plot_style;
   if (!ps || typeof ps === 'string') return null;
@@ -67,13 +70,8 @@ export function parseCtbText(text: string, name: string): CtbTable | null {
     }
     return null;
   };
-  const pens: CtbPen[] = [];
-  for (let i = 0; i < 255; i++) {
-    const p = ps[String(i)];
-    if (!p || typeof p === 'string') {
-      pens.push({ color: null, gray: false, screen: 100, lineweight: null });
-      continue;
-    }
+  const penOf = (p: Node | string | undefined): CtbPen => {
+    if (!p || typeof p === 'string') return { color: null, gray: false, screen: 100, lineweight: null };
     const num = (k: string, d: number) => {
       const v = p[k];
       return typeof v === 'string' && Number.isFinite(Number(v)) ? Number(v) : d;
@@ -82,13 +80,24 @@ export function parseCtbText(text: string, name: string): CtbTable | null {
     const policy = num('color_policy', 1);
     // 색 정책: 비트 4 = 지정한 색(아래 24비트 RGB), 비트 2 = 회색조. 0xFFFFFFFF = 객체 색
     const explicit = (policy & 4) !== 0 && c !== 0xffffffff;
-    pens.push({
+    return {
       color: explicit ? c & 0xffffff : null,
       gray: (policy & 2) !== 0,
       screen: Math.max(0, Math.min(100, num('screen', 100))),
       lineweight: lwOf(num('lineweight', 0)),
-    });
+    };
+  };
+  const pens: CtbPen[] = [];
+  if (named) {
+    const out: [string, CtbPen][] = [];
+    for (const k of Object.keys(ps)) {
+      const p = ps[k];
+      if (!p || typeof p === 'string' || typeof p.name !== 'string') continue;
+      out.push([p.name.toUpperCase(), penOf(p)]);
+    }
+    return { name, pens, named: out };
   }
+  for (let i = 0; i < 255; i++) pens.push(penOf(ps[String(i)]));
   return { name, pens };
 }
 
@@ -97,13 +106,14 @@ export async function readCtb(data: Uint8Array, name: string): Promise<CtbTable 
   let head = '';
   for (let i = 0; i < Math.min(48, data.length); i++) head += String.fromCharCode(data[i]!);
   if (!/^PIAFILEVERSION_/.test(head)) return null;
-  if (!/CTBVER/i.test(head)) return null;
+  const stb = /STBVER/i.test(head);
+  if (!stb && !/CTBVER/i.test(head)) return null;
   const z = data.subarray(60);
   try {
     const ds = new DecompressionStream('deflate');
     const stream = new Blob([z as BlobPart]).stream().pipeThrough(ds);
     const text = new TextDecoder('latin1').decode(await new Response(stream).arrayBuffer());
-    return parseCtbText(text, name);
+    return parseCtbText(text, name, stb);
   } catch {
     return null;
   }

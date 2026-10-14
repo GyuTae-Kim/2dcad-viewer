@@ -7,7 +7,7 @@ import type { PlotStyle } from '../render/styles';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { type Page, type PageOptions, PT_PER_MM, baseName, download, exportPageSvg, layoutPage, modelPage, pdfDocument } from './export';
-import { form } from './ui/dom';
+import { dialog, form, h } from './ui/dom';
 import { ctbByName, ctbList, pickCtbFiles } from './ctblib';
 
 /** 용지(mm, 세로 방향 폭 × 높이) */
@@ -125,6 +125,36 @@ export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPe
   return pages;
 }
 
+/** 출력 페이지를 SVG 그림으로 미리 보인다(용지 그림자, 여러 쪽은 아래로) */
+async function showPreview(app: App, st: DocState, s: PlotSettings): Promise<boolean> {
+  const pages = await plotPages(app, st, s, 1);
+  if (!pages.length) return false;
+  const urls: string[] = [];
+  const wrap = h('div', { style: 'width:min(80vw,960px);max-height:70vh;overflow:auto;background:#5b616b;padding:16px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px;align-items:center' });
+  for (const pg of pages) {
+    const url = URL.createObjectURL(exportPageSvg(pg, 'mm'));
+    urls.push(url);
+    const img = h('img', { src: url, alt: '플롯 미리보기', style: 'background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.5);width:100%;height:auto' });
+    wrap.append(img);
+  }
+  const free = () => {
+    for (const u of urls) URL.revokeObjectURL(u);
+    return true;
+  };
+  dialog(`플롯 미리보기 (${pages.length}쪽)`, wrap, [
+    {
+      label: '플롯…',
+      run: () => {
+        free();
+        void app.run('PLOT');
+        return true;
+      },
+    },
+    { label: '닫기', primary: true, run: free },
+  ]);
+  return true;
+}
+
 async function askWindow(ctx: CommandContext): Promise<[number, number, number, number] | null> {
   const a = await ctx.getPoint('첫 번째 구석 지정:');
   if (!('point' in a)) return null;
@@ -179,7 +209,7 @@ export function registerPlotCommands(app: App): void {
               { value: 'gray', label: 'grayscale (회색조)' },
               { value: 'color', label: '색 그대로' },
               ...ctbList().map((t) => ({ value: `ctb:${t.name}`, label: `${t.name} (불러온 플롯 스타일 표)` })),
-              { value: 'load', label: 'CTB 파일 불러오기…' },
+              { value: 'load', label: 'CTB·STB 파일 불러오기…' },
             ],
           },
           { key: 'lineweights', label: '선가중치 출력', type: 'check', value: prev?.lineweights ?? true },
@@ -191,6 +221,7 @@ export function registerPlotCommands(app: App): void {
             options: [
               { value: 'pdf', label: 'PDF' },
               { value: 'svg', label: 'SVG(첫 쪽)' },
+              { value: 'preview', label: '미리보기(내려받지 않음)' },
             ],
           },
         ],
@@ -201,7 +232,7 @@ export function registerPlotCommands(app: App): void {
       if (styleKey === 'load') {
         const loaded = await pickCtbFiles();
         if (!loaded.length) {
-          ctx.print('CTB 파일을 읽지 못했습니다. 색 그대로 출력합니다.', 'err');
+          ctx.print('플롯 스타일 표 파일을 읽지 못했습니다. 색 그대로 출력합니다.', 'err');
           styleKey = 'color';
         } else {
           ctx.print(`플롯 스타일 표 ${loaded.map((t) => t.name).join(', ')}을(를) 불러왔습니다.`);
@@ -216,7 +247,7 @@ export function registerPlotCommands(app: App): void {
         plotStyle: styleKey.startsWith('ctb:') ? 'color' : (styleKey as PlotStyle),
         ctb: styleKey.startsWith('ctb:') ? styleKey.slice(4) : undefined,
         lineweights: !!v.lineweights,
-        format: v.format as 'pdf' | 'svg',
+        format: v.format === 'svg' ? 'svg' : 'pdf',
         margin: 5,
       };
       if (s.what === 'window') {
@@ -225,6 +256,10 @@ export function registerPlotCommands(app: App): void {
         s.window = w;
       }
       lastSettings.set(st, s);
+      if (v.format === 'preview') {
+        await showPreview(app, st, s);
+        return;
+      }
       ctx.print('출력 파일을 만드는 중…');
       const name = baseName(st.saveName);
       if (s.format === 'svg') {
@@ -243,6 +278,20 @@ export function registerPlotCommands(app: App): void {
       const suffix = s.what === 'layouts' ? '-배치' : s.what === 'layout' ? `-${st.layoutFor(st.displaySpace)?.name ?? 'layout'}` : '';
       download(blob, `${name}${suffix}.pdf`);
       ctx.print(`PDF ${pages.length}쪽을 저장했습니다.`);
+    },
+  });
+
+  app.register({
+    name: 'PREVIEW',
+    aliases: ['PRE'],
+    title: '플롯 미리보기',
+    async run(ctx) {
+      const st = app.active!;
+      const prev = lastSettings.get(st);
+      const s: PlotSettings = prev
+        ? { ...prev, what: st.onLayout ? (prev.what === 'layouts' ? 'layouts' : 'layout') : prev.what === 'layout' || prev.what === 'layouts' ? 'display' : prev.what }
+        : { what: st.onLayout ? 'layout' : 'display', paper: st.units.measurement ? 'A3' : 'TABLOID', landscape: true, scale: 'fit', plotStyle: 'mono', lineweights: true, format: 'pdf', margin: 5 };
+      if (!(await showPreview(app, st, s))) ctx.print('미리 볼 내용이 없습니다.', 'err');
     },
   });
 

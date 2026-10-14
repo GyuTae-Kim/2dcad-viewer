@@ -3,6 +3,7 @@
  * - 바뀐 객체의 옛 그림은 기본 장면에서 숨기고, 새 모양은 덧그림 장면으로 바로 그린다.
  * - 편집이 잠시 멈추면 워커가 그 공간을 다시 그려(그리기 순서·메모리 정리) 기본 장면을 바꾼다.
  */
+import { plotStyleNames } from '../render/styles';
 import type { Entity } from '../core/model';
 import { tableKey } from '../core/model';
 import { unitSettings } from '../core/units';
@@ -91,9 +92,11 @@ export class EditManager {
 
   /** 문서의 도면층 표를 화면 상태(켜기·색)와 맞춘다 */
   syncLayers(st: DocState): void {
+    const psn = plotStyleNames(st.doc);
     for (const [k, l] of st.doc.layers) {
       const cur = st.layers.get(k);
       const state = {
+        plotStyleName: l.plotStyle ? psn.get(l.plotStyle) : undefined,
         name: l.name,
         rgb: l.color.rgb ?? 0,
         aci: l.color.aci,

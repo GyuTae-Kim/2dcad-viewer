@@ -47,7 +47,7 @@ import {
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
 import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist';
-import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, layerStates } from './styles';
+import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
@@ -126,6 +126,8 @@ export class SceneBuilder {
   private readonly blockByRecord = new Map<string, BlockDef>();
   private pdmode = 0;
   private pdsize = 0;
+  /** 이름 있는 플롯 스타일 핸들 → 이름 */
+  private readonly plotStyleNames: Map<string, string>;
   /** ATTDISP: 0 모두 숨김, 1 보통(숨김 속성은 숨김), 2 모두 보임 */
   private attmode = 1;
   private fill = true;
@@ -156,6 +158,7 @@ export class SceneBuilder {
       return typeof v === 'number' && Number.isFinite(v) ? v : d;
     };
     this.ltscale = (num('$LTSCALE', 1) || 1) * (opt.ltFactor && opt.ltFactor > 0 ? opt.ltFactor : 1);
+    this.plotStyleNames = plotStyleNames(doc);
     this.pdmode = num('$PDMODE', 0);
     this.attmode = num('$ATTMODE', 1);
     this.pdsize = num('$PDSIZE', 0);
@@ -207,6 +210,7 @@ export class SceneBuilder {
     const ltu = lt.toUpperCase();
     if (ltu === 'BYLAYER') lt = this.layers[layer] ? this.doc.layers.get(tableKey(this.layers[layer]!.name))?.linetype ?? 'Continuous' : 'Continuous';
     else if (ltu === 'BYBLOCK') lt = ctx.byLinetype;
+    const ps = (e as { plotStyle?: string }).plotStyle;
     const style = this.styles.intern({
       colorKind: col.kind,
       color: col.value,
@@ -216,6 +220,7 @@ export class SceneBuilder {
       width: lw.value,
       alpha,
       flags: override?.flags ?? 0,
+      plotStyle: ps ? this.plotStyleNames.get(ps) : undefined,
     });
     return { style, linetype: lt, ltscale: (e.ltscale || 1) * this.ltscale, layer };
   }
