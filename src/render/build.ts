@@ -21,6 +21,7 @@ import type {
   SpatialFilterObject,
   TextEntity,
   TextStyle,
+  UnknownEntity,
   Vec3,
 } from '../core/model';
 import { BYBLOCK, BYLAYER, tableKey } from '../core/model';
@@ -32,6 +33,7 @@ import {
   applyDir,
   applyXY,
   identity,
+  mat,
   multiply,
   ocsMatrix,
   planarScale,
@@ -48,6 +50,8 @@ import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPa
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
 import { type ShxFont, ShxRunner } from '../text/shx';
+import { parseProxyGraphics } from './proxy';
+import { codepageToEncoding, decoderFor } from '../core/codepage';
 
 export interface BuildOptions {
   text: TextEngine;
@@ -306,6 +310,128 @@ export class SceneBuilder {
         this.emitText(lay, [ca, sa, -sa, ca, px, py], r, ctx);
       },
     );
+  }
+
+  /** 프록시 그림(ODA 명세 29장)으로 그리기. 그린 것이 있으면 true */
+  private proxy(e: UnknownEntity, ctx: Ctx): boolean {
+    const dec = decoderFor(codepageToEncoding(this.doc.codepage || 'ANSI_1252'));
+    const parsed = parseProxyGraphics(e.graphics!, (b) => dec.decode(b));
+    if (!parsed.prims.some((p) => p.k !== 'color' && p.k !== 'rgb' && p.k !== 'lineweight' && p.k !== 'fill')) return false;
+    const base = this.resolve(e, ctx);
+    let r = base;
+    const stack: Mat[] = [ctx.m];
+    const top = () => stack[stack.length - 1]!;
+    const tol = this.localTol(ctx.m);
+    // 평면 법선 n의 두 축
+    const axes = (n: [number, number, number]) => {
+      const o = ocsMatrix({ x: n[0], y: n[1], z: n[2] });
+      const u = o ? { x: o[0]!, y: o[4]!, z: o[8]! } : { x: 1, y: 0, z: 0 };
+      const v = o ? { x: o[1]!, y: o[5]!, z: o[9]! } : { x: 0, y: 1, z: 0 };
+      return { u, v };
+    };
+    const ring = (c: [number, number, number], r0: number, u: Vec3, v: Vec3, a0: number, sweep: number): number[] => {
+      const n = Math.max(8, Math.min(720, Math.ceil(Math.abs(sweep) / (2 * Math.acos(Math.max(-1, 1 - tol / Math.max(r0, 1e-12)))))));
+      const out: number[] = [];
+      for (let i = 0; i <= n; i++) {
+        const a = a0 + (sweep * i) / n;
+        const ca = Math.cos(a) * r0;
+        const sa = Math.sin(a) * r0;
+        const q = applyXY(top(), c[0] + ca * u.x + sa * v.x, c[1] + ca * u.y + sa * v.y, c[2] + ca * u.z + sa * v.z);
+        out.push(q.x, q.y);
+      }
+      return out;
+    };
+    let drew = false;
+    for (const p of parsed.prims) {
+      switch (p.k) {
+        case 'poly': {
+          const pts: number[] = [];
+          for (let i = 0; i + 2 < p.pts.length; i += 3) {
+            const q = applyXY(top(), p.pts[i]!, p.pts[i + 1]!, p.pts[i + 2]!);
+            pts.push(q.x, q.y);
+          }
+          if (p.fill && pts.length >= 6) this.out.triangles(triangulateLoops([pts]), r.style);
+          else this.stroke(pts, p.closed, r, ctx);
+          drew = true;
+          break;
+        }
+        case 'circle': {
+          const { u, v } = axes(p.n);
+          this.stroke(ring(p.c, p.r, u, v, 0, Math.PI * 2), true, r, ctx);
+          drew = true;
+          break;
+        }
+        case 'arc': {
+          const { u, v } = axes(p.n);
+          // 시작 방향을 평면 축으로 나타낸 각도
+          const a0 = Math.atan2(p.start[0] * v.x + p.start[1] * v.y + p.start[2] * v.z, p.start[0] * u.x + p.start[1] * u.y + p.start[2] * u.z);
+          this.stroke(ring(p.c, p.r, u, v, a0, p.sweep), false, r, ctx);
+          drew = true;
+          break;
+        }
+        case 'arc3':
+        case 'circle3': {
+          const [a, b, c] = p.p as [[number, number, number], [number, number, number], [number, number, number]];
+          const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+          if (Math.abs(d) < 1e-15) break;
+          const a2 = a[0] ** 2 + a[1] ** 2;
+          const b2 = b[0] ** 2 + b[1] ** 2;
+          const c2 = c[0] ** 2 + c[1] ** 2;
+          const cx = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+          const cy = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+          const rr = Math.hypot(a[0] - cx, a[1] - cy);
+          const u = { x: 1, y: 0, z: 0 };
+          const v = { x: 0, y: 1, z: 0 };
+          if (p.k === 'circle3') this.stroke(ring([cx, cy, a[2]], rr, u, v, 0, Math.PI * 2), true, r, ctx);
+          else {
+            const t0 = Math.atan2(a[1] - cy, a[0] - cx);
+            const tm = Math.atan2(b[1] - cy, b[0] - cx);
+            const t1 = Math.atan2(c[1] - cy, c[0] - cx);
+            let sw = ccwSweep(t0, t1);
+            if (ccwSweep(t0, tm) > sw) sw = sw - Math.PI * 2;
+            this.stroke(ring([cx, cy, a[2]], rr, u, v, t0, sw), false, r, ctx);
+          }
+          drew = true;
+          break;
+        }
+        case 'text': {
+          const st = this.doc.textStyles.get('STANDARD');
+          const lay = this.opt.text.layoutText({ text: p.text, insert: { x: 0, y: 0 }, height: p.height, rotation: 0, widthFactor: p.width || 1, oblique: p.oblique, generation: 0, halign: 0, valign: 0, style: st });
+          const o = applyXY(top(), p.at[0], p.at[1], p.at[2]);
+          const dx = applyDir(top(), p.dir[0], p.dir[1], p.dir[2]);
+          const l = Math.hypot(dx.x, dx.y) || 1;
+          const ux = dx.x / l;
+          const uy = dx.y / l;
+          this.emitText(lay, [ux, uy, -uy, ux, o.x, o.y], r, ctx);
+          drew = true;
+          break;
+        }
+        case 'xline': {
+          const a = applyXY(top(), p.a[0], p.a[1], p.a[2]);
+          const b = applyXY(top(), p.b[0], p.b[1], p.b[2]);
+          this.out.xline(a.x, a.y, b.x - a.x, b.y - a.y, p.ray, r.style);
+          drew = true;
+          break;
+        }
+        case 'color':
+          r = { ...base, style: this.styleWithColor(base, { aci: p.aci }, ctx) };
+          break;
+        case 'rgb':
+          r = { ...base, style: this.styleWithColor(base, { aci: 7, rgb: p.rgb }, ctx) };
+          break;
+        case 'push': {
+          const q = p.m;
+          stack.push(multiply(top(), mat(q[0]!, q[1]!, q[2]!, q[3]!, q[4]!, q[5]!, q[6]!, q[7]!, q[8]!, q[9]!, q[10]!, q[11]!)));
+          break;
+        }
+        case 'pop':
+          if (stack.length > 1) stack.pop();
+          break;
+        default:
+          break;
+      }
+    }
+    return drew;
   }
 
   private shapeCache = new Map<string, number[][] | null>();
@@ -757,6 +883,10 @@ export class SceneBuilder {
         return;
       }
       case 'UNKNOWN':
+        // 프록시 그림이 있으면 그것으로 그린다
+        if (e.graphics?.length && this.proxy(e, ctx)) return;
+        this.warnInc('entity.not_drawn');
+        return;
       case 'REGION':
       case '3DSOLID':
       case 'BODY':
