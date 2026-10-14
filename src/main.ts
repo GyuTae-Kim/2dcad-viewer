@@ -21,6 +21,7 @@ import { registerDraftingCommands } from './app/drafting';
 import { registerUcsCommands } from './app/ucs';
 import { registerLayerToolCommands } from './app/laytools';
 import { registerPropCommands } from './app/propcmds';
+import { registerDimStyleCommands } from './app/dimstyle';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -66,6 +67,7 @@ registerDraftingCommands(app);
 registerUcsCommands(app);
 registerLayerToolCommands(app);
 registerPropCommands(app);
+registerDimStyleCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);
