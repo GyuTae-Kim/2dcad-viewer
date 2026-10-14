@@ -1610,7 +1610,14 @@ export function registerModifyCommands(app: App): void {
           preferNumber: mode === 'rotate' || mode === 'scale',
           keywords: [{ key: 'B', label: '기준점' }, { key: 'C', label: '복사' }, { key: 'U', label: '명령 취소' }, { key: 'X', label: '종료' }],
           ghost: (p) => {
-            if (mode === 'stretch') return items.length <= 200 ? resultGeom(app, { replace: stretchRes(p).flatMap((x) => [...(x.replace ?? []), ...(x.add ?? [])]) }) : [];
+            if (mode === 'stretch') {
+              if (items.length > 200) return [];
+              // 구속으로 이어진 객체도 따라오는 모습으로(풀 수 없으면 그립 결과만)
+              let res = stretchRes(p);
+              const cons = constraintEditHook(st, res, 'GRIP');
+              if (cons.ok) res = cons.results;
+              return resultGeom(app, { replace: res.flatMap((x) => [...(x.replace ?? []), ...(x.add ?? [])]) });
+            }
             const m = xf(mode, p);
             return m ? ghost.at(m) : [];
           },
