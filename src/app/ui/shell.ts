@@ -100,7 +100,10 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'RAY', label: '광선', icon: 'ray' },
             { cmd: 'DONUT', label: '도넛', icon: 'donut', tip: '도넛 (DO)' },
           ],
-          [{ cmd: 'HELIX', label: '나선', icon: 'spline', tip: '나선 (HELIX)' }],
+          [
+            { cmd: 'HELIX', label: '나선', icon: 'spline', tip: '나선 (HELIX)' },
+            { cmd: 'SKETCH', label: '스케치', icon: 'pline', tip: '마우스로 그리는 자유 곡선 (SKETCH)' },
+          ],
           [
             { cmd: 'REVCLOUD', label: '구름형 수정 기호', icon: 'polygon', tip: '구름형 수정 기호 (REVCLOUD)' },
             { cmd: 'WIPEOUT', label: '가리기', icon: 'rect', tip: '뒤의 객체를 가리는 영역 (WIPEOUT)' },
