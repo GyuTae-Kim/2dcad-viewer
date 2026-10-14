@@ -323,6 +323,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'IMAGECLIP', label: '이미지 자르기', icon: 'trim', tip: '래스터 이미지 자르기 (ICL)' },
             { cmd: 'PDFCLIP', label: 'PDF 자르기', icon: 'trim', tip: 'PDF 언더레이 자르기' },
           ],
+          [
+            { cmd: 'REFEDIT', label: '참조 편집', icon: 'block', tip: '블록·외부 참조를 제자리에서 고치기 (REFEDIT)' },
+            { cmd: 'REFSET', label: '작업 세트', icon: 'selectAll', tip: '참조 편집 작업 세트에 객체 추가·제거' },
+            { cmd: 'REFCLOSE', label: '참조 닫기', icon: 'close', tip: '참조 편집 변경 사항 저장·취소' },
+          ],
         ],
       },
       {
@@ -655,6 +660,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         large: [
           { cmd: 'PLOT', label: '플롯', icon: 'print', tip: '용지·축척·플롯 스타일을 골라 PDF로 출력 (Ctrl+P)' },
           { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
+          { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
       },
       {

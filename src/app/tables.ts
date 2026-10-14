@@ -306,8 +306,8 @@ export function registerTableCommands(app: App): void {
         await app.run(key.slice(1));
         return;
       }
-      // 도면 비교 변수(COMPARECOLOR1 …)는 이 브라우저에 저장하고, 변수 이름이 곧 명령이다
-      if (compareVar(key.slice(1))) {
+      // 도면 비교 변수(COMPARECOLOR1 …)·XFADECTL은 이 브라우저에 저장하고, 변수 이름이 곧 명령이다
+      if (compareVar(key.slice(1)) || key === '$XFADECTL') {
         await app.run(key.slice(1));
         return;
       }

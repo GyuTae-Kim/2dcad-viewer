@@ -1396,6 +1396,12 @@ export class App {
       void import('./tablecmds').then((m) => m.editTableAt(this, h, w));
       return;
     }
+    // 외부 참조를 두 번 누르면 참조 편집(AutoCAD와 같다)
+    if (e?.type === 'INSERT' && ((this.active?.doc.blocks.get(tableKey(e.block))?.flags ?? 0) & 4) !== 0) {
+      this.setSelection([h], 'replace');
+      void this.run('REFEDIT', `${h}@${w.x},${w.y}`);
+      return;
+    }
     if (e?.type === 'ARCALIGNEDTEXT') {
       this.setSelection([h], 'replace');
       void this.run('ARCTEXT');
