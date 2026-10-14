@@ -1,0 +1,879 @@
+/**
+ * 앱 컨트롤러: 문서·화면·명령·선택·스냅을 묶는다.
+ */
+import type { Entity } from '../core/model';
+import { MODEL_SPACE, tableKey } from '../core/model';
+import { errorMessage } from '../core/errors';
+import type { CadErrorCode } from '../core/errors';
+import { formatLength } from '../core/units';
+import { OutlineLibrary } from '../text/fonts';
+import { TextEngine } from '../text/layout';
+import { collectTextUsage } from '../text/collect';
+import { EngineClient, EngineError } from './engine';
+import { DocState } from './docstate';
+import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
+import { CommandLine, parsePointInput } from './commandline';
+import { Picker } from './pick';
+import { DEFAULT_SNAPS, SNAP_NAMES, entitySnaps, findSnap } from './snap';
+import { identity } from '../geom/matrix';
+import { closeMenu, showMenu, toast } from './ui/dom';
+
+export class CancelError extends Error {
+  constructor() {
+    super('취소');
+  }
+}
+
+export interface Keyword {
+  key: string;
+  label: string;
+}
+
+export type PointResult = { point: Pt } | { keyword: string } | { text: string } | { enter: true };
+
+interface PointRequest {
+  kind: 'point';
+  prompt: string;
+  base: Pt | null;
+  keywords: Keyword[];
+  rubber?: (p: Pt) => { pts: number[]; closed?: boolean; fill?: boolean; dashed?: boolean }[];
+  allowText: boolean;
+  resolve: (r: PointResult) => void;
+  reject: (e: unknown) => void;
+}
+
+interface EntityRequest {
+  kind: 'entity';
+  prompt: string;
+  keywords: Keyword[];
+  resolve: (r: { handle: string; point: Pt } | { keyword: string } | { enter: true }) => void;
+  reject: (e: unknown) => void;
+}
+
+type Request = PointRequest | EntityRequest;
+
+export interface CommandContext {
+  app: App;
+  print(text: string, cls?: 'err' | 'res'): void;
+  getPoint(prompt: string, opt?: { base?: Pt | null; keywords?: Keyword[]; rubber?: PointRequest['rubber']; allowText?: boolean }): Promise<PointResult>;
+  getEntity(prompt: string, keywords?: Keyword[]): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }>;
+}
+
+export interface Command {
+  name: string;
+  aliases?: string[];
+  title: string;
+  /** 다른 명령 중에도 실행(ZOOM 같은 투명 명령) */
+  transparent?: boolean;
+  /** 열린 도면이 없어도 실행 */
+  noDoc?: boolean;
+  run(ctx: CommandContext, arg?: string): Promise<void> | void;
+}
+
+export interface UiHooks {
+  refreshTabs(): void;
+  refreshLayouts(): void;
+  refreshStatus(): void;
+  refreshPalette(): void;
+  showStart(show: boolean): void;
+  setBusy(text: string | null, fraction?: number): void;
+  setCoords(text: string): void;
+  openPalette(tab: string): void;
+}
+
+export class App {
+  readonly engine: EngineClient;
+  readonly view: CadView;
+  readonly cmd: CommandLine;
+  readonly fontLib: OutlineLibrary;
+  readonly text: TextEngine;
+  readonly docs: DocState[] = [];
+  active: DocState | null = null;
+  ui!: UiHooks;
+  readonly commands = new Map<string, Command>();
+  private readonly aliases = new Map<string, string>();
+  osnapOn = true;
+  readonly snapModes = new Set<SnapKind>(DEFAULT_SNAPS);
+  orthoOn = false;
+  private request: Request | null = null;
+  private running: { name: string; ctrl: AbortController } | null = null;
+  private lastCommand: string | null = null;
+  lastPoint: Pt | null = null;
+  private cursorWorld: Pt | null = null;
+  private windowStart: { screen: Pt; world: Pt; viaClick: boolean } | null = null;
+  private pickers = new Map<string, Picker>();
+  private hoverHandle: string | null = null;
+  private hoverTimer = 0;
+  private readonly fontsReady = new WeakMap<DocState, Promise<void>>();
+
+  constructor(drawingParent: HTMLElement) {
+    const fontBase = new URL('fonts/noto-sans-kr/', document.baseURI).href;
+    this.engine = new EngineClient(fontBase);
+    this.fontLib = new OutlineLibrary(fontBase);
+    this.text = new TextEngine(this.fontLib);
+    this.view = new CadView(drawingParent);
+    this.cmd = new CommandLine(drawingParent, {
+      submit: (t) => this.onInput(t),
+      cancel: () => this.cancel(),
+      suggest: (p) => this.suggest(p),
+      keyword: (k) => this.onInput(k),
+      repeat: () => {
+        if (this.lastCommand) void this.run(this.lastCommand);
+      },
+    });
+    this.view.on({
+      move: (w, s, ev) => this.onMove(w, s, ev),
+      down: () => {},
+      click: (w, s, ev) => this.onClick(w, s, ev),
+      drag: (a, b, done, ev) => this.onDrag(a, b, done, ev),
+      context: (w, s, ev) => this.onContext(w, s, ev),
+      dblclick: (w, s) => this.onDblClick(w, s),
+      leave: () => {
+        this.ui.setCoords('');
+      },
+      viewChanged: () => {
+        this.refreshSelectionOverlay();
+        this.ui?.refreshStatus();
+      },
+    });
+    this.view.onRestore = () => {
+      for (const d of this.docs) for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
+    };
+    window.addEventListener('keydown', (ev) => this.onKey(ev));
+    window.addEventListener('beforeunload', () => undefined);
+  }
+
+  // -------------------------------------------------------------------------
+  // 명령 등록·실행
+  // -------------------------------------------------------------------------
+
+  register(c: Command): void {
+    this.commands.set(c.name.toUpperCase(), c);
+    for (const a of c.aliases ?? []) this.aliases.set(a.toUpperCase(), c.name.toUpperCase());
+  }
+
+  findCommand(name: string): Command | undefined {
+    const n = name.trim().toUpperCase().replace(/^[_.'-]+/, '');
+    return this.commands.get(n) ?? this.commands.get(this.aliases.get(n) ?? '');
+  }
+
+  private suggest(prefix: string): { name: string; title: string }[] {
+    const p = prefix.toUpperCase().replace(/^[_.'-]+/, '');
+    const out: { name: string; title: string; score: number }[] = [];
+    const seen = new Set<string>();
+    for (const [a, n] of this.aliases) {
+      if (a.startsWith(p)) {
+        const c = this.commands.get(n)!;
+        out.push({ name: a, title: `${c.name} · ${c.title}`, score: a === p ? 0 : 1 + a.length });
+      }
+    }
+    for (const c of this.commands.values()) {
+      const n = c.name.toUpperCase();
+      if ((n.startsWith(p) || c.title.includes(prefix)) && !seen.has(n)) {
+        seen.add(n);
+        out.push({ name: c.name, title: c.title, score: n === p ? 0 : 2 + n.length });
+      }
+    }
+    return out.sort((a, b) => a.score - b.score);
+  }
+
+  /** 명령 실행. arg가 있으면 첫 프롬프트의 답으로 쓴다 */
+  async run(name: string, arg?: string): Promise<void> {
+    const c = this.findCommand(name);
+    if (!c) {
+      this.cmd.print(`알 수 없는 명령 "${name}". 도움말은 F1을 누르십시오.`, 'err');
+      return;
+    }
+    if (!c.noDoc && !this.active) {
+      this.cmd.print('열린 도면이 없습니다. 먼저 파일을 여십시오.', 'err');
+      return;
+    }
+    if (this.running && !c.transparent) this.cancel(true);
+    const nested = this.running && c.transparent;
+    const saved = nested ? this.request : null;
+    if (nested) this.request = null;
+    const ctrl = new AbortController();
+    if (!nested) this.running = { name: c.name, ctrl };
+    this.lastCommand = c.name;
+    this.cmd.print(`명령: ${c.name}`);
+    this.clearHover();
+    const ctx: CommandContext = {
+      app: this,
+      print: (t, cls) => this.cmd.print(t, cls),
+      getPoint: (prompt, opt) => this.requestPoint(prompt, opt, ctrl.signal),
+      getEntity: (prompt, kws) => this.requestEntity(prompt, kws ?? [], ctrl.signal),
+    };
+    try {
+      await c.run(ctx, arg);
+    } catch (e) {
+      if (e instanceof CancelError) this.cmd.print('*취소*');
+      else {
+        console.error(e);
+        this.cmd.print(`오류: ${e instanceof Error ? e.message : String(e)}`, 'err');
+      }
+    } finally {
+      if (nested) {
+        this.request = saved;
+        if (saved) this.cmd.setPrompt(this.promptOf(saved));
+      } else {
+        if (this.running?.ctrl === ctrl) this.running = null;
+        this.request = null;
+        this.cmd.setPrompt('');
+        this.view.overlay.rubber = [];
+        this.view.overlay.marks = [];
+        this.view.overlay.tip = null;
+        this.view.requestOverlay();
+      }
+    }
+  }
+
+  get busyCommand(): string | null {
+    return this.running?.name ?? null;
+  }
+
+  cancel(silent = false): void {
+    if (this.request) {
+      const r = this.request;
+      this.request = null;
+      r.reject(new CancelError());
+    } else if (this.running) {
+      this.running.ctrl.abort();
+      this.running = null;
+      if (!silent) this.cmd.print('*취소*');
+    } else if (this.windowStart) {
+      this.windowStart = null;
+      this.view.overlay.windowRect = null;
+      this.view.requestOverlay();
+    } else if (this.active && this.active.selection.size) {
+      this.clearSelection();
+    }
+    this.cmd.setPrompt('');
+  }
+
+  private promptOf(r: Request): string {
+    if (!r.keywords.length) return r.prompt;
+    if (r.prompt.includes('[')) return r.prompt;
+    const kw = r.keywords.map((k) => `${k.label}(${k.key})`).join('/');
+    return r.prompt.replace(/:$/, '') + ` [${kw}]:`;
+  }
+
+  private requestPoint(prompt: string, opt: Parameters<CommandContext['getPoint']>[1] = {}, signal: AbortSignal): Promise<PointResult> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(new CancelError());
+      const req: PointRequest = {
+        kind: 'point',
+        prompt,
+        base: opt.base ?? null,
+        keywords: opt.keywords ?? [],
+        rubber: opt.rubber,
+        allowText: !!opt.allowText,
+        resolve: (r) => {
+          this.request = null;
+          resolve(r);
+        },
+        reject,
+      };
+      this.request = req;
+      this.cmd.setPrompt(this.promptOf(req));
+      this.view.overlay.tip = prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
+      signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+      this.view.requestOverlay();
+    });
+  }
+
+  private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(new CancelError());
+      const req: EntityRequest = {
+        kind: 'entity',
+        prompt,
+        keywords,
+        resolve: (r) => {
+          this.request = null;
+          resolve(r);
+        },
+        reject,
+      };
+      this.request = req;
+      this.cmd.setPrompt(this.promptOf(req));
+      this.view.overlay.tip = prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
+      signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+      this.view.requestOverlay();
+    });
+  }
+
+  /** 명령행 입력 */
+  private onInput(text: string): void {
+    const r = this.request;
+    if (!r) {
+      if (!text) return;
+      // 투명 명령 접두사 '
+      void this.run(text);
+      return;
+    }
+    const t = text.trim();
+    if (!t) {
+      r.resolve({ enter: true });
+      return;
+    }
+    const up = t.toUpperCase();
+    const kw = r.keywords.find((k) => k.key.toUpperCase() === up || k.label === t);
+    if (kw) {
+      this.cmd.print(`${this.promptOf(r)} ${t}`);
+      r.resolve({ keyword: kw.key });
+      return;
+    }
+    if (t.startsWith("'")) {
+      void this.run(t.slice(1));
+      return;
+    }
+    if (r.kind === 'point') {
+      const dir = this.cursorWorld && r.base ? { x: this.cursorWorld.x - r.base.x, y: this.cursorWorld.y - r.base.y } : null;
+      const p = parsePointInput(t, r.base ?? this.lastPoint, dir);
+      if (p) {
+        this.cmd.print(`${this.promptOf(r)} ${t}`);
+        this.lastPoint = p;
+        r.resolve({ point: p });
+        return;
+      }
+      if (r.allowText) {
+        r.resolve({ text: t });
+        return;
+      }
+      const tc = this.findCommand(t);
+      if (tc?.transparent) {
+        void this.run(t);
+        return;
+      }
+      this.cmd.print('점이 올바르지 않습니다. 예: 100,50  @20,0  @30<45', 'err');
+      return;
+    }
+    this.cmd.print('객체를 선택하거나 옵션을 입력하십시오.', 'err');
+  }
+
+  // -------------------------------------------------------------------------
+  // 문서
+  // -------------------------------------------------------------------------
+
+  async openFile(name: string, data: ArrayBuffer): Promise<DocState | null> {
+    const size = data.byteLength;
+    this.ui.setBusy(`${name} 여는 중…`, 0);
+    try {
+      const res = await this.engine.open(name, data, (stage, f) => {
+        const label = stage === 'read' ? '도면 읽는 중' : stage === 'fonts' ? '글꼴 받는 중' : stage === 'build' || stage === 'document' ? '화면 그리는 중' : '처리 중';
+        this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.7 : stage === 'fonts' ? 0.75 : 0.85);
+      });
+      const st = new DocState(res.docId, res.doc, name, size, res.readMs);
+      st.addScene(this.view.renderer, res.model, MODEL_SPACE);
+      this.docs.push(st);
+      this.activate(st);
+      this.initialView(st);
+      const w = st.warnings.filter((x) => x.code !== 'entity.not_drawn' || (x.count ?? 0) > 0);
+      this.cmd.print(`${name}: ${res.doc.format.toUpperCase()} ${res.doc.version}, 객체 ${res.doc.entityIndex.size.toLocaleString()}개, 읽기 ${Math.round(res.readMs)}ms, 그리기 ${Math.round(res.model.ms)}ms`);
+      for (const x of w.slice(0, 6)) this.cmd.print(`참고: ${x.message}${x.count ? ` (${x.count})` : ''}`);
+      this.loadFonts(st);
+      return st;
+    } catch (e) {
+      const code = e instanceof EngineError ? e.code : 'internal';
+      const msg = e instanceof EngineError && code !== 'internal' ? errorMessage(code as CadErrorCode) : `파일을 열지 못했습니다: ${e instanceof Error ? e.message : String(e)}`;
+      toast(`${name}: ${msg}`, 'error', 7000);
+      this.cmd.print(`${name}: ${msg}`, 'err');
+      return null;
+    } finally {
+      this.ui.setBusy(null);
+    }
+  }
+
+  private loadFonts(st: DocState): Promise<void> {
+    let p = this.fontsReady.get(st);
+    if (!p) {
+      const usage = collectTextUsage(st.doc);
+      p = usage.needsOutline ? Promise.all([this.fontLib.require(usage.codes), this.fontLib.requireLatin(usage.latin)]).then(() => undefined).catch(() => undefined) : Promise.resolve();
+      p.then(() => this.pickers.clear());
+      this.fontsReady.set(st, p);
+    }
+    return p;
+  }
+
+  /** 저장된 *Active 뷰가 범위와 겹치고 충분히 크면 그 화면, 아니면 전체 보기 */
+  private initialView(st: DocState): void {
+    const vp = st.doc.vports.find((v) => v.name.toUpperCase() === '*ACTIVE');
+    const b = st.scenes.get(MODEL_SPACE)?.bounds;
+    if (vp && b && vp.height > 0 && Number.isFinite(vp.center.x)) {
+      const aspect = vp.aspect > 0 ? vp.aspect : this.view.width / this.view.height;
+      const hw = (vp.height * aspect) / 2;
+      const hh = vp.height / 2;
+      const ext = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+      const overlaps = !(vp.center.x + hw < b.minX || vp.center.x - hw > b.maxX || vp.center.y + hh < b.minY || vp.center.y - hh > b.maxY);
+      if (overlaps && vp.height >= ext * 0.02 && vp.height <= ext * 50) {
+        this.view.zoomRect(vp.center.x - hw, vp.center.y - hh, vp.center.x + hw, vp.center.y + hh, false, 0);
+        return;
+      }
+    }
+    this.view.zoomExtents(false);
+  }
+
+  activate(st: DocState | null): void {
+    this.cancel(true);
+    this.active = st;
+    this.view.setState(st);
+    this.hoverHandle = null;
+    this.ui.showStart(!st);
+    this.ui.refreshTabs();
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+    document.title = st ? `${st.name} - OpenCAD 2D 뷰어` : 'OpenCAD 2D 뷰어';
+  }
+
+  close(st: DocState): void {
+    const i = this.docs.indexOf(st);
+    if (i < 0) return;
+    this.docs.splice(i, 1);
+    st.dispose(this.view.renderer);
+    for (const k of [...this.pickers.keys()]) if (k.startsWith(`${st.docId}:`)) this.pickers.delete(k);
+    if (this.active === st) this.activate(this.docs[Math.min(i, this.docs.length - 1)] ?? null);
+    else this.ui.refreshTabs();
+  }
+
+  /** 모형·배치 전환 */
+  async setSpace(space: string): Promise<void> {
+    const st = this.active;
+    if (!st) return;
+    const key = tableKey(space);
+    if (st.space === key) return;
+    this.cancel(true);
+    if (!st.scenes.has(key)) {
+      let p = st.buildPending.get(key);
+      if (!p) {
+        this.ui.setBusy('배치 그리는 중…', 0.5);
+        p = this.engine
+          .build(st.docId, space)
+          .then((msg) => {
+            st.addScene(this.view.renderer, msg, key);
+          })
+          .finally(() => {
+            st.buildPending.delete(key);
+            this.ui.setBusy(null);
+          });
+        st.buildPending.set(key, p);
+      }
+      await p;
+    }
+    st.space = key;
+    st.selection.clear();
+    this.view.setState(st);
+    if (!st.cameras.has(key)) this.view.zoomExtents(false);
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+  }
+
+  picker(): Picker | null {
+    const st = this.active;
+    if (!st) return null;
+    const scene = st.scenes.get(st.space);
+    if (!scene) return null;
+    const key = `${st.docId}:${st.space}`;
+    let p = this.pickers.get(key);
+    if (!p) {
+      p = new Picker(st.doc, scene.entities, this.text, st.space);
+      this.pickers.set(key, p);
+    }
+    return p;
+  }
+
+  entity(handle: string): Entity | undefined {
+    return this.active?.doc.entityIndex.get(handle);
+  }
+
+  // -------------------------------------------------------------------------
+  // 선택
+  // -------------------------------------------------------------------------
+
+  setSelection(handles: Iterable<string>, mode: 'replace' | 'add' | 'remove' = 'replace'): void {
+    const st = this.active;
+    if (!st) return;
+    if (mode === 'replace') st.selection.clear();
+    for (const h of handles) {
+      if (mode === 'remove') st.selection.delete(h);
+      else st.selection.add(h);
+    }
+    this.refreshSelectionOverlay();
+    this.ui.refreshPalette();
+    this.ui.refreshStatus();
+  }
+
+  clearSelection(): void {
+    this.setSelection([], 'replace');
+  }
+
+  refreshSelectionOverlay(): void {
+    const st = this.active;
+    const o = this.view.overlay;
+    o.selection = [];
+    o.grips = [];
+    if (st && st.selection.size) {
+      const p = this.picker();
+      if (p) {
+        let n = 0;
+        for (const h of st.selection) {
+          if (n++ > 3000) break;
+          o.selection.push(p.geometry(h));
+        }
+        if (st.selection.size <= 200) {
+          const pts: { x: number; y: number; kind: string }[] = [];
+          for (const h of st.selection) {
+            const e = st.doc.entityIndex.get(h);
+            if (!e) continue;
+            const sp: { x: number; y: number; kind: SnapKind }[] = [];
+            entitySnaps(st.doc, e.type === 'INSERT' ? { ...e, block: '\u0000' } : e, identity(), sp);
+            for (const s of sp) if (s.kind === 'end' || s.kind === 'mid' || s.kind === 'cen' || s.kind === 'ins' || s.kind === 'qua' || s.kind === 'nod') pts.push(s);
+          }
+          o.grips = pts.slice(0, 2000);
+        }
+      }
+    }
+    this.view.requestOverlay();
+  }
+
+  private clearHover(): void {
+    if (this.hoverHandle) {
+      this.hoverHandle = null;
+      this.view.overlay.hover = null;
+      this.view.requestOverlay();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 화면 입력
+  // -------------------------------------------------------------------------
+
+  /** 스냅·직교를 적용한 점 */
+  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind } | null } {
+    const r = this.request;
+    if (r?.kind === 'point' || !r) {
+      const pk = this.picker();
+      if (pk && this.osnapOn && r?.kind === 'point') {
+        const aperture = 10 * this.view.pixelSize();
+        const s = findSnap(this.active!.doc, pk, w, aperture, this.snapModes, r.base);
+        if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind } };
+      }
+      if (r?.kind === 'point' && r.base && this.orthoOn) {
+        const dx = w.x - r.base.x;
+        const dy = w.y - r.base.y;
+        return { p: Math.abs(dx) >= Math.abs(dy) ? { x: w.x, y: r.base.y } : { x: r.base.x, y: w.y }, snap: null };
+      }
+    }
+    return { p: w, snap: null };
+  }
+
+  private onMove(w: Pt, s: Pt, ev: PointerEvent): void {
+    const o = this.view.overlay;
+    o.cursor = ev.pointerType === 'touch' ? null : s;
+    this.cursorWorld = w;
+    const st = this.active;
+    if (!st) return;
+    const r = this.request;
+    const { p, snap } = this.resolvePoint(w);
+    o.snap = snap;
+    if (r?.kind === 'point') {
+      o.rubber = r.rubber ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
+      if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
+      else if (r.base) {
+        const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);
+        let a = (Math.atan2(p.y - r.base.y, p.x - r.base.x) * 180) / Math.PI;
+        if (a < 0) a += 360;
+        o.tip = `${formatLength(d, st.units)} < ${a.toFixed(1)}°`;
+      } else o.tip = r.prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
+    }
+    if (this.windowStart) {
+      o.windowRect = { a: this.windowStart.screen, b: s };
+    }
+    this.ui.setCoords(`${formatLength(p.x, st.units)}, ${formatLength(p.y, st.units)}, ${formatLength(0, st.units)}`);
+    // 선택 미리보기(가만히 있을 때)
+    if (!r && !this.windowStart && ev.pointerType !== 'touch') {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = window.setTimeout(() => this.updateHover(w), 40);
+    } else if (r?.kind === 'entity') {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = window.setTimeout(() => this.updateHover(w), 30);
+    }
+    this.view.requestOverlay();
+  }
+
+  private updateHover(w: Pt): void {
+    const pk = this.picker();
+    if (!pk) return;
+    const h = pk.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
+    if (h === this.hoverHandle) return;
+    this.hoverHandle = h;
+    this.view.overlay.hover = h && !this.active?.selection.has(h) ? pk.geometry(h) : null;
+    this.view.requestOverlay();
+  }
+
+  private onClick(w: Pt, s: Pt, ev: PointerEvent): void {
+    closeMenu();
+    const st = this.active;
+    if (!st) return;
+    const r = this.request;
+    if (r?.kind === 'point') {
+      const { p } = this.resolvePoint(w);
+      this.lastPoint = p;
+      r.resolve({ point: p });
+      return;
+    }
+    const pk = this.picker();
+    if (!pk) return;
+    const tol = this.view.overlay.pickbox * this.view.pixelSize() * (ev.pointerType === 'touch' ? 3 : 1);
+    if (r?.kind === 'entity') {
+      const h = pk.pick(w.x, w.y, tol);
+      if (h) r.resolve({ handle: h, point: w });
+      return;
+    }
+    // 선택
+    if (this.windowStart?.viaClick) {
+      this.finishWindow(this.windowStart.screen, s, ev);
+      return;
+    }
+    const h = pk.pick(w.x, w.y, tol);
+    if (h) {
+      if (ev.shiftKey) this.setSelection([h], st.selection.has(h) ? 'remove' : 'add');
+      else this.setSelection([h], ev.ctrlKey || ev.metaKey ? 'add' : 'add');
+      this.clearHover();
+      return;
+    }
+    if (ev.pointerType === 'touch') {
+      this.clearSelection();
+      return;
+    }
+    // 빈 곳: 창 선택 시작(클릭-클릭)
+    this.windowStart = { screen: s, world: w, viaClick: true };
+    this.view.overlay.windowRect = { a: s, b: s };
+    this.view.requestOverlay();
+  }
+
+  private onDrag(a: Pt, b: Pt, done: boolean, ev: PointerEvent): void {
+    if (!this.active || this.request) return;
+    this.view.overlay.windowRect = { a, b };
+    this.view.requestOverlay();
+    if (done) this.finishWindow(a, b, ev);
+  }
+
+  private finishWindow(a: Pt, b: Pt, ev: PointerEvent): void {
+    this.windowStart = null;
+    this.view.overlay.windowRect = null;
+    const pk = this.picker();
+    if (!pk) return;
+    const wa = this.view.screenToWorld(a.x, a.y);
+    const wb = this.view.screenToWorld(b.x, b.y);
+    const crossing = b.x < a.x;
+    const rect: [number, number, number, number] = [Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)];
+    const hits = pk.select(rect, crossing);
+    this.setSelection(hits, ev.shiftKey ? 'remove' : 'add');
+    this.view.requestOverlay();
+  }
+
+  private onDblClick(w: Pt, _s: Pt): void {
+    void _s;
+    const st = this.active;
+    if (!st || this.request) return;
+    const pk = this.picker();
+    const h = pk?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
+    if (h) {
+      this.setSelection([h], 'replace');
+      this.ui.openPalette('props');
+    }
+  }
+
+  private onContext(w: Pt, _s: Pt, ev: MouseEvent): void {
+    void _s;
+    void w;
+    const r = this.request;
+    if (r) {
+      // 명령 중 오른쪽 클릭 = Enter(AutoCAD 기본 설정과 같은 바로가기 메뉴 대신)
+      const items = [{ label: 'Enter', run: () => r.resolve({ enter: true } as never) }, { label: '취소', kbd: 'Esc', run: () => this.cancel() }, { separator: true }];
+      for (const k of r.keywords) items.push({ label: `${k.label}(${k.key})`, run: () => r.resolve({ keyword: k.key } as never) } as never);
+      if (r.kind === 'point') {
+        items.push({ separator: true } as never, { heading: '객체 스냅 재지정' } as never);
+        for (const kind of ['end', 'mid', 'cen', 'qua', 'int', 'per', 'nea', 'ins', 'nod'] as SnapKind[]) {
+          items.push({ label: SNAP_NAMES[kind]!, run: () => this.snapOnce(kind) } as never);
+        }
+      }
+      showMenu(ev.clientX, ev.clientY, items as never);
+      return;
+    }
+    const st = this.active;
+    const sel = st?.selection.size ?? 0;
+    showMenu(ev.clientX, ev.clientY, [
+      ...(this.lastCommand ? [{ label: `반복 ${this.lastCommand}`, run: () => void this.run(this.lastCommand!) }, { separator: true }] : []),
+      { label: '특성', icon: 'props', kbd: 'Ctrl+1', disabled: !sel, run: () => this.ui.openPalette('props') },
+      { label: '리스트', icon: 'list', disabled: !sel, run: () => void this.run('LIST') },
+      { label: '선택한 객체로 확대', icon: 'zoomWindow', disabled: !sel, run: () => void this.run('ZOOM', 'O') },
+      { label: '선택 해제', disabled: !sel, kbd: 'Esc', run: () => this.clearSelection() },
+      { separator: true },
+      { label: '거리 측정', icon: 'dist', run: () => void this.run('DIST') },
+      { label: '면적 측정', icon: 'area', run: () => void this.run('AREA') },
+      { label: '좌표 확인', icon: 'id', run: () => void this.run('ID') },
+      { separator: true },
+      { label: '전체 보기', icon: 'extents', kbd: '휠 두 번', run: () => this.view.zoomExtents() },
+      { label: '이전 화면', icon: 'zoomPrev', run: () => this.view.zoomPrevious() },
+      { label: '모두 선택', icon: 'selectAll', kbd: 'Ctrl+A', run: () => void this.run('SELECTALL') },
+    ]);
+  }
+
+  private snapOnce(kind: SnapKind): void {
+    const prev = new Set(this.snapModes);
+    const prevOn = this.osnapOn;
+    this.snapModes.clear();
+    this.snapModes.add(kind);
+    this.osnapOn = true;
+    const r = this.request;
+    if (r?.kind === 'point') {
+      const orig = r.resolve;
+      r.resolve = (res) => {
+        this.snapModes.clear();
+        for (const k of prev) this.snapModes.add(k);
+        this.osnapOn = prevOn;
+        orig(res);
+      };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 키보드
+  // -------------------------------------------------------------------------
+
+  private onKey(ev: KeyboardEvent): void {
+    const t = ev.target as HTMLElement | null;
+    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    const inCmd = t === this.cmd.input;
+    const mod = ev.ctrlKey || ev.metaKey;
+    // 기능 키는 어디서나
+    switch (ev.key) {
+      case 'F1':
+        ev.preventDefault();
+        void this.run('HELP');
+        return;
+      case 'F2':
+        ev.preventDefault();
+        this.cmd.toggleHistory();
+        return;
+      case 'F3':
+        ev.preventDefault();
+        this.toggleOsnap();
+        return;
+      case 'F8':
+        ev.preventDefault();
+        this.toggleOrtho();
+        return;
+    }
+    if (mod && !ev.shiftKey && !ev.altKey) {
+      const k = ev.key.toLowerCase();
+      if (k === 'o') {
+        ev.preventDefault();
+        void this.run('OPEN');
+        return;
+      }
+      if (k === '1') {
+        ev.preventDefault();
+        void this.run('PROPERTIES');
+        return;
+      }
+      if (k === '9') {
+        ev.preventDefault();
+        this.cmd.el.hidden = !this.cmd.el.hidden;
+        return;
+      }
+      if (k === 'p') {
+        ev.preventDefault();
+        void this.run('PLOT');
+        return;
+      }
+      if (k === 'a' && !typing) {
+        ev.preventDefault();
+        void this.run('SELECTALL');
+        return;
+      }
+      if (k === 'tab' || ev.key === 'Tab') {
+        ev.preventDefault();
+        this.cycleDoc(1);
+        return;
+      }
+      if (ev.key === 'PageDown' || ev.key === 'PageUp') {
+        ev.preventDefault();
+        this.cycleLayout(ev.key === 'PageDown' ? 1 : -1);
+        return;
+      }
+    }
+    if (typing && !inCmd) return;
+    if (inCmd) return; // 명령행이 직접 처리
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      this.cancel();
+      return;
+    }
+    if ((ev.key === 'Enter' || ev.key === ' ') && !mod) {
+      ev.preventDefault();
+      if (this.request) this.onInput('');
+      else if (this.lastCommand) void this.run(this.lastCommand);
+      return;
+    }
+    if (ev.key === 'Delete' && !this.request) return;
+    // 글자는 명령행으로
+    if (ev.key.length === 1 && !mod && !ev.altKey && ev.key !== ' ') {
+      ev.preventDefault();
+      this.cmd.typeChar(ev.key);
+    }
+  }
+
+  toggleOsnap(): void {
+    this.osnapOn = !this.osnapOn;
+    this.cmd.print(`<객체 스냅 ${this.osnapOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  toggleOrtho(): void {
+    this.orthoOn = !this.orthoOn;
+    this.cmd.print(`<직교 ${this.orthoOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  cycleDoc(d: number): void {
+    if (!this.docs.length) return;
+    const i = this.active ? this.docs.indexOf(this.active) : -1;
+    this.activate(this.docs[(i + d + this.docs.length) % this.docs.length]!);
+  }
+
+  cycleLayout(d: number): void {
+    const st = this.active;
+    if (!st) return;
+    const keys = st.layouts.map((l) => tableKey(l.blockName));
+    const i = keys.indexOf(st.space);
+    void this.setSpace(keys[(i + d + keys.length) % keys.length]!);
+  }
+
+  /** 선택한 객체(없으면 고르게 한다) */
+  async selectedOrPick(ctx: CommandContext, prompt = '객체 선택:'): Promise<string[]> {
+    const st = this.active!;
+    if (st.selection.size) return [...st.selection];
+    const out: string[] = [];
+    for (;;) {
+      const r = await ctx.getEntity(out.length ? `${prompt} (Enter = 끝)` : prompt);
+      if ('enter' in r) break;
+      if ('handle' in r) {
+        out.push(r.handle);
+        this.setSelection([r.handle], 'add');
+      }
+      if (out.length && 'handle' in r && st.selection.size) continue;
+    }
+    return out;
+  }
+
+  /** 선택 하이라이트 형상(오버레이) */
+  geometryOf(handle: string): OverlayGeom | null {
+    return this.picker()?.geometry(handle) ?? null;
+  }
+}

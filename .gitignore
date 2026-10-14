@@ -5,3 +5,6 @@ dist/
 *.log
 # 전역 gitignore가 *.png를 빼므로 저장소에서는 다시 포함한다.
 !*.png
+
+# 전역 gitignore가 *.dxf를 빼므로 예제 도면은 다시 포함한다.
+!public/samples/*.dxf

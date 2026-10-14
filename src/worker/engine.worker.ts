@@ -1,0 +1,85 @@
+/// <reference lib="webworker" />
+/**
+ * 엔진 워커: 파일 해석과 장면 만들기를 화면과 다른 스레드에서 한다.
+ * 프리즘 서비스에서는 서버 엔진이 하던 일을 브라우저 안에서 한다.
+ */
+import type { CadDocument } from '../core/model';
+import { CadReadError } from '../core/errors';
+import { readCadFile } from '../io/index';
+import { buildSpace } from '../render/build';
+import { transferables } from '../render/displaylist';
+import { OutlineLibrary } from '../text/fonts';
+import { TextEngine } from '../text/layout';
+import { collectTextUsage } from '../text/collect';
+import type { FromWorker, SceneMessage, ToWorker } from './protocol';
+
+declare const self: DedicatedWorkerGlobalScope;
+
+let lib: OutlineLibrary | null = null;
+let text: TextEngine = new TextEngine(null);
+const docs = new Map<number, CadDocument>();
+let nextDoc = 1;
+
+function post(msg: FromWorker, transfer: Transferable[] = []): void {
+  self.postMessage(msg, transfer);
+}
+
+function makeScene(doc: CadDocument, space: string): SceneMessage {
+  const t0 = performance.now();
+  const s = buildSpace(doc, space, { text });
+  return {
+    list: s.list,
+    styles: s.styles.specs,
+    layers: s.layers,
+    layerIndex: [...s.layerIndex.entries()],
+    warnings: s.warnings,
+    ms: performance.now() - t0,
+  };
+}
+
+self.onmessage = async (ev: MessageEvent<ToWorker>) => {
+  const msg = ev.data;
+  try {
+    switch (msg.type) {
+      case 'init':
+        lib = new OutlineLibrary(msg.fontBase);
+        text = new TextEngine(lib);
+        break;
+      case 'open': {
+        const t0 = performance.now();
+        const doc = readCadFile(new Uint8Array(msg.data), msg.name, {
+          onProgress: (f) => post({ type: 'progress', id: msg.id, stage: 'read', fraction: f }),
+        });
+        const readMs = performance.now() - t0;
+        const docId = nextDoc++;
+        docs.set(docId, doc);
+        const usage = collectTextUsage(doc);
+        if (usage.needsOutline && lib) {
+          post({ type: 'progress', id: msg.id, stage: 'fonts', fraction: 0 });
+          try {
+            await Promise.all([lib.require(usage.codes), lib.requireLatin(usage.latin)]);
+          } catch (e) {
+            doc.warnings.push({ code: 'font.unavailable', message: '글꼴을 받지 못해 일부 문자를 대체 글꼴로 그립니다.' });
+            void e;
+          }
+        }
+        post({ type: 'document', id: msg.id, docId, doc, readMs });
+        post({ type: 'progress', id: msg.id, stage: 'build', fraction: 0 });
+        const scene = makeScene(doc, '*Model_Space');
+        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, transferables(scene.list));
+        break;
+      }
+      case 'build': {
+        const doc = docs.get(msg.docId);
+        if (!doc) throw new Error('문서가 없습니다');
+        const scene = makeScene(doc, msg.space);
+        post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, transferables(scene.list));
+        break;
+      }
+    }
+  } catch (e) {
+    const id = 'id' in msg ? msg.id : 0;
+    if (e instanceof CadReadError) post({ type: 'error', id, code: e.code, message: e.message });
+    else post({ type: 'error', id, code: 'internal', message: e instanceof Error ? e.message : String(e) });
+  }
+};

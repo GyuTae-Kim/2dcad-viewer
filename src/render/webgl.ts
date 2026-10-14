@@ -224,18 +224,18 @@ type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 export class GLRenderer {
   readonly gl: WebGL2RenderingContext;
-  private readonly segProg: WebGLProgram;
-  private readonly triProg: WebGLProgram;
-  private readonly gFillProg: WebGLProgram;
-  private readonly gStrokeProg: WebGLProgram;
-  private readonly screenProg: WebGLProgram;
+  private segProg!: WebGLProgram;
+  private triProg!: WebGLProgram;
+  private gFillProg!: WebGLProgram;
+  private gStrokeProg!: WebGLProgram;
+  private screenProg!: WebGLProgram;
   private readonly u: Map<WebGLProgram, Uniforms> = new Map();
-  private readonly cornerBuf: WebGLBuffer;
-  private readonly styleTex: WebGLTexture;
-  private readonly screenBuf: WebGLBuffer;
-  private readonly screenVao: WebGLVertexArrayObject;
-  private xlineBuf: WebGLBuffer;
-  private xlineVao: WebGLVertexArrayObject;
+  private cornerBuf!: WebGLBuffer;
+  private styleTex!: WebGLTexture;
+  private screenBuf!: WebGLBuffer;
+  private screenVao!: WebGLVertexArrayObject;
+  private xlineBuf!: WebGLBuffer;
+  private xlineVao!: WebGLVertexArrayObject;
   width = 1;
   height = 1;
   dpr = 1;
@@ -244,6 +244,13 @@ export class GLRenderer {
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
     if (!gl) throw new Error('이 브라우저는 WebGL2를 지원하지 않습니다.');
     this.gl = gl;
+    this.init();
+  }
+
+  /** 셰이더·공용 버퍼 만들기(문맥을 잃었다가 되찾을 때 다시 부른다) */
+  init(): void {
+    const gl = this.gl;
+    this.u.clear();
     this.segProg = compile(gl, SEG_VS, FS);
     this.triProg = compile(gl, TRI_VS, FS);
     this.gFillProg = compile(gl, GLYPH_FILL_VS, FS);
