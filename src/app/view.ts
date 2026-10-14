@@ -5,7 +5,7 @@ import { MODEL_SPACE, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
 import type { Camera, DocState } from './docstate';
-import { type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
+import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 
 export interface Pt {
   x: number;
@@ -109,6 +109,8 @@ export class CadView {
 
   /** 문맥 복구 뒤 장면을 다시 올리는 함수(앱이 넣는다) */
   onRestore: (() => void) | null = null;
+  /** 깊이 확대용 세부 장면(앱이 만들고 버린다). region 안이고 편집 세대가 같을 때만 기본 장면 대신 그린다 */
+  detail: { docId: number; space: string; gen: number; region: [number, number, number, number]; scale: number; scene: OverlayScene } | null = null;
 
   on(events: ViewEvents): void {
     this.events = events;
@@ -324,8 +326,16 @@ export class CadView {
       const dark = isDark(bg);
       r.clear(rgbF(bg));
       if (!scene) return;
-      r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
-      r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: this.visibleRect() });
+      const vis = this.visibleRect();
+      const d = this.detail;
+      if (d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3]) {
+        // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
+        r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
+        r.draw(d.scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis });
+      } else {
+        r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
+        r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis });
+      }
       this.drawOverlayScene(s.space, this.viewXf(), 3.78 * this.dpr, dark, bg);
       return;
     }

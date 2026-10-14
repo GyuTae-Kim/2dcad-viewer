@@ -576,22 +576,11 @@ export class SceneBuilder {
     return list;
   }
 
-  /** 공간의 곡선 정밀도를 정한다(도면 범위 대각선 × 2e-5) */
+  /** 공간의 곡선 정밀도를 정한다(도면 범위 대각선 × 2e-5, 또는 주어진 값) */
   prepare(blockName: string): void {
-    let ext = this.opt.tolerance;
-    if (!ext) {
-      const mn = this.doc.header.get(tableKey(blockName) === '*MODEL_SPACE' ? '$EXTMIN' : '$PEXTMIN');
-      const mx = this.doc.header.get(tableKey(blockName) === '*MODEL_SPACE' ? '$EXTMAX' : '$PEXTMAX');
-      let diag = 0;
-      if (mn && mx && typeof mn === 'object' && typeof mx === 'object') {
-        diag = Math.hypot(mx.x - mn.x, mx.y - mn.y);
-        if (!(diag > 0 && diag < 1e15)) diag = 0;
-      }
-      if (!diag) diag = 1000;
-      this.extentSize = diag;
-      ext = diag * 2e-5;
-    }
-    this.tol = ext;
+    const diag = spaceExtentSize(this.doc, blockName);
+    this.extentSize = diag;
+    this.tol = this.opt.tolerance || diag * 2e-5;
   }
 
   build(blockName: string): SpaceScene {
@@ -1781,6 +1770,24 @@ function lerpRgb(a: number, b: number, t: number): number {
 }
 
 /** 문서의 한 공간을 표시 목록으로 */
+/** 공간의 범위 대각선(머리말 $EXTMIN·$EXTMAX, 없으면 1000) */
+export function spaceExtentSize(doc: CadDocument, blockName: string): number {
+  const model = tableKey(blockName) === '*MODEL_SPACE';
+  const mn = doc.header.get(model ? '$EXTMIN' : '$PEXTMIN');
+  const mx = doc.header.get(model ? '$EXTMAX' : '$PEXTMAX');
+  let diag = 0;
+  if (mn && mx && typeof mn === 'object' && typeof mx === 'object') {
+    diag = Math.hypot(mx.x - mn.x, mx.y - mn.y);
+    if (!(diag > 0 && diag < 1e15)) diag = 0;
+  }
+  return diag || 1000;
+}
+
+/** 기본 장면의 곡선 정밀도(도면 단위) */
+export function spaceTolerance(doc: CadDocument, blockName: string): number {
+  return spaceExtentSize(doc, blockName) * 2e-5;
+}
+
 export function buildSpace(doc: CadDocument, blockName: string, opt: BuildOptions): SpaceScene {
   return new SceneBuilder(doc, opt).build(blockName);
 }

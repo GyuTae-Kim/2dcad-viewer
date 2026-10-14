@@ -17,8 +17,10 @@ import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
 import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack } from './tracking';
 import { gripPoints } from '../edit/geom';
+import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
+import { OverlayScene } from './scene';
 import type { EditOp } from '../edit/session';
 
 export class CancelError extends Error {
@@ -165,6 +167,7 @@ export class App {
       viewChanged: () => {
         this.refreshSelectionOverlay();
         this.ui?.refreshStatus();
+        this.scheduleDetail();
       },
     });
     this.view.onRestore = () => {
@@ -644,6 +647,65 @@ export class App {
     this.ui.refreshStatus();
     this.ui.refreshPalette();
     this.refreshSelectionOverlay();
+  }
+
+  // -------------------------------------------------------------------------
+  // 깊이 확대: 보이는 영역을 지금 확대에 맞는 정밀도로 다시 나눈다(AutoCAD의 재생성과 같은 일)
+  // -------------------------------------------------------------------------
+
+  private detailTimer = 0;
+
+  scheduleDetail(): void {
+    clearTimeout(this.detailTimer);
+    this.detailTimer = window.setTimeout(() => this.updateDetail(), 250);
+  }
+
+  private dropDetail(): void {
+    const d = this.view.detail;
+    if (!d) return;
+    d.scene.dispose(this.view.renderer);
+    this.view.detail = null;
+    this.view.requestRender();
+  }
+
+  private updateDetail(): void {
+    const st = this.active;
+    if (!st || !st.isModel || !st.scenes.get(st.space)) return this.dropDetail();
+    const cam = this.view.camera();
+    // 기본 장면의 현-곡선 오차가 0.6픽셀을 넘을 때만
+    if (spaceTolerance(st.doc, st.space) * cam.scale < 0.6) return this.dropDetail();
+    const a = this.view.screenToWorld(0, this.view.height);
+    const b = this.view.screenToWorld(this.view.width, 0);
+    const vis: [number, number, number, number] = [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
+    const d = this.view.detail;
+    if (
+      d &&
+      d.docId === st.docId &&
+      d.space === st.space &&
+      d.gen === st.gen &&
+      d.region[0] <= vis[0] &&
+      d.region[1] <= vis[1] &&
+      d.region[2] >= vis[2] &&
+      d.region[3] >= vis[3] &&
+      cam.scale <= d.scale * 1.5 &&
+      cam.scale >= d.scale / 4
+    )
+      return;
+    const pk = this.picker();
+    if (!pk) return;
+    const w = vis[2] - vis[0];
+    const hgt = vis[3] - vis[1];
+    const region: [number, number, number, number] = [vis[0] - w * 0.5, vis[1] - hgt * 0.5, vis[2] + w * 0.5, vis[3] + hgt * 0.5];
+    const handles = pk.overlapping(region);
+    if (handles.length > 30000) return this.dropDetail();
+    const block = st.doc.blocks.get(st.space);
+    if (!block) return;
+    const want = new Set(handles);
+    const list = block.entities.filter((e) => want.has(e.handle));
+    const scene = new OverlayScene(this.view.renderer, st.doc, list, this.text, st.space, 0.3 / cam.scale);
+    this.dropDetail();
+    this.view.detail = { docId: st.docId, space: st.space, gen: st.gen, region, scale: cam.scale, scene };
+    this.view.requestRender();
   }
 
   /** 블록 편집기 열기: 블록 정의를 공간처럼 열어 그리기·수정 명령으로 고친다 */

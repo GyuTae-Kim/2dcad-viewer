@@ -81,6 +81,7 @@ export class EditManager {
     const drawVars = tx.ops.some((o) => o.kind === 'header' && /^\$(LTSCALE|PSLTSCALE|PDMODE|PDSIZE|FILLMODE|MIRRTEXT|QTEXTMODE|TEXTFILL)$/.test(o.name));
     if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged || drawVars) this.schedule(st, sum.blocksChanged || sum.tablesChanged || drawVars, tx.rebuildNow || drawVars ? 0 : REBUILD_DELAY);
     app.view.requestRender();
+    app.scheduleDetail();
     app.refreshSelectionOverlay();
     app.ui.refreshPalette();
     app.ui.refreshStatus();
