@@ -1376,3 +1376,43 @@ button.aci.on {
 .layouttab.blockedit-close {
   color: #ffb44c;
 }
+
+/* 밝은 화면 테마(COLORTHEME 1). 도면 영역(모형·배치 배경)은 그대로 둔다(AutoCAD와 같다) */
+:root[data-theme='light'] {
+  --bg-app: #eef0f3;
+  --bg-title: #e2e5ea;
+  --bg-ribbon: #f7f8fa;
+  --bg-ribbon-tabs: #e6e9ee;
+  --bg-panel: #f4f5f7;
+  --bg-input: #ffffff;
+  --bg-hover: #dce3ec;
+  --bg-active: #1d5fae;
+  --border: #c3c9d2;
+  --border-soft: #d3d8e0;
+  --text: #1d2530;
+  --text-dim: #4f5b69;
+  --text-faint: #7a8593;
+  --accent: #1f6fd1;
+  --accent-soft: rgba(31, 111, 209, 0.14);
+  --danger: #c62828;
+  --ok: #1b8a4a;
+  --cmd-bg: rgba(250, 251, 252, 0.95);
+  color-scheme: light;
+}
+:root[data-theme='light'] table.grid td {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+:root[data-theme='light'] table.grid tr:hover td {
+  background: rgba(0, 0, 0, 0.04);
+}
+:root[data-theme='light'] .swatch {
+  border-color: rgba(0, 0, 0, 0.35);
+}
+:root[data-theme='light'] .dyn {
+  border-color: #9aa6b5;
+  background: rgba(250, 251, 252, 0.96);
+}
+/* 활성 파일 탭은 도면 영역 색(어두움)에 붙으므로 글자는 밝게 */
+:root[data-theme='light'] .filetab.active {
+  color: #e8ebf0;
+}
