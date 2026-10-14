@@ -19,6 +19,7 @@ import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
 import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack } from './tracking';
 import { gripPoints } from '../edit/geom';
+import { dynGrips, isDynamicReference } from '../edit/dynblock';
 import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { kindName as entityKindName } from '../edit/extract';
@@ -1018,6 +1019,13 @@ export class App {
             } catch {
               /* 그립이 없는 객체 */
             }
+            if (e.type === 'INSERT') {
+              try {
+                for (const g of dynGrips(st.doc, e)) this.gripList.push({ handle: h, id: g.id, point: g.point });
+              } catch {
+                /* 동적 블록 정의를 읽지 못함 */
+              }
+            }
             if (this.gripList.length > 2000) break;
           }
           o.grips = this.gripList.map((g) => g.point);
@@ -1427,12 +1435,21 @@ export class App {
     }
     const st = this.active;
     const sel = st?.selection.size ?? 0;
+    const one = sel === 1 ? st!.doc.entityIndex.get([...st!.selection][0]!) : undefined;
+    const dynRef: boolean = !!st && isDynamicReference(st.doc, one);
     showMenu(ev.clientX, ev.clientY, [
       ...(this.lastCommand ? [{ label: `반복 ${this.lastCommand}`, run: () => void this.run(this.lastCommand!) }, { separator: true }] : []),
       { label: '특성', icon: 'props', kbd: 'Ctrl+1', disabled: !sel, run: () => this.ui.openPalette('props') },
       { label: '리스트', icon: 'list', disabled: !sel, run: () => void this.run('LIST') },
       { label: '선택한 객체로 확대', icon: 'zoomWindow', disabled: !sel, run: () => void this.run('ZOOM', 'O') },
       { label: '선택 해제', disabled: !sel, kbd: 'Esc', run: () => this.clearSelection() },
+      ...(dynRef
+        ? [
+            { separator: true },
+            { label: '동적 블록 특성', run: () => void this.run('DYNPROPS') },
+            { label: '블록 재설정', run: () => void this.run('RESETBLOCK') },
+          ]
+        : []),
       { separator: true },
       { label: '객체 격리', disabled: !sel, run: () => void this.run('ISOLATEOBJECTS') },
       { label: '객체 숨기기', disabled: !sel, run: () => void this.run('HIDEOBJECTS') },

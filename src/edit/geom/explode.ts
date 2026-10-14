@@ -116,7 +116,9 @@ function explodeInsert(e: InsertEntity, doc: CadDocument): EditResult {
   const sz = e.scale.z || 1;
   const rows = Math.max(1, e.rowCount);
   const cols = Math.max(1, e.columnCount);
-  const content = b.entities.filter((c) => !(c.type === 'ATTDEF' && !((c as AttribEntity).attFlags & 2)));
+  // 동적 블록 표현(*U)에서 가시성 상태로 숨은(60) 객체는 분해 결과에 넣지 않는다(AutoCAD와 같다)
+  const dynRep = /^\*U/i.test(e.block);
+  const content = b.entities.filter((c) => !(c.type === 'ATTDEF' && !((c as AttribEntity).attFlags & 2)) && !(dynRep && c.invisible));
   const out: Entity[] = [];
   const blocks = [];
   let message: string | undefined;
@@ -141,7 +143,7 @@ function explodeInsert(e: InsertEntity, doc: CadDocument): EditResult {
     }
   // 속성 → 현재 값의 문자
   for (const a of e.attribs) {
-    if (a.attFlags & 1) continue;
+    if (a.attFlags & 1 || (dynRep && a.invisible)) continue;
     if (a.mtext) {
       out.push(freshEntity({ ...cloneEntity(a.mtext), ...inherit(a), type: 'MTEXT' } as MTextEntity));
       continue;

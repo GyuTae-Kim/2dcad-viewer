@@ -34,6 +34,7 @@ const DEFS: readonly (readonly [string, string, string, number, boolean])[] = [
   ['WIPEOUTVARIABLES', 'AcDbWipeoutVariables', 'WipeOut|Product Desc: WipeOut Dbx Application|Company: Autodesk, Inc.|WEB Address: www.autodesk.com', 0, false],
   ['MULTILEADER', 'AcDbMLeader', 'ACDB_MLEADER_CLASS', 1025, true],
   ['ACAD_TABLE', 'AcDbTable', OBJECTDBX, 1025, true],
+  ['ACDB_BLOCKREPRESENTATION_DATA', 'AcDbBlockRepresentationData', OBJECTDBX, 1153, false],
   ['TABLECONTENT', 'AcDbTableContent', OBJECTDBX, 1152, false],
   ['TABLEGEOMETRY', 'AcDbTableGeometry', OBJECTDBX, 1152, false],
   ['MESH', 'AcDbSubDMesh', OBJECTDBX, 0, true],

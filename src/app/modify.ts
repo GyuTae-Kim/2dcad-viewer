@@ -39,6 +39,7 @@ import type { DocState } from './docstate';
 import type { OverlayGeom, Pt } from './view';
 import { unlockedOnly } from './layers';
 import { form } from './ui/dom';
+import { dynGripEdit } from './dynblock';
 
 // ---------------------------------------------------------------------------
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
@@ -1554,6 +1555,12 @@ export function registerModifyCommands(app: App): void {
       const hot = app.hotGrip;
       app.hotGrip = null;
       if (!hot) return;
+      const dyn = hot.items.find((it) => it.id.startsWith('dyn:'));
+      if (dyn) {
+        await dynGripEdit(app, ctx, dyn.handle, dyn.id);
+        app.refreshSelectionOverlay();
+        return;
+      }
       const items = hot.items.filter((it) => unlockedOnly(app, [it.handle]).length);
       const sel = unlockedOnly(app, [...st.selection]);
       if (!sel.length) return;

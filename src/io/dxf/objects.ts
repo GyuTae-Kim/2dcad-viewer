@@ -39,7 +39,7 @@ function split(rec: DxfRecord, raw?: RawTag[]): { base: ObjectBase; tags: Tags }
   for (; i < codes.length; i++) {
     const c = codes[i]!;
     const v = values[i]!;
-    if (c >= 1000 && rec.type !== 'XRECORD') break;
+    if (c === 1001 && rec.type !== 'XRECORD') break;
     if (c === 100) {
       sub = str(v).trim();
       raw?.push({ code: c, value: v });

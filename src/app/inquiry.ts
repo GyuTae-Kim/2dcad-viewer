@@ -6,6 +6,7 @@ import { type UnitSettings, formatAngle, formatLength } from '../core/units';
 import { bulgeArc, ccwSweep, interpolateFitPoints, nurbsPoints, TAU } from '../geom/curves';
 import { hatchLoops } from '../render/hatch';
 import { decodePercent } from '../text/mtext';
+import { definitionName } from '../edit/dynblock';
 
 export const TYPE_NAMES: Record<string, string> = {
   LINE: '선',
@@ -452,7 +453,17 @@ export function entityProperties(doc: CadDocument, e: Entity, u: UnitSettings): 
       break;
     }
     case 'INSERT': {
-      misc.push({ k: '이름', v: e.block });
+      // 동적 블록 표현(*U…)은 정의 이름을 보이고 표현 블록 이름은 따로 둔다
+      let dyn: string | null = null;
+      if (/^\*U/i.test(e.block)) {
+        try {
+          dyn = definitionName(doc, e);
+        } catch {
+          dyn = null;
+        }
+      }
+      misc.push({ k: '이름', v: dyn ?? e.block });
+      if (dyn) misc.push({ k: '표현 블록', v: e.block });
       geo.push(
         { k: '위치', v: P(e.insert) },
         { k: '축척 X', v: e.scale.x.toFixed(4) },

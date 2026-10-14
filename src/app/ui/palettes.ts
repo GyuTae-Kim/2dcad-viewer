@@ -11,6 +11,7 @@ import { type LayerPatch, cannotDeleteLayer, createLayer, currentLayer, deleteLa
 import { pickColor } from './colorpick';
 import { h, showMenu } from './dom';
 import { icon } from './icons';
+import { dynPaletteGroup } from '../dynblock';
 
 type Tab = 'props' | 'layers' | 'dims' | 'find';
 
@@ -140,6 +141,8 @@ export class Palette {
       const fields = geometryFields(t);
       if (fields.length) this.editGroup(t === 'TEXT' || t === 'MTEXT' || t === 'ATTDEF' ? '문자' : '형상', fields, sel, handles);
       if (sel.length === 1 && t === 'INSERT') {
+        const dyn = dynPaletteGroup(app, sel[0]!.handle);
+        if (dyn) this.body.append(dyn);
         const af = attribFields(sel[0] as InsertEntity);
         if (af.length) this.editGroup('속성', af, sel, handles);
       }

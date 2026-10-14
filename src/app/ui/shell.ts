@@ -294,6 +294,10 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
             { cmd: 'BLOCKREPLACE', label: '블록 대치', icon: 'insert' },
           ],
+          [
+            { cmd: 'DYNPROPS', label: '동적 특성', icon: 'props', tip: '동적 블록 참조의 매개변수 값' },
+            { cmd: 'RESETBLOCK', label: '블록 재설정', icon: 'redo', tip: '동적 블록 참조를 정의 기본값으로' },
+          ],
         ],
       },
       {
