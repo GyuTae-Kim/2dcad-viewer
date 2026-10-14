@@ -366,7 +366,6 @@ export function registerCommands(app: App): void {
       app.ui.refreshStatus();
     },
   });
-  app.register({ name: 'OSNAP', aliases: ['OS'], title: '객체 스냅 켜기/끄기', transparent: true, noDoc: true, run: () => app.toggleOsnap() });
   app.register({ name: 'ORTHO', title: '직교 켜기/끄기', transparent: true, noDoc: true, run: () => app.toggleOrtho() });
   app.register({
     name: 'MODEL',

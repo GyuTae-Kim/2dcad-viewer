@@ -21,7 +21,7 @@ import { gripPoints } from '../edit/geom';
 import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
-import { OverlayScene, layoutViewports } from './scene';
+import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 
@@ -119,6 +119,9 @@ export class App {
   osnapOn = true;
   readonly snapModes = new Set<SnapKind>(DEFAULT_SNAPS);
   orthoOn = false;
+  /** 격자 표시(F7)·격자 스냅(F9) */
+  gridOn = false;
+  snapOn = false;
   /** 극좌표 추적(F10)과 증분 각도 */
   polarOn = false;
   polarInc = Math.PI / 2;
@@ -186,6 +189,19 @@ export class App {
       }
     };
     this.view.viewportModel = (st, vx) => viewportModel(this, st, vx);
+    this.view.gridInfo = () => {
+      const st = this.active;
+      if (!this.gridOn || !st) return null;
+      let limits: [number, number, number, number] | undefined;
+      if (st.onLayout) {
+        const lay = st.layoutFor(st.displaySpace);
+        if (lay) {
+          const p = paperInfo(lay, null);
+          limits = [p.minX, p.minY, p.maxX, p.maxY];
+        }
+      }
+      return { x: st.grid.x, y: st.grid.y, major: st.grid.major, baseX: st.snap.baseX, baseY: st.snap.baseY, limits };
+    };
     window.addEventListener('keydown', (ev) => this.onKey(ev));
     window.addEventListener('beforeunload', (ev) => {
       if (this.docs.some((d) => d.session?.dirty)) ev.preventDefault();
@@ -1005,6 +1021,8 @@ export class App {
           if (t) return { p: t.p, snap: null, track: t };
         }
       }
+      // 격자 스냅(객체 스냅·추적이 먼저)
+      if (r?.kind === 'point' && this.snapOn) w = this.snapToGrid(w);
       if (r?.kind === 'point' && r.base && this.orthoOn) {
         const dx = w.x - r.base.x;
         const dy = w.y - r.base.y;
@@ -1341,9 +1359,17 @@ export class App {
         ev.preventDefault();
         this.toggleOsnap();
         return;
+      case 'F7':
+        ev.preventDefault();
+        this.toggleGrid();
+        return;
       case 'F8':
         ev.preventDefault();
         this.toggleOrtho();
+        return;
+      case 'F9':
+        ev.preventDefault();
+        this.toggleSnap();
         return;
       case 'F10':
         ev.preventDefault();
@@ -1468,6 +1494,27 @@ export class App {
     this.osnapOn = !this.osnapOn;
     this.cmd.print(`<객체 스냅 ${this.osnapOn ? '켜기' : '끄기'}>`);
     this.ui.refreshStatus();
+  }
+
+  toggleGrid(on = !this.gridOn): void {
+    this.gridOn = on;
+    this.cmd.print(`<격자 ${this.gridOn ? '켜기' : '끄기'}>`);
+    this.view.requestOverlay();
+    this.ui.refreshStatus();
+  }
+
+  toggleSnap(on = !this.snapOn): void {
+    this.snapOn = on;
+    this.cmd.print(`<스냅 ${this.snapOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  /** 격자 스냅: 스냅 기준점에서 간격의 배수로 */
+  private snapToGrid(w: Pt): Pt {
+    const st = this.active;
+    if (!st || st.msVp) return w;
+    const s = st.snap;
+    return { x: s.baseX + Math.round((w.x - s.baseX) / s.x) * s.x, y: s.baseY + Math.round((w.y - s.baseY) / s.y) * s.y };
   }
 
   toggleOrtho(): void {

@@ -765,6 +765,8 @@ export class Shell implements UiHooks {
       h('span', { class: 'status-sep' }),
       osnap,
       caret,
+      mk('grid', 'grid', '격자 표시 (F7)', () => app.toggleGrid()),
+      mk('snap', 'gridSnap', '스냅 모드 (F9) · 격자 간격으로 점을 맞춥니다', () => app.toggleSnap()),
       mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()),
       polar,
       mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()),
@@ -805,6 +807,8 @@ export class Shell implements UiHooks {
     const st = app.active;
     this.statusBtns.osnap?.classList.toggle('on', app.osnapOn);
     this.statusBtns.ortho?.classList.toggle('on', app.orthoOn);
+    this.statusBtns.grid?.classList.toggle('on', app.gridOn);
+    this.statusBtns.snap?.classList.toggle('on', app.snapOn);
     this.statusBtns.polar?.classList.toggle('on', app.polarOn);
     this.statusBtns.otrack?.classList.toggle('on', app.otrackOn);
     this.statusBtns.dyn?.classList.toggle('on', app.dynOn);

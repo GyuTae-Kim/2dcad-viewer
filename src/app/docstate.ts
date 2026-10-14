@@ -38,6 +38,9 @@ export class DocState {
   /** 도면층 이름(대문자) → 상태(모든 공간이 함께 쓴다) */
   readonly layers = new Map<string, LayerState>();
   readonly scenes = new Map<string, SpaceScene>();
+  /** 격자·스냅 간격(도면의 *Active 뷰포트 값, 없으면 단위별 기본값) */
+  grid: { x: number; y: number; major: number };
+  snap: { x: number; y: number; baseX: number; baseY: number };
   /** 숨긴 최상위 객체(HIDEOBJECTS·ISOLATEOBJECTS, 저장하지 않는다) */
   readonly hiddenObjects = new Set<string>();
   /** PSLTSCALE: 뷰포트 축척별 모형 장면(선종류 배율 → 장면). 편집하면 버린다 */
@@ -62,6 +65,11 @@ export class DocState {
     readonly readMs: number,
   ) {
     this.units = unitSettings(doc);
+    const act = doc.vports.find((v) => v.name.toUpperCase() === '*ACTIVE');
+    const def = doc.header.get('$MEASUREMENT') === 0 ? 0.5 : 10;
+    const pos = (v: number | undefined) => (v && v > 0 && Number.isFinite(v) ? v : def);
+    this.grid = { x: pos(act?.gridSpacing.x), y: pos(act?.gridSpacing.y), major: 5 };
+    this.snap = { x: pos(act?.snapSpacing.x), y: pos(act?.snapSpacing.y), baseX: act?.snapBase.x ?? 0, baseY: act?.snapBase.y ?? 0 };
     for (const w of doc.warnings) this.warnings.push(w);
     this.saveName = name;
   }

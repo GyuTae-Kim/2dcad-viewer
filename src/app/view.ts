@@ -49,6 +49,15 @@ export interface OverlayState {
   tip: string | null;
 }
 
+export interface GridInfo {
+  x: number;
+  y: number;
+  major: number;
+  baseX: number;
+  baseY: number;
+  limits?: [number, number, number, number];
+}
+
 export interface ViewEvents {
   move(world: Pt, screen: Pt, ev: PointerEvent): void;
   down(world: Pt, screen: Pt, ev: PointerEvent): void;
@@ -576,6 +585,66 @@ export class CadView {
     if (vx.clip) r.stencilClip(null);
   }
 
+  /** 격자선: 너무 촘촘하면 주 격자 배수로 넓힌다(적응 격자) */
+  /** 격자(F7)를 켰으면 그 간격(앱이 준다) */
+  gridInfo: (() => GridInfo | null) | null = null;
+
+  private drawGrid(g: CanvasRenderingContext2D, grid: GridInfo, dark: boolean): void {
+    const a = this.screenToWorld(0, this.h);
+    const b = this.screenToWorld(this.w, 0);
+    let [x0, y0, x1, y1] = [a.x, a.y, b.x, b.y];
+    if (grid.limits) {
+      x0 = Math.max(x0, grid.limits[0]);
+      y0 = Math.max(y0, grid.limits[1]);
+      x1 = Math.min(x1, grid.limits[2]);
+      y1 = Math.min(y1, grid.limits[3]);
+      if (x1 <= x0 || y1 <= y0) return;
+    }
+    const px = this.camera().scale;
+    const major = Math.max(1, Math.round(grid.major));
+    let sx = grid.x;
+    let sy = grid.y;
+    for (let i = 0; i < 12 && Math.min(sx, sy) * px < 8; i++) {
+      sx *= major > 1 ? major : 2;
+      sy *= major > 1 ? major : 2;
+    }
+    if (Math.min(sx, sy) * px < 4 || (x1 - x0) / sx > 2000 || (y1 - y0) / sy > 2000) return;
+    const line = (minor: boolean, horiz: boolean) => {
+      g.beginPath();
+      const step = horiz ? sy : sx;
+      const base = horiz ? grid.baseY : grid.baseX;
+      const lo = horiz ? y0 : x0;
+      const hi = horiz ? y1 : x1;
+      const k0 = Math.ceil((lo - base) / step);
+      const k1 = Math.floor((hi - base) / step);
+      for (let k = k0; k <= k1; k++) {
+        if ((k % major === 0) === minor && major > 1) continue;
+        const v = base + k * step;
+        if (horiz) {
+          const p = this.worldToScreen(x0, v);
+          const q = this.worldToScreen(x1, v);
+          g.moveTo(p.x, Math.round(p.y) + 0.5);
+          g.lineTo(q.x, Math.round(q.y) + 0.5);
+        } else {
+          const p = this.worldToScreen(v, y0);
+          const q = this.worldToScreen(v, y1);
+          g.moveTo(Math.round(p.x) + 0.5, p.y);
+          g.lineTo(Math.round(q.x) + 0.5, q.y);
+        }
+      }
+      g.stroke();
+    };
+    g.save();
+    g.lineWidth = 1;
+    g.strokeStyle = dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)';
+    line(true, false);
+    line(true, true);
+    g.strokeStyle = dark ? 'rgba(255,255,255,0.13)' : 'rgba(0,0,0,0.15)';
+    line(false, false);
+    line(false, true);
+    g.restore();
+  }
+
   private renderOverlay(): void {
     const g = this.ctx2d;
     const d = this.dpr;
@@ -649,6 +718,9 @@ export class CadView {
       g.stroke();
       g.restore();
     };
+    // 격자
+    const gi = s && !s.msVp ? this.gridInfo?.() : null;
+    if (gi) this.drawGrid(g, gi, dark);
     // MSPACE: 강조·선택·그립은 활성 뷰포트 안만
     if (vpRect) {
       g.save();
