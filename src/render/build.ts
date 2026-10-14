@@ -1266,9 +1266,12 @@ export class SceneBuilder {
         this.blockContents(b, e, m, ctx);
         if (clip) {
           this.out.popClip();
-          // 자르기 경계 틀(XCLIPFRAME 1·2, 기본 2 = 화면에 보임)
+          // 자르기 경계 틀(XCLIPFRAME 1 보이고 출력, 2(기본) 화면에만)
           const xf = this.doc.header.get('$XCLIPFRAME');
-          if (clip.frame && (xf === undefined || xf === 1 || xf === 2)) this.out.polyline(clip.poly, true, this.resolve(e, ctx).style);
+          if (clip.frame && (xf === undefined || xf === 1 || xf === 2)) {
+            const style = this.resolve(e, ctx).style;
+            this.out.polyline(clip.poly, true, xf === 1 ? style : this.noPlotStyle(style));
+          }
         }
       }
     // 속성은 블록 참조와 같은 공간에 있다
