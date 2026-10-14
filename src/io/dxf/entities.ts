@@ -721,6 +721,8 @@ function mleader(c: Common): MLeaderEntity {
   let curAttr: (typeof attrs)[number] | null = null;
   for (let i = 0; i < t.length; i++) {
     const code = t.codes[i]!;
+    // 점의 Y·Z(20~39)는 pointAt이 함께 읽는다.
+    if ((code >= 20 && code <= 39) || (code >= 120 && code <= 139)) continue;
     const v = t.values[i];
     const s = typeof v === 'string' ? v.trim() : '';
     if (code === 300 && s === 'CONTEXT_DATA{') {
@@ -1498,6 +1500,8 @@ function shape(c: Common): ShapeEntity {
 
 function table(c: Common): TableEntity {
   const t = c.tags;
+  // 축척·회전은 AcDbBlockReference 부분에만 있다(AcDbTable의 40번대는 셀 여백 등).
+  const br = t.subs.includes('AcDbBlockReference') ? 'AcDbBlockReference' : undefined;
   const rowHeights = t.all(141).map(num);
   const columnWidths = t.all(142).map(num);
   const e = {
@@ -1506,8 +1510,8 @@ function table(c: Common): TableEntity {
     block: name(t.str(2)),
     insert: t.point(10),
     direction: t.point(11, { x: 1, y: 0, z: 0 }),
-    scale: { x: t.num(41, 1), y: t.num(42, 1), z: t.num(43, 1) },
-    rotation: t.num(50) * DEG,
+    scale: { x: t.num(41, 1, br), y: t.num(42, 1, br), z: t.num(43, 1, br) },
+    rotation: t.num(50, 0, br) * DEG,
     rows: t.int(91),
     columns: t.int(92),
     rowHeights,
