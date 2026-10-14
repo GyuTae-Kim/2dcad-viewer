@@ -626,7 +626,7 @@ export interface ImageEntity extends EntityBase {
   fade: number;
   /** 71: 1 사각형, 2 다각형 */
   clipBoundaryType: number;
-  /** 픽셀 좌표 경계(이미지 왼쪽 아래 -0.5, -0.5 기준) */
+  /** 픽셀 좌표 경계(원점은 이미지 왼쪽 위이고 y는 아래로, 모서리가 -0.5) */
   clipBoundary: Vec2[];
   clipInverted?: boolean;
 }

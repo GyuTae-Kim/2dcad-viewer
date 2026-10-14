@@ -78,9 +78,11 @@ export function edgePieces(e: Entity, doc?: CadDocument, depth = 0): Piece[] {
         const [a, b] = bnd as [Vec2, Vec2];
         bnd = [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }];
       }
+      // 픽셀 좌표의 원점은 이미지 왼쪽 위(y 아래로)
       const u = e.uVector;
       const v = e.vVector;
-      const w = bnd.map((p) => ({ x: e.insert.x + u.x * (p.x + 0.5) + v.x * (p.y + 0.5), y: e.insert.y + u.y * (p.x + 0.5) + v.y * (p.y + 0.5) }));
+      const H = e.imageSize.y;
+      const w = bnd.map((p) => ({ x: e.insert.x + u.x * (p.x + 0.5) + v.x * (H - 0.5 - p.y), y: e.insert.y + u.y * (p.x + 0.5) + v.y * (H - 0.5 - p.y) }));
       return segs(w, true);
     }
     case 'VIEWPORT': {

@@ -334,14 +334,15 @@ function polylineHead(c: Common): PolylineEntity {
   return e;
 }
 
-function vertex(c: Common): PolyVertex {
+function vertex(c: Common, defaults?: { startWidth: number; endWidth: number }): PolyVertex {
   const t = c.tags;
   const flags = t.int(70);
+  // 폭이 적히지 않은 정점은 POLYLINE의 기본 폭을 쓴다
   const v: PolyVertex = {
     location: t.point(10),
     bulge: t.num(42),
-    startWidth: t.num(40),
-    endWidth: t.num(41),
+    startWidth: t.has(40) ? t.num(40) : (defaults?.startWidth ?? 0),
+    endWidth: t.has(41) ? t.num(41) : (defaults?.endWidth ?? 0),
     flags,
   };
   if (flags & 2 && t.has(50)) v.tangent = t.num(50) * DEG;
@@ -1799,6 +1800,6 @@ export function parseEntity(rec: DxfRecord, ctx: EntityContext): Entity | null {
 }
 
 /** VERTEX 레코드 → 정점 */
-export function parseVertex(rec: DxfRecord): PolyVertex {
-  return vertex(splitCommon(rec));
+export function parseVertex(rec: DxfRecord, defaults?: { startWidth: number; endWidth: number }): PolyVertex {
+  return vertex(splitCommon(rec), defaults);
 }

@@ -268,6 +268,21 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
               { code: 280, value: schema },
               { code: 1, value: or.dat.TV() },
             ];
+          } else if (t === 'RASTERVARIABLES') {
+            // 클래스 판(90), 테두리(70), 표시 품질(71), 단위(72)
+            o.raw = [
+              { code: 100, value: 'AcDbRasterVariables' },
+              { code: 90, value: or.dat.BL() },
+              { code: 70, value: or.dat.BS() },
+              { code: 71, value: or.dat.BS() },
+              { code: 72, value: or.dat.BS() },
+            ];
+          } else if (t === 'WIPEOUTVARIABLES') {
+            // 테두리(70)
+            o.raw = [
+              { code: 100, value: 'AcDbWipeoutVariables' },
+              { code: 70, value: or.dat.BS() },
+            ];
           }
           // 해석하지 않는 객체: 같은 버전으로 쓸 때 되쓸 본문
           const raw = captureRaw(or, o);

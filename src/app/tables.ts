@@ -296,6 +296,11 @@ export function registerTableCommands(app: App): void {
         return;
       }
       const key = `$${name.replace(/^\$/, '').toUpperCase()}`;
+      // 헤더가 아니라 객체에 저장되는 변수
+      if (key === '$IMAGEFRAME' || key === '$WIPEOUTFRAME') {
+        await app.run(key.slice(1));
+        return;
+      }
       const cur = st.doc.header.get(key);
       if (cur === undefined) {
         ctx.print(`변수 "${name}"이(가) 이 도면에 없습니다.`, 'err');

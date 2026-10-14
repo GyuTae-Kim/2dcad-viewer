@@ -6,6 +6,8 @@
  */
 import type { Entity, InsertEntity, PointEntity } from '../core/model';
 import { entityDefaults, tableKey } from '../core/model';
+import { frameSetting } from '../core/framevars';
+import { frameSettingOps } from '../edit/framevars';
 import { type EditResult, reverseEntity, transformEntity } from '../edit/geom';
 import { alignTransform } from '../edit/geom/align';
 import { type Continuity, blendEntities, blendPath } from '../edit/geom/blend';
@@ -693,16 +695,18 @@ export function registerModify2Commands(app: App): void {
       });
       const props = { ...currentProps(app), handle: '' };
       if ('keyword' in r && r.keyword === 'F') {
-        const cur = hnum(doc, '$WIPEOUTFRAME', 1);
+        const cur = frameSetting(doc, 'wipeout');
         const def = cur === 0 ? 'OFF' : cur === 2 ? 'D' : 'ON';
         const k = await choose(ctx, `모드 입력 [켜기(ON)/끄기(OFF)/표시하지만 플롯 안 함(D)] <${cur === 0 ? '끄기' : cur === 2 ? '표시하지만 플롯 안 함' : '켜기'}>:`, [{ key: 'ON', label: '켜기' }, { key: 'OFF', label: '끄기' }, { key: 'D', label: '표시하지만 플롯 안 함' }], def);
         const v = k === 'OFF' ? 0 : k === 'D' ? 2 : 1;
         if (v === cur) return;
-        // 가리기 객체를 다시 그리도록 같은 작업 묶음에서 건드린다
-        const ops = [{ kind: 'header' as const, name: '$WIPEOUTFRAME', before: doc.header.get('$WIPEOUTFRAME'), after: v }];
-        const touch = [];
-        for (const [key, b] of doc.blocks) for (const e of b.entities) if (e.type === 'WIPEOUT' && touch.length < 20000) touch.push({ kind: 'modify' as const, block: key, before: e, after: { ...e } });
-        st.session.commit({ label: 'WIPEOUT', ops: [...ops, ...touch], group: ctx.group, rebuildNow: true });
+        // 변수 객체(ACAD_WIPEOUT_VARS)가 바뀌면 편집 관리자가 화면을 다시 만든다
+        const ops = frameSettingOps(doc, 'wipeout', v, () => st.session.newHandle());
+        if (!ops) {
+          ctx.print('이 도면에는 이름 있는 객체 사전이 없어 프레임 설정을 저장할 수 없습니다.', 'err');
+          return;
+        }
+        st.session.commit({ label: 'WIPEOUT', ops, group: ctx.group });
         ctx.print(`가리기 프레임 = ${v === 0 ? '끄기' : v === 2 ? '표시하지만 플롯 안 함' : '켜기'}`);
         return;
       }
@@ -753,6 +757,30 @@ export function registerModify2Commands(app: App): void {
       addEntities(app, ctx, [w], 'WIPEOUT');
     },
   });
+
+  // ------------------------------------------------------------- IMAGEFRAME·WIPEOUTFRAME
+  for (const [name, kind, label] of [
+    ['IMAGEFRAME', 'image', '이미지 테두리'],
+    ['WIPEOUTFRAME', 'wipeout', '가리기 테두리'],
+  ] as const) {
+    app.register({
+      name,
+      title: label,
+      transparent: true,
+      async run(ctx) {
+        const st = app.active!;
+        const cur = frameSetting(st.doc, kind);
+        const v = await askNumber(ctx, `${name}에 대한 새 값 입력(0 숨김, 1 표시·플롯, 2 표시하지만 플롯 안 함)`, cur, { int: true, min: 0, max: 2 });
+        if (typeof v !== 'number' || v === cur) return;
+        const ops = frameSettingOps(st.doc, kind, v, () => st.session.newHandle());
+        if (!ops) {
+          ctx.print('이 도면에는 이름 있는 객체 사전이 없어 설정을 저장할 수 없습니다.', 'err');
+          return;
+        }
+        st.session.commit({ label: name, ops, group: ctx.group });
+      },
+    });
+  }
 
   // ------------------------------------------------------------- SCALETEXT·JUSTIFYTEXT
   const textOnly = (hs: string[]): Entity[] => {

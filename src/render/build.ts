@@ -29,6 +29,7 @@ import type {
 import { BYBLOCK, BYLAYER, tableKey } from '../core/model';
 import { DIM_VAR_CODES, DIM_VAR_DEFAULTS } from '../core/dimvars';
 import { ACI_RGB } from '../core/color';
+import { type FrameKind, frameSetting } from '../core/framevars';
 import {
   type Mat,
   apply,
@@ -47,7 +48,7 @@ import {
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
 import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist';
-import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
+import { ColorKind, type LayerState, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
@@ -235,6 +236,18 @@ export class SceneBuilder {
   private backgroundStyle(base: Resolved): number {
     const spec = this.styles.specs[base.style]!;
     return this.styles.intern({ ...spec, colorKind: ColorKind.Background, color: 0 });
+  }
+
+  private frames: Partial<Record<FrameKind, number>> = {};
+  /** IMAGEFRAME·WIPEOUTFRAME(한 번만 찾는다) */
+  private frame(kind: FrameKind): number {
+    return (this.frames[kind] ??= frameSetting(this.doc, kind));
+  }
+
+  /** 화면에는 보이고 출력에서는 빠지는 스타일(IMAGEFRAME·WIPEOUTFRAME 2) */
+  private noPlotStyle(style: number): number {
+    const spec = this.styles.specs[style]!;
+    return this.styles.intern({ ...spec, flags: spec.flags | STYLE_FLAG_NO_PLOT });
   }
 
   private patternCache = new Map<string, DashPattern | null>();
@@ -969,7 +982,9 @@ export class SceneBuilder {
         const b = vs[(i + 1) % n]!;
         const pts: number[] = [a.x, a.y];
         bulgePoints(a.x, a.y, b.x, b.y, a.bulge, tol, pts);
-        this.wideStrip(pts, a.sw, a.ew, m, z, r);
+        // 폭이 0인 세그먼트는 보통 선으로
+        if (a.sw > 0 || a.ew > 0) this.wideStrip(pts, a.sw, a.ew, m, z, r);
+        else this.stroke(this.xf(m, pts, z), false, r, ctx);
       }
       return;
     }
@@ -1036,9 +1051,9 @@ export class SceneBuilder {
       const m = this.ocsM(ctx, e.extrusion);
       const vs = e.vertices.filter((v) => !(v.flags & 16));
       const wide = e.defaultStartWidth > 0 || e.defaultEndWidth > 0 || vs.some((v) => v.startWidth > 0 || v.endWidth > 0);
-      const curveFit = (e.flags & 2) !== 0;
+      // 맞춤(curve-fit) 폴리선도 정점의 볼록도가 실제 호다
       this.polyCommon(
-        vs.map((v) => ({ x: v.location.x, y: v.location.y, bulge: curveFit ? 0 : v.bulge, sw: v.startWidth, ew: v.endWidth })),
+        vs.map((v) => ({ x: v.location.x, y: v.location.y, bulge: v.bulge, sw: v.startWidth, ew: v.endWidth })),
         (e.flags & 1) !== 0,
         (e.flags & 128) !== 0,
         wide,
@@ -1678,7 +1693,7 @@ export class SceneBuilder {
 
   private image(e: Extract<Entity, { type: 'IMAGE' | 'WIPEOUT' }>, ctx: Ctx): void {
     const r = this.resolve(e, ctx);
-    // 경계(픽셀 좌표, 이미지 왼쪽 아래 = -0.5, -0.5)
+    // 경계(픽셀 좌표, 원점은 이미지 왼쪽 위이고 y는 아래로. 모서리 = -0.5)
     let bnd = e.clipBoundary.map((p) => [p.x, p.y]);
     if (!e.clipping || bnd.length < 2) bnd = [
       [-0.5, -0.5],
@@ -1695,13 +1710,14 @@ export class SceneBuilder {
         [a[0]!, b[1]!],
       ];
     }
-    // 픽셀 → 월드: insert + (px + 0.5) * u + (py + 0.5) * v (WIPEOUT·IMAGE 모두 v는 위쪽)
+    // 픽셀 → 월드: insert + (px + 0.5) * u + (H - 0.5 - py) * v (u는 오른쪽, v는 위쪽)
     const u = e.uVector;
     const v = e.vVector;
+    const H = e.imageSize.y;
     const pts3: number[] = [];
     for (const [px, py] of bnd) {
       const x = px! + 0.5;
-      const y = py! + 0.5;
+      const y = H - 0.5 - py!;
       pts3.push(e.insert.x + u.x * x + v.x * y, e.insert.y + u.y * x + v.y * y, e.insert.z + u.z * x + v.z * y);
     }
     if (pts3.length >= 6 && pts3[0] === pts3[pts3.length - 3] && pts3[1] === pts3[pts3.length - 2]) pts3.length -= 3;
@@ -1709,8 +1725,9 @@ export class SceneBuilder {
     if (e.type === 'WIPEOUT') {
       const tris = triangulateLoops([w]);
       this.out.triangles(tris, this.backgroundStyle(r));
-      const frame = this.doc.header.get('$WIPEOUTFRAME');
-      if (frame === 1) this.out.polyline(w, true, r.style);
+      // 테두리: 0 숨김, 1 표시·출력, 2 표시만
+      const frame = this.frame('wipeout');
+      if (frame === 1 || frame === 2) this.out.polyline(w, true, frame === 2 ? this.noPlotStyle(r.style) : r.style);
       return;
     }
     const key = imageKey(this.doc, e);
@@ -1726,15 +1743,15 @@ export class SceneBuilder {
       const sy = e.imageSize.y || 1;
       for (let i = 0; i + 1 < tri.length; i += 2) {
         const x = tri[i]! + 0.5;
-        const y = tri[i + 1]! + 0.5;
+        const y = H - 0.5 - tri[i + 1]!;
         const q = applyXY(ctx.m, e.insert.x + u.x * x + v.x * y, e.insert.y + u.y * x + v.y * y, e.insert.z + u.z * x + v.z * y);
         out.push(q.x, q.y, x / sx, 1 - y / sy);
       }
       this.out.image(key, out, r.style, { brightness: e.brightness, contrast: e.contrast, fade: e.fade, transparent: (e.displayFlags & 8) !== 0 });
     }
-    // 테두리: IMAGEFRAME 0이면 파일이 있을 때 숨긴다
-    const frame = this.doc.header.get('$IMAGEFRAME');
-    if (!have || frame !== 0) this.out.polyline(w, true, r.style);
+    // 테두리: IMAGEFRAME 0이면 파일이 있을 때 숨기고, 2면 화면에만 보인다
+    const frame = this.frame('image');
+    if (!have || frame !== 0) this.out.polyline(w, true, have && frame === 2 ? this.noPlotStyle(r.style) : r.style);
     // 파일이 없으면 대각선으로 자리를 표시한다
     if (!have && w.length >= 8) {
       this.out.segment(w[0]!, w[1]!, w[4]!, w[5]!, r.style);

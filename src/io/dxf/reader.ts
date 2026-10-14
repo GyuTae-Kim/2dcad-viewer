@@ -123,8 +123,9 @@ function takeEntity(rec: DxfRecord, stream: RecordStream, ctx: EntityContext): E
   if (e.type === 'POLYLINE') {
     const pl = e as PolylineEntity;
     let p = stream.peek();
+    const widths = { startWidth: pl.defaultStartWidth, endWidth: pl.defaultEndWidth };
     while (p && p.type === 'VERTEX') {
-      pl.vertices.push(parseVertex(stream.next()!));
+      pl.vertices.push(parseVertex(stream.next()!, widths));
       p = stream.peek();
     }
     if (p && p.type === 'SEQEND') stream.next();

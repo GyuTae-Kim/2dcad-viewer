@@ -197,6 +197,7 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
     } else if (opt.plot) rgb = plotColor(rgb, opt.plot.style);
     let visible = L ? L.on && !L.frozen : true;
     if (opt.plot && L && (L.plot === false || L.name.toUpperCase() === 'DEFPOINTS')) visible = false;
+    if (opt.plot && s.flags & STYLE_FLAG_NO_PLOT) visible = false;
     if (visible && opt.viewportFrozen?.has(s.layer)) visible = false;
     if (visible)
       for (const f of s.freezeLayers) {

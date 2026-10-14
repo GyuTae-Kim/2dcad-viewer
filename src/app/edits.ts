@@ -80,7 +80,12 @@ export class EditManager {
     // 지워진 객체는 선택에서 뺀다
     for (const h of [...st.selection]) if (!st.doc.entityIndex.has(h)) st.selection.delete(h);
     // 그림에 영향을 주는 시스템 변수(선종류 축척, 점 모양, 채우기)는 모든 공간을 다시 그린다
-    const drawVars = tx.ops.some((o) => o.kind === 'header' && /^\$(LTSCALE|PSLTSCALE|PDMODE|PDSIZE|FILLMODE|MIRRTEXT|QTEXTMODE|TEXTFILL|ATTMODE)$/.test(o.name));
+    const drawVars = tx.ops.some(
+      (o) =>
+        (o.kind === 'header' && /^\$(LTSCALE|PSLTSCALE|PDMODE|PDSIZE|FILLMODE|MIRRTEXT|QTEXTMODE|TEXTFILL|ATTMODE)$/.test(o.name)) ||
+        // 이미지·가리기 테두리 설정(IMAGEFRAME·WIPEOUTFRAME)
+        (o.kind === 'object' && /^(RASTERVARIABLES|WIPEOUTVARIABLES)$/.test((o.after ?? o.before)?.type ?? '')),
+    );
     if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged || drawVars) this.schedule(st, sum.blocksChanged || sum.tablesChanged || drawVars, tx.rebuildNow || drawVars ? 0 : REBUILD_DELAY);
     app.view.requestRender();
     app.scheduleDetail();
