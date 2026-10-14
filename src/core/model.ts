@@ -88,6 +88,33 @@ export interface EntityBase {
   plotStyle?: string;
   /** 하이퍼링크(PE_URL 확장 데이터) */
   hyperlink?: { url: string; description?: string; location?: string };
+  /** DWG 리더가 남긴 원본 본문(같은 버전으로 다시 쓸 때만 쓴다) */
+  dwgRaw?: DwgRawBody;
+}
+
+/**
+ * DWG 객체의 형식별 본문 비트(공통 자료·공통 핸들 뒤). DWG 쓰기가 같은 버전일 때 그대로 되쓴다.
+ * fingerprint는 읽을 때 모델 값의 지문이다. 값이 바뀌었으면 원본을 쓰지 않는다.
+ */
+export interface DwgRawBody {
+  /** 원본 DWG 버전(AC1015 …) */
+  version: string;
+  /** 고정 이름 또는 클래스 DXF 이름 */
+  typeName: string;
+  /** 고정 종류 번호(500 미만), 클래스면 0 */
+  typeNum: number;
+  data: Uint8Array;
+  dataBits: number;
+  /** R2007+ 문자열 흐름 */
+  strings?: Uint8Array;
+  stringBits?: number;
+  handles: Uint8Array;
+  handleBits: number;
+  /** R2013+ 자료 저장소(AcDsPrototype_1b)를 쓰는 객체 */
+  dataStore?: boolean;
+  /** 도형의 프록시 그림(공통 자료에 다시 쓴다) */
+  graphics?: Uint8Array;
+  fingerprint: string;
 }
 
 export interface LineEntity extends EntityBase {
@@ -443,6 +470,8 @@ export interface MLeaderEntity extends EntityBase {
       backgroundFill: boolean;
       backgroundColor?: CadColor;
       backgroundScale: number;
+      /** DXF 쓰기용: 모델에 없는 값(그룹 코드 → 값: 92 배경 투명도, 291, 173 단 종류, 293, 142, 143, 294, 295) */
+      props?: Record<number, number>;
     };
     block?: {
       blockHandle?: string;
@@ -458,9 +487,13 @@ export interface MLeaderEntity extends EntityBase {
     baseDirection: Vec3;
     baseVertical: Vec3;
     normal: Vec3;
+    /** DXF 쓰기용: 모델에 없는 값(그룹 코드 → 값: 174·175 부착, 176 정렬, 177 부착 방식, 297, 272·273) */
+    props?: Record<number, number>;
   };
   /** 블록 내용의 속성 값 */
   blockAttributes?: { attdefHandle: string; index: number; width: number; text: string }[];
+  /** DXF 쓰기용: 모델에 없는 본문 값(그룹 코드 → 값: 270 판, 90 재지정 플래그, 173·95·174·175 문자 부착, 293~295, 178·179, 271~273) */
+  props?: Record<number, number>;
 }
 
 export interface HatchLineEdge {
@@ -581,6 +614,8 @@ export interface ImageEntity extends EntityBase {
   /** 픽셀 단위 이미지 크기 */
   imageSize: Vec2;
   imageDef?: string;
+  /** IMAGEDEF_REACTOR 핸들(360) */
+  imageDefReactor?: string;
   /** 70: 1 표시, 2 정렬되지 않았을 때 표시, 4 경계 사용, 8 투명 */
   displayFlags: number;
   clipping: boolean;
@@ -693,6 +728,9 @@ export interface TableEntity extends EntityBase {
   /** 셀 문자(행 우선) — 읽을 수 있을 때만 */
   cells?: { text: string }[];
   tableStyle?: string;
+  /** DXF에서 읽은 AcDbEntity 다음 원본 태그(다시 쓰기용)와 그 파일 버전 */
+  raw?: RawTag[];
+  rawVersion?: string;
 }
 
 export interface MeshEntity extends EntityBase {
@@ -726,6 +764,9 @@ export interface AcisEntity extends EntityBase {
   type: 'REGION' | '3DSOLID' | 'BODY' | 'SURFACE' | 'PLANESURFACE' | 'EXTRUDEDSURFACE' | 'LOFTEDSURFACE' | 'REVOLVEDSURFACE' | 'SWEPTSURFACE' | 'NURBSURFACE';
   /** 일부 파일이 담는 단순 와이어(분해된 선) */
   wires?: Vec3[][];
+  /** DXF에서 읽은 AcDbEntity 다음 원본 태그(ACIS 자료 포함)와 그 파일 버전 */
+  raw?: RawTag[];
+  rawVersion?: string;
 }
 
 /** 모르는 객체, 프록시 객체. 프록시 그림이 있으면 graphics에 원본 바이트 */
@@ -959,6 +1000,8 @@ export interface ObjectBase {
   xdict?: string;
   reactors?: string[];
   xdata?: XData[];
+  /** DWG 리더가 남긴 원본 본문(같은 버전으로 다시 쓸 때만 쓴다) */
+  dwgRaw?: DwgRawBody;
 }
 
 export interface DictionaryObject extends ObjectBase {
@@ -1080,6 +1123,8 @@ export interface PlotSettingsObject extends ObjectBase {
 export interface GenericObject extends ObjectBase {
   type: string;
   raw?: RawTag[];
+  /** DBCOLOR의 색(트루컬러·색상표 이름) */
+  color?: CadColor;
 }
 
 export type CadObject =
@@ -1124,6 +1169,22 @@ export interface ReadWarning {
   detail?: Record<string, unknown>;
 }
 
+/** 모델이 해석하지 않는 DXF 구역(THUMBNAILIMAGE, ACDSDATA 등)의 원본 태그(0 SECTION·2 이름·0 ENDSEC 제외) */
+export interface RawSection {
+  name: string;
+  /** 읽은 파일의 $ACADVER */
+  version: string;
+  tags: RawTag[];
+}
+
+/** 표 머리(TABLE) 객체 */
+export interface TableHead {
+  handle: string;
+  xdict?: string;
+  reactors?: string[];
+  xdata?: XData[];
+}
+
 export interface CadDocument {
   format: SourceFormat;
   /** $ACADVER(AC1009 … AC1032) */
@@ -1155,6 +1216,12 @@ export interface CadDocument {
   /** 이름 있는 객체 사전 핸들 */
   rootDictionary?: string;
   warnings: ReadWarning[];
+  /** DXF 헤더 변수의 원래 그룹 코드(첫 값) — 쓰기 표에 없는 변수를 다시 쓸 때 쓴다 */
+  headerCodes?: Map<string, number>;
+  /** 표 이름(VPORT, LTYPE, LAYER …) → 표 머리 */
+  tableHeads?: Map<string, TableHead>;
+  /** 모델이 해석하지 않는 구역 */
+  rawSections?: RawSection[];
 }
 
 export function createDocument(format: SourceFormat = 'new'): CadDocument {
