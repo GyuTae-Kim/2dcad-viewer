@@ -17,6 +17,11 @@ import type {
 import type { TagSink } from './tagwriter';
 import { type PlannedLayout, type PlannedObject, type WriteContext, standardTableStyle } from './wcontext';
 import { TagOut, appGroups, cadColorToRaw, validLineweight, writeXData } from './wentities';
+import { fieldTags } from '../fields';
+import { parseTableStyleTags, tableStyleTags, tableStyleTagsFit } from '../tablestyle';
+
+/** R2007 전후 형식 계열(필드 값 배치가 다르다) */
+const versionFamily = (v: string | undefined): number => (Number(String(v ?? 'AC1032').slice(2)) >= 1021 ? 2 : 1);
 
 function header(w: TagOut, type: string, h: string, owner: string, xdict: string | undefined, reactors: readonly string[] | undefined): void {
   w.t(0, type);
@@ -295,7 +300,11 @@ function writeObject(w: TagOut, p: PlannedObject): void {
       break;
     default: {
       const g = o as GenericObject;
-      if (g.raw) w.raw(g.raw);
+      // 필드: 값 배치가 R2007에서 바뀌므로 원본과 형식 계열이 다르면 모델 값으로 다시 만든다
+      if (o.type === 'FIELD' && g.field && (!g.raw || versionFamily(ctx.doc.version) !== versionFamily(ctx.version))) w.raw(fieldTags(g.field, ctx.ver));
+      // 테이블 스타일: 원본 태그의 배치(R2004 / R2007 / R2010+)가 대상 버전과 다르면 값으로 다시 만든다
+      else if (o.type === 'TABLESTYLE' && g.raw && !tableStyleTagsFit(g.raw, ctx.ver) && parseTableStyleTags(g.raw)) w.raw(tableStyleTags(parseTableStyleTags(g.raw)!, ctx.ver));
+      else if (g.raw) w.raw(g.raw);
       else if (o.type === 'DBCOLOR' && g.color) {
         w.t(100, 'AcDbColor');
         if (g.color.aci >= 1 && g.color.aci <= 255) w.t(62, g.color.aci);

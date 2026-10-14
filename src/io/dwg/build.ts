@@ -79,6 +79,8 @@ import {
 import { type Names, type ParsedEntity, readEntity, xdataFromEed } from './objects/entities';
 import { R2004, R2007, R2010 } from './version';
 import { captureRaw } from './rawbody';
+import { RAW_TAG_TYPES, decodeRawTags } from './objects/rawtags';
+import { decodeTableStyleBody } from './objects/tableraw';
 import { parseDimOverrides } from './xdata';
 
 /** 원본 본문을 남기는 도형 */
@@ -245,6 +247,10 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
           // 확장 자료의 앱 이름이 필요해 표를 다 읽은 뒤에 읽는다
           deferred.push(h);
           break;
+        case 'TABLESTYLE':
+          // 문자 스타일 이름이 필요해 표를 다 읽은 뒤에 읽는다
+          deferred.push(h);
+          break;
         case 'DBCOLOR': {
           or.commonObject();
           const color = cmcToCad(or.dat.CMC());
@@ -283,6 +289,13 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
               { code: 100, value: 'AcDbWipeoutVariables' },
               { code: 70, value: or.dat.BS() },
             ];
+          } else if (RAW_TAG_TYPES.has(t)) {
+            // FIELD·FIELDLIST·DIMASSOC·문자 주석 축척 자료: DXF와 같은 원본 태그(objects/rawtags.ts)
+            const dec = decodeRawTags(or, t);
+            if (dec) {
+              o.raw = dec.raw;
+              if (dec.field) o.field = dec.field;
+            }
           }
           // 해석하지 않는 객체: 같은 버전으로 쓸 때 되쓸 본문
           const raw = captureRaw(or, o);
@@ -360,6 +373,14 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       if (t === 'MLEADERSTYLE') {
         const isNew = ver >= R2010 || !!oh.eed?.some((x) => appName.get(x.app)?.toUpperCase() === 'ACAD_MLEADERVER');
         const o = readMLeaderStyle(or, isNew);
+        const raw = captureRaw(or, o);
+        if (raw) o.dwgRaw = raw;
+        objects.set(hex(h), o);
+      } else if (t === 'TABLESTYLE') {
+        // 테이블 스타일: DXF와 같은 원본 태그(objects/tableraw.ts). 풀지 못하면 원본 본문만
+        const o = readGenericObject(or) as GenericObject;
+        const tags = decodeTableStyleBody(or, (x) => styleName.get(x) ?? '');
+        if (tags) o.raw = tags;
         const raw = captureRaw(or, o);
         if (raw) o.dwgRaw = raw;
         objects.set(hex(h), o);

@@ -1127,6 +1127,58 @@ export interface GenericObject extends ObjectBase {
   raw?: RawTag[];
   /** DBCOLOR의 색(트루컬러·색상표 이름) */
   color?: CadColor;
+  /** FIELD 객체(AcDbField)의 값 — DXF·DWG 리더가 채운다 */
+  field?: FieldObject;
+}
+
+/** 필드 값(사양 20.4.99 Value, DXF 93·90·91/140/1/330·94·300·302) */
+export interface FieldValue {
+  /** R2007+ 플래그(93) */
+  flags?: number;
+  /** 자료 종류(90): 0 모름, 1 정수, 2 실수, 4 문자열, 8 날짜, 16 2D 점, 32 3D 점, 64 객체 ID, 512 일반 */
+  type: number;
+  /** 값(정수·실수·문자열, 객체 ID는 핸들 16진, 점은 "x,y,z", 날짜·일반은 16진 바이트) */
+  value?: string | number;
+  /** 단위 종류(94, R2007+) */
+  unit?: number;
+  /** 형식 문자열(300, R2007+) */
+  format?: string;
+  /** 값 문자열(302, R2007+) */
+  text?: string;
+}
+
+/**
+ * AutoCAD 필드(FIELD, 사양 20.4.76). 문자 객체의 확장 사전 ACAD_FIELD 항목이 맨 위 필드(평가기 "_text",
+ * 코드는 %<\_FldIdx n>% 자리 표시를 담은 문자)를 가리키고, 자식 필드가 실제 필드 코드(%<\AcVar …>%)를 가진다.
+ */
+export interface FieldObject {
+  /** 평가기 ID(1): "_text", "AcVar", "AcObjProp" … */
+  evaluator: string;
+  /** 필드 코드(2·3) */
+  code: string;
+  /** 자식 필드 핸들(360) */
+  children: string[];
+  /** 필드 코드가 쓰는 객체 핸들(331) */
+  objects: string[];
+  /** R2004 이전 형식 문자열(4) */
+  format?: string;
+  /** 평가 시점(91) */
+  evalOptions: number;
+  /** 저장 선택(92) */
+  filingOptions: number;
+  /** 상태(94) */
+  state: number;
+  /** 평가 결과(95) */
+  evalStatus: number;
+  /** 평가 오류 코드(96)·메시지(300) */
+  errorCode: number;
+  errorMessage: string;
+  /** 평가한 값(ACFD_FIELD_VALUE) */
+  value?: FieldValue;
+  /** 값 문자열(301·9) */
+  valueString?: string;
+  /** 자료 항목(6 키 + 값) */
+  data?: { key: string; value: FieldValue }[];
 }
 
 export type CadObject =

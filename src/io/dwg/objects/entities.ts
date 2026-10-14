@@ -52,6 +52,7 @@ import { lineweightFromIndex } from '../lineweight';
 import { R14, R2000, R2004, R2007, R2010, R2013, R2018 } from '../version';
 import { hex } from './nonentities';
 import { readTableCellsOld, readTableContentR24 } from './table';
+import { decodeTableBody } from './tableraw';
 import type { EntCommon, ObjectReader, RawEed } from './reader';
 
 /** 핸들 → 이름 */
@@ -1990,6 +1991,23 @@ function readTable(or: ObjectReader, b: Omit<EntityBase, 'type'>, names: Names):
     columnWidths: [],
   };
   setExtrusion(e, extrusion);
+  // 표 본문 전체를 풀면(tablecodec.ts, 표본 71개가 같은 비트로 다시 써진다) DXF와 같은 원본 태그(병합·셀 재지정)도 만든다.
+  const save = { d: r.pos, h: hr.pos, s: or.str.pos };
+  const full = decodeTableBody(or, e, (h) => names.style(h));
+  if (full) {
+    e.rows = full.rows;
+    e.columns = full.columns;
+    e.rowHeights = full.rowHeights;
+    e.columnWidths = full.columnWidths;
+    e.cells = full.cells;
+    if (full.tableStyle) e.tableStyle = full.tableStyle;
+    e.raw = full.raw;
+    e.rawVersion = `AC${ver}`;
+    return e;
+  }
+  r.pos = save.d;
+  hr.pos = save.h;
+  or.str.pos = save.s;
   // 셀 자료는 선택 사항: 읽다 실패해도 표 도형은 남긴다(그림은 익명 *T 블록).
   // 행·열 크기를 다 읽은 뒤 셀에서 멈추면 크기는 살리고 셀 문자만 버린다.
   try {

@@ -24,6 +24,7 @@ import type {
 import { rawColorToCad } from '../../core/color';
 import { defaultLayout } from '../../core/finalize';
 import type { DxfRecord } from './records';
+import { fieldFromTags } from '../fields';
 import { DEG, Tags, handle, int, name, num, parseColor, parseXData, str } from './tagutil';
 
 function split(rec: DxfRecord, raw?: RawTag[]): { base: ObjectBase; tags: Tags } {
@@ -371,7 +372,12 @@ export function parseObject(rec: DxfRecord): CadObject | null {
     default: {
       const raw: RawTag[] = [];
       const { base } = split(rec, raw);
-      return { ...base, raw } as GenericObject;
+      const o = { ...base, raw } as GenericObject;
+      if (rec.type === 'FIELD') {
+        const f = fieldFromTags(raw);
+        if (f) o.field = f;
+      }
+      return o;
     }
   }
 }

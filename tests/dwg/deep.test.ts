@@ -13,7 +13,7 @@ import { FIXTURES, dwgFixtures, engineDxf, hasPython } from './oracle';
 
 /**
  * 비교하지 않는 필드
- * - xdata·reactors·xdict·owner·plotStyle·graphics·raw: 표현 차이(확장 자료 정규화 등)
+ * - xdata·reactors·xdict·owner·plotStyle·graphics·raw·rawVersion: 표현 차이(확장 자료 정규화 등, R14 DWG의 기준 DXF는 R2000)
  * - generation(ATTRIB/ATTDEF): DXF 리더가 AcDbAttribute의 71을 넣는다
  * - direction·rotation(MTEXT): DXF 기준은 (1,0,0)일 때 11을 빼고, rotation은 50에서만 읽는다
  * - cells·tableStyle(ACAD_TABLE): 표현 차이
@@ -31,6 +31,7 @@ const SKIP = new Set([
   'plotStyle',
   'graphics',
   'raw',
+  'rawVersion',
   'generation',
   'direction',
   'rotation',

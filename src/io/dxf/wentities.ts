@@ -36,6 +36,7 @@ import { CollectSink, kindOf, rawTagValid, rawTagsValid, type TagSink } from './
 import type { WriteContext } from './wcontext';
 import { mtextPlainLines } from './wconvert';
 import { parseDimOverrides } from './tagutil';
+import { acdbTableTags, tableCellsOut } from '../tablecells';
 
 const RAD2DEG = 180 / Math.PI;
 const TAU = Math.PI * 2;
@@ -1325,45 +1326,13 @@ function writeTable(w: TagOut, e: TableEntity): void {
       return;
     }
   }
-  w.sub('AcDbTable');
-  if (ver >= 1024) w.t(280, 0);
-  w.t(342, style || '0');
-  w.t(343, blockRec);
-  w.p3(11, e.direction);
-  w.t(90, 22);
-  w.t(91, e.rows);
-  w.t(92, e.columns);
-  w.t(93, 0);
-  w.t(94, 0);
-  w.t(95, 0);
-  w.t(96, 0);
-  for (let r = 0; r < e.rows; r++) w.t(141, e.rowHeights[r] ?? e.rowHeights[e.rowHeights.length - 1] ?? 1);
-  for (let c = 0; c < e.columns; c++) w.t(142, e.columnWidths[c] ?? e.columnWidths[e.columnWidths.length - 1] ?? 1);
-  const n = e.rows * e.columns;
-  for (let i = 0; i < n; i++) {
-    const text = e.cells?.[i]?.text ?? '';
-    w.t(171, 1);
-    w.t(172, 0);
-    w.t(173, 0);
-    w.t(174, 0);
-    w.t(175, 1);
-    w.t(176, 1);
-    w.t(ver >= 1021 ? 91 : 177, 0);
-    w.t(178, 0);
-    w.t(145, 0);
-    if (ver >= 1021) {
-      w.t(92, 0);
-      w.t(301, 'CELL_VALUE');
-      w.t(93, text ? 6 : 7);
-      w.t(90, text ? 4 : 0);
-      if (text) w.t(1, text);
-      w.t(94, 0);
-      w.t(300, '');
-      w.t(302, text);
-      w.t(304, 'ACVALUE_END');
-    } else w.t(1, text);
-  }
-  if (!e.raw) ctx.warn('table.synthesized', '표(ACAD_TABLE) 셀 서식은 모델에 없어 기본 셀로 썼습니다(그림 블록은 그대로).');
+  // 원본 태그가 없거나 다른 형식 계열: 셀 배치(병합·정렬·셀 서식)로 만든다(io/tablecells.ts)
+  const lay = tableCellsOut(e, ctx.doc);
+  w.raw(acdbTableTags(lay, { style: style || '0', blockRec, direction: e.direction, ver, styleOk: (n) => ctx.styleH.has(tableKey(n)) }));
+  // 앱 표(셀 서식을 아는 표)는 잃는 것이 없다. AutoCAD 표를 다른 형식 계열로 옮기면 테두리 재지정 등이 빠지고,
+  // 셀 서식을 모르는 표는 기본 셀이 된다.
+  if (!lay.style && lay.rows * lay.cols > 0)
+    ctx.warn('table.synthesized', lay.known ? '표(ACAD_TABLE)를 다른 형식 계열로 옮기며 병합·정렬·셀 서식만 남겼습니다(테두리 재지정 등은 빠짐, 그림 블록은 그대로).' : '표(ACAD_TABLE) 셀 서식을 알 수 없어 기본 셀로 썼습니다(그림 블록은 그대로).');
 }
 
 // ---------------------------------------------------------------------------

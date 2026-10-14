@@ -90,19 +90,18 @@ describe.skipIf(!enabled)('DWG 쓰기 ↔ 엔진(블랙박스)', () => {
       const doc = c.make();
       for (const v of c.versions) addJob(`${c.key}@${v}`, `${c.label} → ${v}`, doc, v);
     }
-    // 캐시에 없는 것만 엔진에 넘긴다(한 번의 Python 실행)
-    const todo: { in: string; out: string }[] = [];
-    for (const j of jobs.values()) {
-      const out = join(CACHE, j.hash);
-      if (existsSync(out + '.json')) continue;
-      const inp = join(CACHE, 'in', `${j.hash}.dwg`);
-      writeFileSync(inp, j.bytes);
-      todo.push({ in: inp, out });
-    }
-    if (todo.length) {
-      const list = join(CACHE, 'jobs.json');
-      writeFileSync(list, JSON.stringify(todo));
+    // 캐시에 없는 것만 엔진에 넘긴다. 입력 파일은 묶음(24개)마다 쓰고 지워 디스크를 적게 쓴다
+    const pending = [...jobs.values()].filter((j) => !existsSync(join(CACHE, j.hash) + '.json'));
+    for (let i = 0; i < pending.length; i += 24) {
+      const todo: { in: string; out: string }[] = [];
       try {
+        for (const j of pending.slice(i, i + 24)) {
+          const inp = join(CACHE, 'in', `${j.hash}.dwg`);
+          writeFileSync(inp, j.bytes);
+          todo.push({ in: inp, out: join(CACHE, j.hash) });
+        }
+        const list = join(CACHE, 'jobs.json');
+        writeFileSync(list, JSON.stringify(todo));
         execFileSync(PYTHON, ['-I', '-c', ENGINE, DUMP, list], { stdio: 'pipe', timeout: 3_600_000, maxBuffer: 1 << 26 });
       } finally {
         for (const t of todo) rmSync(t.in, { force: true });

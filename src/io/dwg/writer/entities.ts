@@ -16,6 +16,7 @@ import type {
   PolylineEntity,
   PolyVertex,
   SplineEntity,
+  TableEntity,
   TextEntity,
   Vec2,
   Vec3,
@@ -26,6 +27,10 @@ import type { PBlock, PEnt, WCtx } from './context';
 import { HARD_OWNER, HARD_PTR, SOFT_PTR, type EntCommonOut, type ObjWriter } from './objwriter';
 import { eedOf, wcolor } from './common';
 import { lwIndex } from './util';
+import { tableKey } from '../../../core/model';
+import { tableCellsOut } from '../../tablecells';
+import { tableOld, tableR24, writeIO } from '../tablecodec';
+import { tableToOld, tableToR24 } from '../tablemodel';
 
 const Z: Vec3 = { x: 0, y: 0, z: 1 };
 const ORIGIN: Vec3 = { x: 0, y: 0, z: 0 };
@@ -261,6 +266,10 @@ export class EntityWriter {
       this.common(e, l, !!raw.dataStore, g);
       this.ow.appendRaw(raw.data, raw.dataBits, raw.strings, raw.stringBits ?? 0, raw.handles, raw.handleBits);
       this.done(h);
+      return;
+    }
+    if (pe.table) {
+      this.table(e as TableEntity, pe, l);
       return;
     }
     if (pe.asInsert) {
@@ -788,6 +797,56 @@ export class EntityWriter {
       this.attrib({ ...a, type: 'ATTRIB' }, atts[i], { owner: h, mode: 0, prev, next });
     }
     if (atts.length) this.seqend(e, pe.seqend!, h, ver < R2004 ? atts[atts.length - 1] : 0);
+  }
+
+  /**
+   * ACAD_TABLE(사양 20.4.96): INSERT 자료(속성 없음) + 표 본문. R2010+는 표 내용(20.4.97)을 담은 새 배치,
+   * 그 전(R2000·R2004)은 옛 셀 배치다(tablecodec.ts — AutoCAD 표본 표·스타일이 같은 비트로 다시 써진다).
+   * 셀 병합·정렬·서식은 셀 배치(io/tablecells.ts)에서 온다.
+   */
+  private table(e: TableEntity, pe: PEnt, l: Links): void {
+    const ctx = this.ctx;
+    const ver = this.ver;
+    this.begin(this.cls('ACAD_TABLE'), pe.h, e);
+    this.common(e, l);
+    const d = this.ow.dat;
+    const hd = this.ow.hdl;
+    d.BD3(e.insert);
+    const s = e.scale ?? { x: 1, y: 1, z: 1 };
+    if (s.x === 1 && s.y === 1 && s.z === 1) d.BB(3);
+    else if (s.x === 1) {
+      d.BB(1);
+      d.DD(s.y, 1);
+      d.DD(s.z, 1);
+    } else if (s.y === s.x && s.z === s.x) {
+      d.BB(2);
+      d.RD(s.x);
+    } else {
+      d.BB(0);
+      d.RD(s.x);
+      d.DD(s.y, s.x);
+      d.DD(s.z, s.x);
+    }
+    d.BD(e.rotation);
+    d.BD3(e.extrusion ?? Z);
+    d.B(0); // 속성 없음
+    hd.H(HARD_PTR, ctx.block(e.block));
+    const lay = tableCellsOut(e, ctx.doc);
+    const dl = Math.hypot(e.direction?.x ?? 0, e.direction?.y ?? 0, e.direction?.z ?? 0);
+    const direction = dl > 1e-12 ? { x: e.direction.x / dl, y: e.direction.y / dl, z: e.direction.z / dl } : ocsDirection(e.rotation, undefined);
+    const flag90 = Number(e.raw?.find((t) => t.code === 90)?.value ?? 22);
+    const flow = lay.style ? lay.style.flow : flag90 & 0x10 ? 0 : 1;
+    const opts = {
+      tableStyle: ctx.ref(e.tableStyle) || ctx.tableStyleStd,
+      textStyle: (n: string) => ctx.styleH.get(tableKey(n)) ?? 0,
+      direction,
+      flow,
+    };
+    const io = writeIO(d, hd, ver);
+    if (ver >= R2010) tableR24(io, tableToR24(lay, opts));
+    else tableOld(io, tableToOld(lay, opts));
+    if (!lay.known) ctx.warn('dwg.write_table_cells_default', '셀 서식을 알 수 없는 표(ACAD_TABLE)를 기본 셀로 썼습니다(그림 블록은 그대로).');
+    this.done(pe.h);
   }
 
   private seqend(parent: Entity, h: number, owner: number, prev: number): void {

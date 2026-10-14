@@ -94,7 +94,7 @@ ACAD_PLOTSETTINGS·ACAD_PLOTSTYLENAME(기본값 Normal 자리 표시), R2007+는
 | VIEWPORT | R2000+ 전체 자료, 동결 도면층 이름 → 341 핸들. R12는 ACAD MVIEW 확장 자료 |
 | MLINE | 스타일 핸들(없으면 Standard), 정점마다 요소 매개변수 |
 | TOLERANCE·SHAPE | 그대로(SHAPE는 이름이 있을 때만; DWG는 번호만 있어 `entity.shape_dropped`) |
-| ACAD_TABLE | 블록 참조 부분은 모델에서. 표 자료는 같은 형식 계열(R2004까지 / R2007+)의 원본 태그가 있으면 그대로(342 표 스타일·343 블록 레코드는 다시 정함), 없으면 행·열·크기·셀 문자로 기본 셀을 만든다(`table.synthesized`) |
+| ACAD_TABLE | 블록 참조 부분은 모델에서. 표 자료는 같은 형식 계열(R2004까지 / R2007+)의 원본 태그가 있으면 그대로(342 표 스타일·343 블록 레코드는 다시 정함), 없으면 셀 배치(`io/tablecells.ts`)로 만든다: 병합(173 덮인 셀, 175·176 기준 셀의 열·행), 셀 재지정(R2007+ 91 / 그 전 177 플래그, 170 정렬, 63 배경색 + 283 0, 64 문자 색, 7 문자 스타일, 140 높이). 앱 표는 OPENCAD_TABLE + 표 스타일(행 종류)에서, AutoCAD 표는 원본 태그에서 온다. `table.synthesized`는 앱 표가 아닐 때만(다른 형식 계열로 옮겨 테두리 재지정이 빠지거나 셀 서식을 모를 때) |
 | MESH | AcDbSubDMesh(R2010+) |
 | PDF·DWF·DGN UNDERLAY | 정의 객체가 있고 버전이 지원할 때(PDF R2010+, DWF·DGN R2007+) |
 | ACIS(REGION·3DSOLID·BODY·…SURFACE) | 같은 계열(R2010까지 SAT 문자 / R2013+ SAB) 원본 태그가 있으면 그대로. 없으면 와이어가 있으면 3D 폴리선(`entity.acis_as_wires`), 아니면 뺀다(`entity.acis_dropped`). ACIS 자료를 만들지 않으므로 AutoCAD가 읽지 못하는 빈 ACIS 객체는 쓰지 않는다 |
@@ -122,7 +122,8 @@ ACAD_PLOTSETTINGS·ACAD_PLOTSTYLENAME(기본값 Normal 자리 표시), R2007+는
 - STYLE: 트루타입 글꼴 이름·플래그는 ACAD 확장 자료(1000·1071).
 - BLOCK_RECORD: 340 배치, R2007+ 70 단위·280 분해 가능·281 축척 가능.
 - 객체: DICTIONARY·ACDBDICTIONARYWDFLT·LAYOUT(+AcDbPlotSettings)·PLOTSETTINGS·MLINESTYLE·MLEADERSTYLE(원본 태그 또는 모델 값)·
-  TABLESTYLE(원본 태그, 없으면 Standard를 버전에 맞게 만든다)·SCALE·IMAGEDEF(+REACTOR)·PDF/DWF/DGNDEFINITION·SORTENTSTABLE·
+  TABLESTYLE(원본 태그, 배치(R2004 / R2007 / R2010+)가 대상 버전과 다르면 값(`io/tablestyle.ts`)으로 다시 만든다. 없으면 Standard)·
+  FIELD(원본 태그, R2007 전후로 값 배치가 바뀌면 모델 값 `field`로 다시 만든다(`io/fields.ts`), R2004부터)·SCALE·IMAGEDEF(+REACTOR)·PDF/DWF/DGNDEFINITION·SORTENTSTABLE·
   GROUP·XRECORD(280 복제 플래그 + 자료)·SPATIAL_FILTER·ACDBPLACEHOLDER, 그 밖의 종류는 읽을 때 남긴 원본 태그(`GenericObject.raw`).
   원본 태그가 없는 종류(DWG 리더가 해석하지 않은 VISUALSTYLE·MATERIAL·DICTIONARYVAR 등)는 뺀다(`object.no_data`).
   DWG의 DBCOLOR(색상표 색)는 원본 태그 없이 색(62·420·430)으로 쓴다(R2004+).
@@ -176,7 +177,8 @@ ezdxf 결과는 파일 내용 해시로 `.runtime/dxfw-cache`에 캐시하고, �
 ## 알려진 한계
 
 - ACIS 자료를 만들지 않는다(다른 계열 버전으로 쓰거나 DWG에서 온 ACIS 객체는 빠진다). OLE 자료가 없다.
-- ACAD_TABLE을 다른 형식 계열로 쓰면 셀 서식이 기본값이 된다(그림 블록은 그대로라 보이는 모양은 같다).
+- ACAD_TABLE을 다른 형식 계열로 쓰면 셀 테두리 재지정·표 수준 재지정(93~96)·블록 셀이 빠진다(병합·정렬·문자 높이·색·채우기는
+  남는다, 그림 블록은 그대로라 보이는 모양은 같다). 앱 표는 잃는 것이 없다.
 - 표 항목의 모델에 없는 값(LAYER 347 재질·348 시각 스타일, VPORT 348, BLOCK_RECORD 310 미리 보기 그림 등)은 쓰지 않는다
   (AutoCAD가 기본값으로 다시 만든다).
 - 원본 태그로 쓰는 객체(모르는 객체·XRECORD·TABLESTYLE 등)는 읽은 버전의 태그 그대로다. 버전을 낮춰 쓸 때 그 객체의

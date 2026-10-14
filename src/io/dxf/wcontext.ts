@@ -121,6 +121,9 @@ const OBJECT_MIN_VERSION: Record<string, number> = {
   ACDBASSOCPERSSUBENTMANAGER: 1024,
   DBCOLOR: 1018,
   ACDBPERSSUBENTMANAGER: 1024,
+  FIELD: 1018,
+  FIELDLIST: 1018,
+  ACDB_TEXTOBJECTCONTEXTDATA_CLASS: 1021,
 };
 
 /** 원본 태그가 없어도 내용을 만들 수 있는 객체 */
@@ -949,6 +952,8 @@ export class WriteContext {
         if (SYNTH_GENERIC.has(o.type) && !(o as GenericObject).raw) return true;
         // DWG의 색상표 색(DBCOLOR)은 원본 태그 없이 색으로 쓴다.
         if (o.type === 'DBCOLOR' && !(o as GenericObject).raw && (o as GenericObject).color) return true;
+        // 필드는 모델 값(field)만 있어도 태그를 만든다
+        if (o.type === 'FIELD' && !(o as GenericObject).raw && (o as GenericObject).field) return true;
         const raw = (o as GenericObject).raw;
         if (!raw) {
           this.warn('object.no_data', '내용을 알 수 없는 객체(DWG에서 해석하지 않은 종류)를 쓰지 않았습니다.', o.type);

@@ -21,6 +21,11 @@ import type { PLayout, PObj, WCtx } from './context';
 import { eedOf, wcolor } from './common';
 import { HARD_OWNER, HARD_PTR, SOFT_OWNER, SOFT_PTR, type ObjWriter } from './objwriter';
 import { parseHandle } from './util';
+import { writeRawObject } from './rawobjects';
+import { tableKey } from '../../../core/model';
+import { defaultIoTableStyle, parseTableStyleTags } from '../../tablestyle';
+import { tableStyleOld, tableStyleR24, writeIO } from '../tablecodec';
+import { styleToOld, styleToR24 } from '../tablemodel';
 
 type Put = (h: number, b: Uint8Array) => void;
 
@@ -256,6 +261,23 @@ export class ObjectWriter {
       }
       case 'MLEADERSTYLE':
         this.mleaderStyle(o as MLeaderStyleObject, po);
+        break;
+      case 'TABLESTYLE': {
+        // 원본 태그(DXF·DWG 리더·편집)의 값, 없으면 Standard 기본값(tablemodel.ts)
+        this.start(this.cls('TABLESTYLE'), po);
+        const ts = parseTableStyleTags((o as GenericObject).raw) ?? defaultIoTableStyle(ctx.doc.header.get('$MEASUREMENT') === 1);
+        const styleH = (n: string) => ctx.styleH.get(tableKey(n)) ?? ctx.style('Standard');
+        const io = writeIO(d, hd, this.ver);
+        if (this.ver >= R2010) tableStyleR24(io, styleToR24(ts, styleH));
+        else tableStyleOld(io, styleToOld(ts, styleH));
+        break;
+      }
+      case 'FIELD':
+      case 'FIELDLIST':
+      case 'DIMASSOC':
+      case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
+        this.start(this.cls(o.type), po);
+        writeRawObject(d, hd, ctx, o as GenericObject);
         break;
       default:
         throw new Error(`쓸 수 없는 객체 ${o.type}`);

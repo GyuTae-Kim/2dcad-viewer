@@ -38,6 +38,7 @@ import { R2004, R2007, R2018 } from '../version';
 import { ClassTable } from './classes';
 import { type TextEncoderCp, encoderFor } from './codepage';
 import { parseHandle, warnOnce } from './util';
+import { rawObjectOk } from './rawobjects';
 
 export type TableName = 'BLOCK_RECORD' | 'LAYER' | 'STYLE' | 'LTYPE' | 'VIEW' | 'UCS' | 'VPORT' | 'APPID' | 'DIMSTYLE' | 'VPENT';
 
@@ -51,8 +52,10 @@ export interface PEnt {
   h: number;
   /** 원본 본문을 그대로 쓴다 */
   raw?: DwgRawBody;
-  /** ACAD_TABLE을 블록 참조로 바꿔 쓴다 */
+  /** ACAD_TABLE을 블록 참조로 바꿔 쓴다(행·열이 없는 표) */
   asInsert?: boolean;
+  /** ACAD_TABLE을 모델 값으로 쓴다(R2010+ 새 배치, 그 전 옛 배치) */
+  table?: boolean;
   /** MPOLYGON을 HATCH로 쓴다 */
   asHatch?: boolean;
   /** POLYLINE 정점 핸들, INSERT 속성 핸들 */
@@ -112,7 +115,16 @@ const NATIVE_OBJECTS = new Set([
   'IMAGEDEF_REACTOR',
   'RASTERVARIABLES',
   'WIPEOUTVARIABLES',
+  'FIELD',
+  'FIELDLIST',
+  'DIMASSOC',
+  'ACDB_TEXTOBJECTCONTEXTDATA_CLASS',
+  'TABLESTYLE',
 ]);
+
+/** 원본 본문이 없으면 조용히 빼는 객체: 표 내용·형상·셀 스타일 지도는 DXF·옛 버전의 왕복 보조 자료이고
+ *  표(ACAD_TABLE)와 테이블 스타일을 모델 값으로 쓰면 필요 없다(AutoCAD R2018 DWG도 표마다 두지 않는다) */
+const SILENT_OBJECTS = new Set(['TABLECONTENT', 'TABLEGEOMETRY', 'CELLSTYLEMAP']);
 
 /** 코드 페이지 이름 → DWG 번호 */
 export function codepageNumber(name: string): number {
@@ -224,6 +236,10 @@ export class WCtx {
   /** 색상표 이름(대문자) → DBCOLOR 핸들 */
   readonly dbColorH = new Map<string, number>();
   plotStyleNormal = 0;
+  /** 모델 값으로 쓰는 표가 있는지 */
+  hasTables = false;
+  /** 스타일이 없는 표가 쓸 테이블 스타일(Standard) */
+  tableStyleStd = 0;
 
   /** 원본 본문을 되쓸지 */
   readonly useRaw: boolean;
@@ -578,7 +594,7 @@ export class WCtx {
     // ACAD_TABLE을 바꿔 쓸 때 가리키는 블록이 있어야 한다
     for (const pb of this.blocks) {
       pb.ents = pb.ents.filter((pe) => {
-        if (pe.asInsert && !this.block((pe.e as { block?: string }).block)) {
+        if ((pe.asInsert || pe.table) && !this.block((pe.e as { block?: string }).block)) {
           dropped.ACAD_TABLE = (dropped.ACAD_TABLE ?? 0) + 1;
           this.live.delete(pe.h);
           return false;
@@ -604,8 +620,13 @@ export class WCtx {
       dropped[t] = (dropped[t] ?? 0) + 1;
       return null;
     } else if (e.type === 'ACAD_TABLE') {
-      pe.asInsert = true;
-      this.warn('dwg.write_table_as_insert', '표(ACAD_TABLE)를 그림 블록의 블록 참조로 썼습니다.');
+      if (e.rows > 0 && e.columns > 0 && e.rows * e.columns <= 100000) {
+        pe.table = true;
+        this.hasTables = true;
+      } else {
+        pe.asInsert = true;
+        this.warn('dwg.write_table_as_insert', '행·열이 없는 표(ACAD_TABLE)를 그림 블록의 블록 참조로 썼습니다.');
+      }
     } else if (e.type === 'MPOLYGON') {
       pe.asHatch = true;
       this.warn('dwg.write_mpolygon', 'MPOLYGON을 HATCH로 썼습니다.');
@@ -673,7 +694,10 @@ export class WCtx {
       const po: PObj = { o: dbColorFromRaw(o), h };
       const raw = this.rawFor(o, h);
       if (raw) po.raw = raw;
-      else if (!NATIVE_OBJECTS.has(o.type) || !this.nativeObjectOk(po.o)) {
+      else if (SILENT_OBJECTS.has(o.type)) {
+        this.silent.add(h);
+        continue;
+      } else if (!NATIVE_OBJECTS.has(o.type) || !this.nativeObjectOk(po.o)) {
         // 자료가 하나도 없는 객체(새 도면의 기본 TABLESTYLE 등)는 잃을 것이 없어 조용히 뺀다
         const g = o as GenericObject;
         if (!o.dwgRaw && !g.raw?.length && !g.xdata?.length && !g.color) {
@@ -832,6 +856,29 @@ export class WCtx {
       }
       this.plotStyleNormal = normal;
     }
+    // 테이블 스타일: 표가 있으면 ACAD_TABLESTYLE 사전과 Standard가 있어야 한다
+    if (this.hasTables) {
+      const h = sub('ACAD_TABLESTYLE', emptyDict);
+      const po = byH.get(h)!;
+      const d = po.o as DictionaryObject;
+      let std = 0;
+      let first = 0;
+      for (const [name, hs] of d.entries) {
+        const t = byH.get(parseHandle(hs));
+        if (!t || t.o.type !== 'TABLESTYLE') continue;
+        if (!first) first = t.h;
+        if (name.toUpperCase() === 'STANDARD') std = t.h;
+      }
+      if (!std && !first) {
+        std = this.alloc();
+        const ts: GenericObject = { type: 'TABLESTYLE', handle: hexOf(std), owner: hexOf(h), reactors: [hexOf(h)] };
+        this.objects.push({ o: ts, h: std });
+        byH.set(std, { o: ts, h: std });
+        this.live.add(std);
+        po.o = { ...d, entries: new Map([...d.entries, ['Standard', hexOf(std)]]) };
+      }
+      this.tableStyleStd = std || first;
+    }
   }
 
   /** 모델 값만으로 쓸 수 있는 객체인지 */
@@ -844,6 +891,14 @@ export class WCtx {
       case 'RASTERVARIABLES':
       case 'WIPEOUTVARIABLES':
         return !!(o as GenericObject).raw;
+      case 'FIELD':
+      case 'FIELDLIST':
+      case 'DIMASSOC':
+      case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
+        return rawObjectOk(o as GenericObject, this.ver);
+      case 'TABLESTYLE':
+        // 원본 태그(DXF·DWG 리더·편집)가 없으면 Standard 기본값으로 쓴다
+        return true;
       default:
         return true;
     }

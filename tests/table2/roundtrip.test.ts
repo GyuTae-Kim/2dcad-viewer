@@ -1,6 +1,6 @@
 /**
  * 왕복: 새 도면에 표·테이블 스타일·여러 줄(끊기 포함)·여러 줄 스타일·필드 문자를 편집 작업으로 넣고
- * DXF(R2018·R2004)로 써서 다시 읽으면 같은지 본다. DWG(R2018)는 표가 블록 참조가 되지만 표 정의가 남는지 본다.
+ * DXF(R2018·R2004)로 써서 다시 읽으면 같은지 본다. DWG(R2018·R2000)도 표가 ACAD_TABLE로 남는지 본다.
  */
 import { describe, expect, it } from 'vitest';
 import type { CadDocument, Entity, InsertEntity, MLineEntity, MLineStyleObject, MTextEntity, TableEntity } from '../../src/core/model';
@@ -137,20 +137,20 @@ describe('표·여러 줄·필드 DXF 왕복', () => {
   });
 
   for (const version of ['AC1032', 'AC1015'] as const) {
-    it(`DWG ${version}: 표는 블록 참조가 되지만 표 정의가 확장 자료로 남는다`, () => {
+    it(`DWG ${version}: 표가 ACAD_TABLE로 남고 다시 고칠 수 있다`, () => {
       const b = build();
       const res = writeDwg(b.doc, { version });
       const back = readCadFile(res.data, 'x.dwg');
-      const ins = find<InsertEntity>(back, 'INSERT');
-      expect(ins).toHaveLength(1);
-      expect(isEditableTable(ins[0]!)).toBe(true);
-      const rt = tableFromEntity(ins[0]!, back)!;
+      expect(find<InsertEntity>(back, 'INSERT')).toHaveLength(0);
+      const tabs = find<TableEntity>(back, 'ACAD_TABLE');
+      expect(tabs).toHaveLength(1);
+      expect(isEditableTable(tabs[0]!)).toBe(true);
+      const rt = tableFromEntity(tabs[0]!, back)!;
       expect(rt.data).toEqual(b.t);
-      // 편집하면 다시 표 객체가 된다
       const s2 = new EditSession(back, () => {});
-      const up = updateTableOps(back, () => s2.newHandle(), ins[0]!, MODEL_SPACE, setText(rt.data, 4, 0, '고침'), rt.style, rt.styleEntry?.handle);
+      const up = updateTableOps(back, () => s2.newHandle(), tabs[0]!, MODEL_SPACE, setText(rt.data, 4, 0, '고침'), rt.style, rt.styleEntry?.handle);
       s2.commit({ label: 'TABLEDIT', ops: up.ops });
-      const te = back.entityIndex.get(ins[0]!.handle) as TableEntity;
+      const te = back.entityIndex.get(tabs[0]!.handle) as TableEntity;
       expect(te.type).toBe('ACAD_TABLE');
       expect(te.cells?.[12]?.text).toBe('고침');
       expect(te.rotation).toBe(0);

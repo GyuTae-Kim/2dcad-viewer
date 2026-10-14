@@ -49,7 +49,7 @@ describe('PDF 가져오기', () => {
     expect(sp.controlPoints).toHaveLength(7);
     expect(sp.knots).toEqual([0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2]);
     expect(sp.color.rgb).toBe(0xff0000);
-    const t = r.entities[3] as Extract<Entity, { type: 'TEXT' }>;
+    const t = r.entities[3] as unknown as { height: number };
     expect(t.height).toBeCloseTo(4.2333, 3);
     expect(r.layers.sort()).toEqual(['PDF_Geometry', 'PDF_Solid Fills', 'PDF_Text']);
   });
