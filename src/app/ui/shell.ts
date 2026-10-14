@@ -79,6 +79,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
               tip: '해치 (H)',
               menu: [
                 { label: '해치', cmd: 'HATCH', icon: 'hatch' },
+                { label: '그라데이션', cmd: 'GRADIENT', icon: 'hatch' },
                 { label: '해치 편집', cmd: 'HATCHEDIT', icon: 'hatch' },
                 { label: '경계', cmd: 'BOUNDARY', icon: 'pline' },
               ],
