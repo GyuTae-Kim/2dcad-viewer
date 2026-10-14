@@ -107,8 +107,14 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         const doc = docs.get(msg.docId);
         if (!doc) throw new Error('문서가 없습니다');
         const t0 = performance.now();
-        const { writeDxf } = await import('../io/dxf/writer');
-        const r = writeDxf(doc, { version: msg.version as never, binary: msg.binary });
+        let r: { data: Uint8Array; warnings: { code: string; message: string; count?: number }[] };
+        if (msg.format === 'dwg') {
+          const { writeDwg } = await import('../io/dwg/index');
+          r = writeDwg(doc, { version: msg.version as never });
+        } else {
+          const { writeDxf } = await import('../io/dxf/writer');
+          r = writeDxf(doc, { version: msg.version as never, binary: msg.binary });
+        }
         const data = r.data.buffer.slice(r.data.byteOffset, r.data.byteOffset + r.data.byteLength) as ArrayBuffer;
         post({ type: 'saved', id: msg.id, data, warnings: r.warnings.map((w) => ({ code: w.code, message: w.message, count: w.count })), ms: performance.now() - t0 }, [data]);
         break;

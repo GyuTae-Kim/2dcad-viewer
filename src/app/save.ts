@@ -26,6 +26,11 @@ interface FileSystemFileHandleLike {
 type SavePicker = (opt: { suggestedName?: string; types?: { description: string; accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandleLike>;
 
 export const SAVE_TYPES: { value: string; label: string; format: SaveFormat; version: string }[] = [
+  { value: 'dwg-AC1032', label: 'AutoCAD 2018/LT2018 도면 (*.dwg)', format: 'dwg', version: 'AC1032' },
+  { value: 'dwg-AC1027', label: 'AutoCAD 2013/LT2013 도면 (*.dwg)', format: 'dwg', version: 'AC1027' },
+  { value: 'dwg-AC1024', label: 'AutoCAD 2010/LT2010 도면 (*.dwg)', format: 'dwg', version: 'AC1024' },
+  { value: 'dwg-AC1018', label: 'AutoCAD 2004/LT2004 도면 (*.dwg)', format: 'dwg', version: 'AC1018' },
+  { value: 'dwg-AC1015', label: 'AutoCAD 2000/LT2000 도면 (*.dwg)', format: 'dwg', version: 'AC1015' },
   { value: 'dxf-AC1032', label: 'AutoCAD 2018 DXF (*.dxf)', format: 'dxf', version: 'AC1032' },
   { value: 'dxf-AC1027', label: 'AutoCAD 2013/LT2013 DXF (*.dxf)', format: 'dxf', version: 'AC1027' },
   { value: 'dxf-AC1024', label: 'AutoCAD 2010/LT2010 DXF (*.dxf)', format: 'dxf', version: 'AC1024' },
@@ -40,6 +45,12 @@ const targets = new WeakMap<DocState, SaveTarget>();
 /** 열린 파일과 같은 형식으로 저장할 수 있으면 그 설정 */
 function sameFormat(st: DocState): SaveTarget | null {
   const d = st.doc;
+  if (d.format === 'dwg') {
+    // R2007은 쓸 수 없어 R2004로, R13·R14는 R2000으로
+    const v = d.version === 'AC1021' ? 'AC1018' : d.version === 'AC1012' || d.version === 'AC1014' ? 'AC1015' : d.version;
+    const t = SAVE_TYPES.find((x) => x.format === 'dwg' && x.version === v);
+    return { format: 'dwg', version: t ? t.version : 'AC1032', binary: false };
+  }
   if (d.format !== 'dxf') return null;
   const t = SAVE_TYPES.find((x) => x.format === 'dxf' && x.version === d.version);
   return { format: 'dxf', version: t ? t.version : 'AC1032', binary: !!d.binary };
@@ -90,19 +101,16 @@ async function saveAs(app: App, ctx: CommandContext): Promise<void> {
   const st = app.active!;
   const prev = targets.get(st) ?? sameFormat(st);
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
-  const fromDwg = st.doc.format === 'dwg' && !prev;
   const v = await form(
     '다른 이름으로 저장',
     [
       ...(picker ? [] : [{ key: 'name', label: '파일 이름', type: 'text' as const, value: baseName(st.saveName), wide: true }]),
-      { key: 'type', label: '파일 유형', type: 'select', value: prev ? `${prev.format}-${prev.version}` : 'dxf-AC1032', options: SAVE_TYPES.map((x) => ({ value: x.value, label: x.label })) },
-      { key: 'binary', label: '이진 DXF', type: 'check', value: prev?.binary ?? false },
+      { key: 'type', label: '파일 유형', type: 'select', value: prev ? `${prev.format}-${prev.version}` : 'dwg-AC1032', options: SAVE_TYPES.map((x) => ({ value: x.value, label: x.label })) },
+      { key: 'binary', label: '이진 DXF(DXF일 때)', type: 'check', value: prev?.binary ?? false },
     ],
     {
       ok: '저장',
-      note: fromDwg
-        ? 'DWG로 다시 저장하는 기능은 준비 중입니다. 지금은 DXF로 저장합니다. 파일은 서버로 보내지 않고 이 컴퓨터에서 만듭니다.'
-        : '파일은 서버로 보내지 않고 이 컴퓨터에서 만듭니다.',
+      note: '파일은 서버로 보내지 않고 이 컴퓨터에서 만듭니다. DWG R2007(AC1021) 형식은 R2004로 저장합니다.',
       validate: (x) => (picker || String(x.name ?? '').trim() ? null : '파일 이름을 입력하십시오.'),
     },
   );
@@ -112,7 +120,7 @@ async function saveAs(app: App, ctx: CommandContext): Promise<void> {
   let name = picker ? fileName(st, t) : `${String(v.name).trim().replace(/\.(dxf|dwg)$/i, '')}.${t.format}`;
   if (picker) {
     try {
-      const handle = await picker({ suggestedName: name, types: [{ description: type.label, accept: { 'application/dxf': ['.dxf'] } }] });
+      const handle = await picker({ suggestedName: name, types: [{ description: type.label, accept: type.format === 'dwg' ? { 'application/acad': ['.dwg'] } : { 'application/dxf': ['.dxf'] } }] });
       t.handle = handle;
       name = handle.name;
     } catch {
@@ -179,7 +187,7 @@ export function registerSaveCommands(app: App): void {
         /* 저장소를 못 쓰면 기억하지 않는다 */
       }
       let name: string;
-      do name = `Drawing${drawingSerial++}.dxf`;
+      do name = `Drawing${drawingSerial++}.dwg`;
       while (app.docs.some((d) => d.saveName === name));
       const doc = createNewDocument(units);
       const res = await app.engine.adopt(name, doc);
