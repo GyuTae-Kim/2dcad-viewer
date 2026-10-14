@@ -629,6 +629,22 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       },
     ],
   },
+  {
+    tab: '공동 작업',
+    panels: [
+      {
+        title: '비교',
+        large: [{ cmd: 'COMPARE', label: '도면 비교', icon: 'layers', tip: '두 도면의 차이를 색과 구름형 리비전으로 (COMPARE)' }],
+        cols: [
+          [
+            { cmd: 'COMPAREIMPORT', label: '객체 가져오기', icon: 'insert', tip: '비교 도면의 객체를 이 도면으로' },
+            { cmd: 'COMPAREEXPORT', label: '스냅샷 내보내기', icon: 'save', tip: '비교 결과를 새 도면으로' },
+            { cmd: 'COMPARECLOSE', label: '비교 닫기', icon: 'close', tip: '비교 표시를 끝냄' },
+          ],
+        ],
+      },
+    ],
+  },
 ];
 
 export class Shell implements UiHooks {

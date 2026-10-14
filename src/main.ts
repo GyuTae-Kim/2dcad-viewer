@@ -32,6 +32,7 @@ import { noteForeignConstraints, registerConstraintCommands } from './app/constr
 import { drawConstraintOverlay } from './app/constraints-draw';
 import { registerAnnoScaleCommands } from './app/annoscale';
 import { registerHelixCommands } from './app/helix';
+import { registerCompareCommands } from './app/compare';
 import { registerTableEditCommands } from './app/tablecmds';
 import { fieldDisplay, onFieldDisplayChange, registerFieldCommands } from './app/fieldcmds';
 import { displayFlags } from './render/styles';
@@ -102,6 +103,7 @@ registerDynBlockCommands(app);
 registerConstraintCommands(app);
 registerAnnoScaleCommands(app);
 registerHelixCommands(app);
+registerCompareCommands(app);
 app.view.extraOverlay = (g, W, dark) => drawConstraintOverlay(app, g, W, dark);
 registerTableEditCommands(app);
 registerFieldCommands(app);

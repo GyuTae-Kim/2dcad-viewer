@@ -8,6 +8,7 @@ import { STANDARD_LINETYPES, makeLinetype } from '../edit/linetypes';
 import type { App, CommandContext } from './app';
 import { dialog, form, h } from './ui/dom';
 import { annotativeFlag, textStyleAnnotative, withAnnotativeFlag } from '../edit/annoscale/xdata';
+import { compareVar } from '../edit/compare/settings';
 
 /** 웹에서 바로 쓸 수 있는 글꼴(없으면 대체 글꼴로 그린다) */
 const FONTS = [
@@ -302,6 +303,11 @@ export function registerTableCommands(app: App): void {
       const key = `$${name.replace(/^\$/, '').toUpperCase()}`;
       // 헤더가 아니라 객체에 저장되는 변수
       if (key === '$IMAGEFRAME' || key === '$WIPEOUTFRAME') {
+        await app.run(key.slice(1));
+        return;
+      }
+      // 도면 비교 변수(COMPARECOLOR1 …)는 이 브라우저에 저장하고, 변수 이름이 곧 명령이다
+      if (compareVar(key.slice(1))) {
         await app.run(key.slice(1));
         return;
       }
