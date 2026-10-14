@@ -37,6 +37,8 @@ export interface OverlayState {
   tracks: { from: Pt; dir: Pt }[];
   /** 객체 스냅 추적 획득점 */
   acquired: Pt[];
+  /** 누른 그립(빨강) */
+  hotGrip: Pt | null;
   marks: { p: Pt; text?: string }[];
   /** 커서 옆 동적 입력 문구 */
   tip: string | null;
@@ -493,6 +495,11 @@ export class CadView {
       g.fillRect(q.x - 4, q.y - 4, 8, 8);
       g.strokeRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
+    if (o.hotGrip) {
+      const q = W(o.hotGrip.x, o.hotGrip.y);
+      g.fillStyle = '#e8453c';
+      g.fillRect(q.x - 4.5, q.y - 4.5, 9, 9);
+    }
     g.restore();
     // 블록 편집기: 블록 기준점
     const be = s?.blockEdit ? s.doc.blocks.get(s.blockEdit.key) : null;
@@ -827,7 +834,7 @@ function isTyping(ev: KeyboardEvent): boolean {
 }
 
 export function emptyOverlay(): OverlayState {
-  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], marks: [], tip: null };
+  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], hotGrip: null, marks: [], tip: null };
 }
 
 /** AutoCAD 스냅 표지 모양 */

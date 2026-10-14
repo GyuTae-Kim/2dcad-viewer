@@ -14,9 +14,9 @@ import { DocState } from './docstate';
 import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
-import { DEFAULT_SNAPS, SNAP_NAMES, entitySnaps, findSnap } from './snap';
+import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
 import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack } from './tracking';
-import { identity } from '../geom/matrix';
+import { gripPoints } from '../edit/geom';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
 import type { EditOp } from '../edit/session';
@@ -257,6 +257,7 @@ export class App {
         this.view.overlay.rubber = [];
         this.view.overlay.ghost = [];
         this.view.overlay.marks = [];
+        this.view.overlay.hotGrip = null;
         this.clearTracking();
         this.view.overlay.tip = null;
         this.view.requestOverlay();
@@ -382,6 +383,10 @@ export class App {
 
   /** 마지막으로 만든 객체(L 옵션) */
   lastCreated: string[] = [];
+  /** 선택한 객체의 그립(화면에 보이는 것) */
+  gripList: { handle: string; id: string; point: Pt }[] = [];
+  /** 누른 그립(GRIPEDIT 명령이 쓴다) */
+  hotGrip: { point: Pt; items: { handle: string; id: string }[] } | null = null;
   /** 파일을 연 뒤(빠진 글꼴 안내 등) */
   onOpened: ((st: DocState) => void) | null = null;
 
@@ -752,6 +757,7 @@ export class App {
     const o = this.view.overlay;
     o.selection = [];
     o.grips = [];
+    this.gripList = [];
     if (st && st.selection.size) {
       const p = this.picker();
       if (p) {
@@ -761,15 +767,18 @@ export class App {
           o.selection.push(p.geometry(h));
         }
         if (st.selection.size <= 200) {
-          const pts: { x: number; y: number; kind: string }[] = [];
+          // 객체별 그립(편집 커널): 누르면 그립 편집(신축·이동·회전·축척·대칭)
           for (const h of st.selection) {
             const e = st.doc.entityIndex.get(h);
             if (!e) continue;
-            const sp: { x: number; y: number; kind: SnapKind }[] = [];
-            entitySnaps(st.doc, e.type === 'INSERT' ? { ...e, block: '\u0000' } : e, identity(), sp);
-            for (const s of sp) if (s.kind === 'end' || s.kind === 'mid' || s.kind === 'cen' || s.kind === 'ins' || s.kind === 'qua' || s.kind === 'nod') pts.push(s);
+            try {
+              for (const g of gripPoints(e, st.doc)) this.gripList.push({ handle: h, id: g.id, point: g.point });
+            } catch {
+              /* 그립이 없는 객체 */
+            }
+            if (this.gripList.length > 2000) break;
           }
-          o.grips = pts.slice(0, 2000);
+          o.grips = this.gripList.map((g) => g.point);
         }
       }
     }
@@ -944,6 +953,27 @@ export class App {
     if (this.windowStart?.viaClick) {
       this.finishWindow(this.windowStart.screen, s, ev);
       return;
+    }
+    // 그립을 누르면 그립 편집
+    if (!r && st.selection.size && this.gripList.length && !this.busyCommand) {
+      const gt = 6 * this.view.pixelSize() * (ev.pointerType === 'touch' ? 2 : 1);
+      let best: Pt | null = null;
+      let bd = Infinity;
+      for (const g of this.gripList) {
+        const d = Math.hypot(g.point.x - w.x, g.point.y - w.y);
+        if (d <= gt && d < bd) {
+          bd = d;
+          best = g.point;
+        }
+      }
+      if (best) {
+        const bp = best;
+        const items = this.gripList.filter((g) => Math.hypot(g.point.x - bp.x, g.point.y - bp.y) <= 1e-9 * Math.max(1, Math.abs(bp.x) + Math.abs(bp.y))).map((g) => ({ handle: g.handle, id: g.id }));
+        this.hotGrip = { point: bp, items };
+        this.view.overlay.hotGrip = bp;
+        void this.run('GRIPEDIT');
+        return;
+      }
     }
     const h = pk.pick(w.x, w.y, tol);
     if (h) {
