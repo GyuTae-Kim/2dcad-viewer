@@ -1,14 +1,14 @@
 /**
  * 도면 영역: 카메라(확대·이동), WebGL 그리기, 배치·뷰포트, 오버레이(커서·선택·스냅·고무줄).
  */
+import type { XrefPlacement } from './refs';
 import type { ViewportModel } from './psltscale';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
 import type { Camera, DocState } from './docstate';
-import { type OverlayScene, type PaperInfo, type SpaceScene, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
+import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 import type { DisplayList } from '../render/displaylist';
-import type { LayerState } from '../render/styles';
 
 export interface Pt {
   x: number;
@@ -115,7 +115,7 @@ export class CadView {
   /** 문맥 복구 뒤 장면을 다시 올리는 함수(앱이 넣는다) */
   onRestore: (() => void) | null = null;
   /** 외부 참조 장면(앱이 연결한 참조 파일). 문서 번호·참조 블록 이름(대문자)으로 찾는다 */
-  xrefScene: ((docId: number, key: string) => { scene: SpaceScene; layers: LayerState[] } | null) | null = null;
+  xrefPlacements: ((st: DocState, list: DisplayList, visible: (style: number) => boolean, vpFrozen?: ReadonlySet<string>) => XrefPlacement[]) | null = null;
   /** 뷰포트에서 쓸 모형 장면(PSLTSCALE 변형 포함) */
   viewportModel: ((st: DocState, vx: ViewportXf) => ViewportModel | null) | null = null;
 
@@ -123,17 +123,13 @@ export class CadView {
    * 표시 목록의 외부 참조 인스턴스를 그린다(참조 장면을 인스턴스 변환으로).
    * hostStyles는 호스트 장면의 스타일 표(블록 참조의 도면층이 꺼져 있으면 건너뛴다)
    */
-  private drawXrefs(list: DisplayList | undefined, xf: ViewXf, lwScale: number, dark: boolean, bg: number, hostStyles: Float32Array | null, toScreen: (x: number, y: number) => [number, number]): boolean {
+  private drawXrefs(list: DisplayList | undefined, xf: ViewXf, lwScale: number, dark: boolean, bg: number, hostStyles: Float32Array | null, toScreen: (x: number, y: number) => [number, number], vpFrozen?: ReadonlySet<string>, noClip = false): boolean {
     const s = this.state;
-    const inst = list?.xrefs;
-    if (!s || !inst?.length || !this.xrefScene) return false;
+    if (!s || !list?.xrefs?.length || !this.xrefPlacements) return false;
     const r = this.renderer;
     let drew = false;
-    for (const x of inst) {
-      if (hostStyles && !(hostStyles[x.style * 8 + 5]! > 0)) continue;
-      const e = this.xrefScene(s.docId, x.key);
-      if (!e) continue;
-      const [a, b, c, d, ex, fy] = x.m;
+    for (const p of this.xrefPlacements(s, list, hostStyles ? (st) => hostStyles[st * 8 + 5]! > 0 : () => true, vpFrozen)) {
+      const [a, b, c, d, ex, fy] = p.m;
       const A = xf.A;
       const dx = ex - xf.refX;
       const dy = fy - xf.refY;
@@ -144,18 +140,19 @@ export class CadView {
         tx: A[0] * dx + A[2] * dy + xf.tx,
         ty: A[1] * dx + A[3] * dy + xf.ty,
       };
-      if (x.clip && x.clip.length >= 6 && !x.clipInverted) {
+      const clip = !noClip && p.clip ? p.clip : null;
+      if (clip) {
         const px: number[] = [];
-        for (let i = 0; i + 1 < x.clip.length; i += 2) px.push(...toScreen(x.clip[i]!, x.clip[i + 1]!));
+        for (let i = 0; i + 1 < clip.length; i += 2) px.push(...toScreen(clip[i]!, clip[i + 1]!));
         const idx = earcut(px);
         const tris: number[] = [];
         for (const i of idx) tris.push(px[i * 2]!, px[i * 2 + 1]!);
         r.stencilClip(tris.length ? tris : null);
       }
       r.clearDepth();
-      r.setStyles(e.scene.styleData(e.layers, 'xref', dark, bg, this.lwDisplay));
-      r.draw(e.scene.gpu, xxf, { lwScale, bg: rgbF(bg) });
-      if (x.clip && !x.clipInverted) r.stencilClip(null);
+      r.setStyles(p.file.scene.styleData(p.layers, p.key, dark, bg, this.lwDisplay));
+      r.draw(p.file.scene.gpu, xxf, { lwScale, bg: rgbF(bg) });
+      if (clip) r.stencilClip(null);
       drew = true;
     }
     if (drew) r.clearDepth();
@@ -495,7 +492,7 @@ export class CadView {
     if (model.source.xrefs?.length) {
       const styles = model.styleData(vm.layers, 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined);
       const toS = (x: number, y: number): [number, number] => [A[0] * (x - xf.refX) + A[2] * (y - xf.refY) + xf.tx, A[1] * (x - xf.refX) + A[3] * (y - xf.refY) + xf.ty];
-      if (this.drawXrefs(vx.clip ? { ...model.source, xrefs: model.source.xrefs.map((q) => ({ ...q, clip: undefined })) } : model.source, xf, lwScale, false, 0xffffff, styles, toS)) {
+      if (this.drawXrefs(model.source, xf, lwScale, false, 0xffffff, styles, toS, vx.frozen, !!vx.clip)) {
         r.setStyles(styles);
       }
     }

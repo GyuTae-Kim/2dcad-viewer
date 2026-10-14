@@ -4,6 +4,8 @@
  * 파일은 서버로 보내지 않는다.
  */
 import type { CadDocument, ImageDefObject, UnderlayDefObject } from '../core/model';
+import { tableKey } from '../core/model';
+import type { DisplayList } from '../render/displaylist';
 import { pdfPageNumber } from '../render/build';
 import type { LayerState } from '../render/styles';
 import { SpaceScene } from './scene';
@@ -47,9 +49,112 @@ export function xrefOfDoc(doc: CadDocument, blockKey: string): XrefFile | null {
   return xrefFiles.get(baseKey(b.xrefPath || `${b.name}.dwg`)) ?? null;
 }
 
-function xrefFor(app: App, hostDocId: number, blockKey: string): XrefFile | null {
-  const st = app.docs.find((d) => d.docId === hostDocId);
-  return st ? xrefOfDoc(st.doc, blockKey) : null;
+type M6 = [number, number, number, number, number, number];
+
+/** 목록 좌표에 놓인 외부 참조 하나(중첩 참조는 펼친다) */
+export interface XrefPlacement {
+  file: XrefFile;
+  /** 참조 모형 → 목록 좌표 */
+  m: M6;
+  /** 가장 바깥 XCLIP 경계(목록 좌표) */
+  clip?: number[];
+  /** 호스트의 `참조|도면층` 상태와 뷰포트 동결을 반영한 도면층(장면 순서) */
+  layers: LayerState[];
+  /** 스타일 표 캐시 열쇠 */
+  key: string;
+}
+
+const MAX_NEST = 8;
+
+const compose = (A: readonly number[], B: readonly number[]): M6 => [
+  A[0]! * B[0]! + A[2]! * B[1]!,
+  A[1]! * B[0]! + A[3]! * B[1]!,
+  A[0]! * B[2]! + A[2]! * B[3]!,
+  A[1]! * B[2]! + A[3]! * B[3]!,
+  A[0]! * B[4]! + A[2]! * B[5]! + A[4]!,
+  A[1]! * B[4]! + A[3]! * B[5]! + A[5]!,
+];
+
+/** 참조 파일의 도면층에 호스트 재지정(`블록이름|도면층`)과 뷰포트 동결을 입힌다 */
+function hostLayers(st: DocState, file: XrefFile, prefix: string, vpFrozen?: ReadonlySet<string>): LayerState[] {
+  return file.layers.map((l) => {
+    const n = tableKey(l.name);
+    if (n === '0' || n === 'DEFPOINTS') return l;
+    const hk = tableKey(`${prefix}|${l.name}`);
+    const h = st.layers.get(hk);
+    let out = h ? { ...l, on: h.on, frozen: h.frozen, rgb: h.rgb, aci: h.aci, hasRgb: h.hasRgb, lineweight: h.lineweight, transparency: h.transparency, plot: h.plot } : l;
+    if (vpFrozen?.has(hk)) out = { ...out, frozen: true };
+    return out;
+  });
+}
+
+/**
+ * 표시 목록의 외부 참조 인스턴스를 펼친다. visible(스타일)이 거짓인 인스턴스(꺼진 도면층 등)는 뺀다.
+ * 중첩 참조는 덮어씌우기(블록 플래그 8)가 아닐 때만, 같은 파일이 다시 나오면 멈춘다.
+ */
+export function xrefPlacements(st: DocState, list: DisplayList, visible: (style: number) => boolean, vpFrozen?: ReadonlySet<string>): XrefPlacement[] {
+  const out: XrefPlacement[] = [];
+  const vf = vpFrozen?.size ? [...vpFrozen].sort().join(',') : '';
+  const walk = (doc: CadDocument, l: DisplayList, base: M6 | null, clip: number[] | undefined, vis: (style: number) => boolean, chain: string[], depth: number) => {
+    for (const x of l.xrefs ?? []) {
+      if (!vis(x.style)) continue;
+      const blk = doc.blocks.get(x.key);
+      if (!blk || !(blk.flags & 4) || (depth > 0 && blk.flags & 8)) continue;
+      const fk = baseKey(blk.xrefPath || `${blk.name}.dwg`);
+      const file = xrefFiles.get(fk);
+      if (!file || chain.includes(fk)) continue;
+      const m = base ? compose(base, x.m) : ([...x.m] as M6);
+      let c = clip;
+      if (!c && x.clip && x.clip.length >= 6 && !x.clipInverted) c = base ? x.clip.map((v, i) => (i & 1 ? base[1] * x.clip![i - 1]! + base[3] * v + base[5] : base[0] * v + base[2] * x.clip![i + 1]! + base[4])) : x.clip;
+      const key = `xref|${st.docId}|${[...chain, fk].join('>')}|${blk.name}|${st.layerVersion}|${vf}`;
+      const layers = hostLayers(st, file, blk.name, vpFrozen);
+      out.push({ file, m, clip: c, layers, key });
+      if (depth + 1 < MAX_NEST && file.scene.source.xrefs?.length) {
+        const styles = file.scene.styleData(layers, `${key}|vis`, false, 0xffffff, false);
+        walk(file.doc, file.scene.source, m, c, (sty) => styles[sty * 8 + 5]! > 0, [...chain, fk], depth + 1);
+      }
+    }
+  };
+  walk(st.doc, list, null, undefined, visible, [], 0);
+  return out;
+}
+
+/** 열린 도면이 쓰는 참조 파일의 키(중첩 포함, 연결된 것을 따라간다) */
+function wantedXrefKeys(app: App): Set<string> {
+  const keys = new Set<string>();
+  const visit = (doc: CadDocument, depth: number) => {
+    for (const b of doc.blocks.values()) {
+      if (!(b.flags & 4)) continue;
+      const k = baseKey(b.xrefPath || `${b.name}.dwg`);
+      if (keys.has(k)) continue;
+      keys.add(k);
+      const f = xrefFiles.get(k);
+      if (f && depth < MAX_NEST) visit(f.doc, depth + 1);
+    }
+  };
+  for (const st of app.docs) visit(st.doc, 0);
+  return keys;
+}
+
+/**
+ * VISRETAIN = 0이면 호스트에 저장된 `참조|도면층` 상태 대신 참조 파일의 상태를 쓴다(연결할 때 맞춘다).
+ */
+export function syncXrefLayers(st: DocState): void {
+  if (st.doc.header.get('$VISRETAIN') !== 0) return;
+  let changed = false;
+  for (const b of st.doc.blocks.values()) {
+    if (!(b.flags & 4)) continue;
+    const file = xrefFiles.get(baseKey(b.xrefPath || `${b.name}.dwg`));
+    if (!file) continue;
+    for (const l of file.layers) {
+      const hk = tableKey(`${b.name}|${l.name}`);
+      const h = st.layers.get(hk);
+      if (!h) continue;
+      Object.assign(h, { on: l.on, frozen: l.frozen, rgb: l.rgb, aci: l.aci, hasRgb: l.hasRgb, lineweight: l.lineweight, transparency: l.transparency, plot: l.plot });
+      changed = true;
+    }
+  }
+  if (changed) st.touchLayers();
 }
 
 /**
@@ -117,7 +222,10 @@ export async function linkXrefFiles(app: App, files: File[]): Promise<string[]> 
     }
   }
   if (out.length) {
-    for (const st of app.docs) expandXrefBounds(app, st);
+    for (const st of app.docs) {
+      syncXrefLayers(st);
+      expandXrefBounds(app, st);
+    }
     app.view.requestRender();
   }
   return out;
@@ -331,6 +439,7 @@ function pickFiles(folder: boolean): Promise<File[]> {
 
 /** 문서를 연 뒤: 찾지 못한 참조 안내 */
 export async function noteMissingRefs(app: App, st: DocState): Promise<void> {
+  syncXrefLayers(st);
   expandXrefBounds(app, st);
   // 이미 연결한 PDF의 다른 페이지를 이 도면이 쓰면 그린다
   if (pdfData.size) await renderPdfPages(app);
@@ -348,7 +457,7 @@ export function registerRefCommands(app: App): void {
     reuploadImages(app);
     for (const x of xrefFiles.values()) x.scene.reupload(app.view.renderer);
   };
-  app.view.xrefScene = (docId, key) => xrefFor(app, docId, key);
+  app.view.xrefPlacements = (st, list, visible, vpFrozen) => xrefPlacements(st, list, visible, vpFrozen);
   app.register({
     name: 'EXTERNALREFERENCES',
     aliases: ['XR', 'ER', 'XREF', 'IMAGE'],
@@ -391,6 +500,14 @@ export function registerRefCommands(app: App): void {
         const pick = files.filter((f) => want.has(f.name.toLowerCase()));
         const img = await linkImageFiles(app, pick);
         const x = await linkXrefFiles(app, pick);
+        // 연결한 참조 파일이 다시 참조하는 파일(중첩)도 같은 선택에서 찾는다
+        for (let i = 0; i < MAX_NEST && x.length; i++) {
+          const more = wantedXrefKeys(app);
+          const next = files.filter((f) => more.has(f.name.toLowerCase()) && !want.has(f.name.toLowerCase()) && !x.includes(f.name));
+          if (!next.length) break;
+          for (const f of next) want.add(f.name.toLowerCase());
+          x.push(...(await linkXrefFiles(app, next)));
+        }
         const pdf = await linkPdfFiles(app, pick);
         const names = [...img.linked, ...x, ...pdf.linked];
         const n = names.length;

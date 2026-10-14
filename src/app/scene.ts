@@ -40,6 +40,8 @@ export class SpaceScene {
     let d = this.styleCache.get(k);
     if (!d) {
       d = resolveStyles(this.styles, layers, { darkBackground: dark, backgroundRgb: bg, showLineweight: lwDisplay, defaultLineweight: 25, viewportFrozen: vpFrozen, plot: plot || ctb ? { style: plot ?? 'color', ctb } : undefined });
+      // 외부 참조 장면은 호스트 도면층 버전마다 열쇠가 바뀌므로 너무 쌓이면 비운다
+      if (this.styleCache.size >= 64) this.styleCache.clear();
       this.styleCache.set(k, d);
     }
     return d;

@@ -4,7 +4,7 @@
  */
 import { ensureLayoutVariants, viewportModel } from './psltscale';
 import { MODEL_SPACE } from '../core/model';
-import { imageDataUrl, imagePixels, xrefOfDoc } from './refs';
+import { imageDataUrl, imagePixels, xrefPlacements } from './refs';
 import type { CtbTable } from '../render/ctb';
 import type { DisplayList } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
@@ -134,18 +134,15 @@ export interface PageOptions {
 
 /** 모형의 사각형(도면 좌표)을 용지에 놓는다. k = 출력 단위 / 도면 단위, 원점 = 용지 위 왼쪽 기준 출력 좌표 */
 /** 장면의 외부 참조 인스턴스를 출력 레이어로(호스트 레이어 L 아래에 그린다) */
-function xrefLayers(st: DocState, L: Page['layers'][number], opt: PageOptions): Page['layers'] {
+function xrefLayers(st: DocState, L: Page['layers'][number], opt: PageOptions, vpFrozen?: ReadonlySet<string>): Page['layers'] {
   const out: Page['layers'] = [];
-  for (const x of L.scene.source.xrefs ?? []) {
-    if (!(L.styles[x.style * 8 + 5]! > 0)) continue;
-    const e = xrefOfDoc(st.doc, x.key);
-    if (!e) continue;
-    const [a, b, c, d, ex, fy] = x.m;
-    const m = L.m;
-    const mm: Affine = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * ex + m[2] * fy + m[4], m[1] * ex + m[3] * fy + m[5]];
-    const styles = e.scene.styleData(e.layers, opt.plotStyle || opt.ctb ? 'xref-plot' : 'xref', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb);
-    const layer: Page['layers'][number] = { scene: e.scene, m: mm, styles, clipPx: L.clipPx, clipPoly: L.clipPoly };
-    if (x.clip && !x.clipInverted) layer.clipPoly = x.clip.map((v, i) => (i & 1 ? m[1] * x.clip![i - 1]! + m[3] * v + m[5] : m[0] * v + m[2] * x.clip![i + 1]! + m[4]));
+  const m = L.m;
+  for (const p of xrefPlacements(st, L.scene.source, (sty) => L.styles[sty * 8 + 5]! > 0, vpFrozen)) {
+    const mm: Affine = [m[0] * p.m[0] + m[2] * p.m[1], m[1] * p.m[0] + m[3] * p.m[1], m[0] * p.m[2] + m[2] * p.m[3], m[1] * p.m[2] + m[3] * p.m[3], m[0] * p.m[4] + m[2] * p.m[5] + m[4], m[1] * p.m[4] + m[3] * p.m[5] + m[5]];
+    const styles = p.file.scene.styleData(p.layers, `${p.key}|${opt.plotStyle || opt.ctb ? 'plot' : 'export'}`, false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb);
+    const layer: Page['layers'][number] = { scene: p.file.scene, m: mm, styles, clipPx: L.clipPx, clipPoly: L.clipPoly };
+    const c = p.clip;
+    if (c && !L.clipPoly) layer.clipPoly = c.map((v, i) => (i & 1 ? m[1] * c[i - 1]! + m[3] * v + m[5] : m[0] * v + m[2] * c[i + 1]! + m[4]));
     out.push(layer);
   }
   return out;
@@ -209,7 +206,7 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
         // 다각형·원 뷰포트 경계(출력 좌표)
         clipPoly: vx.clip ? vx.clip.map((v, i) => (i & 1 ? (paper.maxY - v) * k : (v - paper.minX) * k)) : undefined,
       };
-      page.layers.push(...xrefLayers(st, vl, opt), vl);
+      page.layers.push(...xrefLayers(st, vl, opt, vx.frozen), vl);
     }
   }
   if (scene) {
