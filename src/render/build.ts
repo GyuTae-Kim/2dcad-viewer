@@ -27,7 +27,7 @@ import type {
   Vec2,
   Vec3,
 } from '../core/model';
-import { BYBLOCK, BYLAYER, tableKey } from '../core/model';
+import { BYBLOCK, BYLAYER, normalizeHandle, tableKey } from '../core/model';
 import { DIM_VAR_CODES, DIM_VAR_DEFAULTS } from '../core/dimvars';
 import { ACI_RGB } from '../core/color';
 import { type FrameKind, frameSetting } from '../core/framevars';
@@ -57,6 +57,8 @@ import { type ShxFont, ShxRunner } from '../text/shx';
 import { parseProxyGraphics } from './proxy';
 import { codepageToEncoding, decoderFor } from '../core/codepage';
 import { mlineDrawing } from '../edit/mline/draw';
+import { toleranceLayout } from '../edit/annot/tolerance';
+import { breakRuns } from '../edit/annot/mleader';
 
 export interface BuildOptions {
   text: TextEngine;
@@ -832,21 +834,27 @@ export class SceneBuilder {
       case 'TOLERANCE': {
         const r = this.resolve(e, ctx);
         const dv = this.dimVars(e.dimStyle, undefined);
-        const h = num(dv.DIMTXT, 2.5) * (num(dv.DIMSCALE, 1) || 1);
+        const sc = num(dv.DIMSCALE, 1) || 1;
+        const h = num(dv.DIMTXT, 2.5) * sc;
+        const gap = num(dv.DIMGAP, 0.625) * sc;
+        const style = this.doc.textStyles.get(tableKey(String(dv.DIMTXSTY || 'Standard')));
+        const lay = (t: string) => this.opt.text.layoutMText({ text: t, height: h, width: 0, attachment: 4, lineSpacingStyle: 1, lineSpacingFactor: 1, style });
+        // 프레임·칸막이·GDT 기호는 선으로(gdt.shx 없이), 값·데이텀 문자는 칸 안에 왼쪽 가운데 기준으로
+        const tl = toleranceLayout(e.text, h, gap, (t) => {
+          const l = lay(t);
+          const w = l.maxX - l.minX;
+          return Number.isFinite(w) ? w : t.length * h * 0.7;
+        });
         const ang = Math.atan2(e.direction.y, e.direction.x);
-        const plain = e.text.replace(/\{\\F[^;]*;([^}]*)\}/g, '$1').replace(/%%v/gi, ' | ').replace(/\^J/g, '\\P');
-        const lay = this.opt.text.layoutMText({ text: plain, height: h, width: 0, attachment: 4, lineSpacingStyle: 1, lineSpacingFactor: 1, style: this.doc.textStyles.get(tableKey(String(dv.DIMTXSTY || 'Standard'))) });
-        const m = this.ocsM(ctx, e.extrusion);
         const ca = Math.cos(ang);
         const sa = Math.sin(ang);
-        const p = this.planar(m, e.insert.z);
-        const world = affMul(p, [ca, sa, -sa, ca, e.insert.x, e.insert.y]);
-        this.emitText(lay, world, r, ctx);
-        const g = h * 0.5;
-        const box = [lay.minX - g, lay.minY - g, lay.maxX + g, lay.minY - g, lay.maxX + g, lay.maxY + g, lay.minX - g, lay.maxY + g];
-        const q: number[] = [];
-        for (let i = 0; i < box.length; i += 2) q.push(world[0] * box[i]! + world[2] * box[i + 1]! + world[4], world[1] * box[i]! + world[3] * box[i + 1]! + world[5]);
-        this.out.polyline(q, true, r.style);
+        const world = affMul(this.planar(this.ocsM(ctx, e.extrusion), e.insert.z), [ca, sa, -sa, ca, e.insert.x, e.insert.y]);
+        for (const s of tl.strokes) {
+          const q: number[] = [];
+          for (const p of s.pts) q.push(world[0] * p.x + world[2] * p.y + world[4], world[1] * p.x + world[3] * p.y + world[5]);
+          this.out.polyline(q, !!s.closed, r.style);
+        }
+        for (const t of tl.texts) this.emitText(lay(t.text), affMul(world, [1, 0, 0, 1, t.x, t.y]), r, ctx);
         return;
       }
       case 'ACAD_TABLE': {
@@ -1433,7 +1441,9 @@ export class SceneBuilder {
   /** 화살촉: 도면의 블록이 있으면 블록, 없으면 기본 모양 */
   private arrowAt(name: string, tip: { x: number; y: number }, dir: number, size: number, r: Resolved, ctx: Ctx, parent?: Entity): void {
     if (!(size > 0)) return;
-    const blk = name ? this.doc.blocks.get(tableKey(name)) : undefined;
+    // 이름 또는 블록 레코드 핸들(치수 변수 341~344는 핸들이다)
+    const blk = name ? (this.doc.blocks.get(tableKey(name)) ?? (/^[0-9A-F]+$/i.test(name) ? this.blockByRecord.get(normalizeHandle(name)) : undefined)) : undefined;
+    if (blk) name = blk.name;
     const c = Math.cos(dir) * size;
     const s = Math.sin(dir) * size;
     if (blk && blk.entities.length && parent) {
@@ -1477,7 +1487,8 @@ export class SceneBuilder {
       const asz = num(v.DIMASZ, 2.5) * scale;
       const dir = Math.atan2(pts[1]! - pts[3]!, pts[0]! - pts[2]!);
       const seg = Math.hypot(pts[1]! - pts[3]!, pts[0]! - pts[2]!);
-      if (seg > asz * 2 || seg > 1e-9) this.arrowAt(String(v.DIMLDRBLK || v.DIMBLK || ''), { x: pts[0]!, y: pts[1]! }, dir, asz, rr, ctx, e);
+      // DIMLDRBLK가 비어 있으면 DIMBLK가 아니라 닫고 채운 화살촉이다
+      if (seg > asz * 2 || seg > 1e-9) this.arrowAt(String(v.DIMLDRBLK || ''), { x: pts[0]!, y: pts[1]! }, dir, asz, rr, ctx, e);
     }
   }
 
@@ -1505,7 +1516,10 @@ export class SceneBuilder {
           } else pts3 = v3.flatMap((p) => [p.x, p.y, p.z]);
           const pts = this.xf3(m, pts3);
           const lnStyle = ln.color && !(ln.color.aci === 0 && ln.color.rgb === undefined) ? { ...rl, style: this.styleWithColor(r, ln.color, ctx) } : rl;
-          this.stroke(pts, false, lnStyle, ctx);
+          // 직선 지시선의 끊기(DIMBREAK)는 그 사이를 비운다. 화살촉 방향은 원래 선에서 구한다
+          if (e.leaderLineType !== 2 && ln.breaks?.length)
+            for (const run of breakRuns(v3, ln.breaks)) this.stroke(this.xf3(m, run.flatMap((p) => [p.x, p.y, p.z])), false, lnStyle, ctx);
+          else this.stroke(pts, false, lnStyle, ctx);
           const dir = Math.atan2(pts[1]! - pts[3]!, pts[0]! - pts[2]!);
           this.arrowAt(arrowName, { x: pts[0]!, y: pts[1]! }, dir, arrowSize, lnStyle, ctx, e);
         }

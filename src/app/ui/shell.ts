@@ -342,11 +342,37 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DIMSTYLE', label: '치수 스타일', icon: 'dimLinear', tip: '치수 스타일 (D)' },
             { cmd: 'DIMLIST', label: '치수 목록', icon: 'dimlist', tip: '도면의 치수와 실제 측정값을 비교합니다' },
           ],
+          [
+            { cmd: 'DIMJOGGED', label: '꺾기', icon: 'dimRadius', tip: '꺾기 반지름 치수 (DJO)' },
+            { cmd: 'QDIM', label: '빠른 치수', icon: 'dimLinear', tip: '고른 객체에 연속·기준선·반지름 치수 한 번에' },
+            { cmd: 'DIMSPACE', label: '간격 조정', icon: 'dimAligned', tip: '평행 치수 간격 맞추기' },
+          ],
+          [
+            { cmd: 'DIMBREAK', label: '끊기', icon: 'break', tip: '치수·지시선을 교차하는 곳에서 끊기' },
+            { cmd: 'DIMJOGLINE', label: '꺾어진 선형', icon: 'dimLinear', tip: '선형 치수에 꺾기선 (DJL)' },
+            { cmd: 'DIMOVERRIDE', label: '재지정', icon: 'settings', tip: '치수 변수 재지정 (DOV)' },
+          ],
+          [
+            { cmd: 'DIMEDIT', label: '치수 편집', icon: 'dimLinear', tip: '문자·기울기 (DED)' },
+            { cmd: 'DIMTEDIT', label: '문자 위치', icon: 'text', tip: '치수 문자 옮기기·정렬' },
+            { cmd: 'TOLERANCE', label: '공차', icon: 'rect', tip: '기하 공차 (TOL)' },
+          ],
         ],
       },
       {
         title: '지시선',
         large: [{ cmd: 'MLEADER', label: '다중 지시선', icon: 'leader', tip: '다중 지시선 (MLD)' }],
+        cols: [
+          [
+            { cmd: 'QLEADER', label: '빠른 지시선', icon: 'leader', tip: '지시선과 여러 줄 문자 (LE)' },
+            { cmd: 'MLEADEREDIT', label: '추가·제거', icon: 'leader', tip: '다중 지시선에 지시선 추가·제거 (MLE)' },
+            { cmd: 'MLEADERALIGN', label: '정렬', icon: 'leader', tip: '다중 지시선 정렬 (MLA)' },
+          ],
+          [
+            { cmd: 'MLEADERCOLLECT', label: '수집', icon: 'blocks', tip: '블록 다중 지시선 모으기 (MLC)' },
+            { cmd: 'MLEADERSTYLE', label: '지시선 스타일', icon: 'settings', tip: '다중 지시선 스타일 (MLS)' },
+          ],
+        ],
       },
       {
         title: '표',
@@ -356,6 +382,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'TABLEDIT', label: '셀 문자', icon: 'text', tip: '표 셀 문자 편집(표를 두 번 눌러도 됨)' },
             { cmd: 'TABLECELL', label: '셀 편집', icon: 'table', tip: '행·열 삽입·삭제, 병합, 정렬 (TCELL)' },
             { cmd: 'TABLESTYLE', label: '테이블 스타일', icon: 'settings', tip: '테이블 스타일 (TS)' },
+          ],
+        ],
+      },
+      {
+        title: '중심선',
+        cols: [
+          [
+            { cmd: 'CENTERMARK', label: '중심 표식', icon: 'circle', tip: '원·호의 중심 표식 (CM)' },
+            { cmd: 'CENTERLINE', label: '중심선', icon: 'xline', tip: '두 선 사이 중심선 (CL)' },
           ],
         ],
       },

@@ -5,6 +5,8 @@
 import type { CadDocument, DimensionEntity, Entity, Vec3 } from '../../core/model';
 import { angular, arcLength } from './angular';
 import { Out } from './builder';
+import { applyDimExtras } from './extras';
+import { jogged } from './jogged';
 import { linear } from './linear';
 import { ordinate } from './ordinate';
 import { radial } from './radial';
@@ -36,8 +38,12 @@ export function generateDimensionGeometry(doc: CadDocument, dim: DimensionEntity
   const o = new Out(doc, dim, v, opt.measureText ?? measureText);
   if (dim.subtype === 'ARC_DIMENSION') arcLength(o);
   else if (dim.subtype === 'LARGE_RADIAL_DIMENSION') {
-    o.warn('dimension.jogged_radius_simplified');
-    radial(o);
+    // 재지정 중심·꺾기 점이 없는(모두 0) 기록은 예전처럼 반지름 치수로
+    const z = (q: Vec3) => !q.x && !q.y && !q.z;
+    if (z(dim.defPoint2) && z(dim.defPoint3)) {
+      o.warn('dimension.jogged_radius_simplified');
+      radial(o);
+    } else jogged(o);
   } else
     switch (dim.dimType & 7) {
       case 0:
@@ -58,6 +64,8 @@ export function generateDimensionGeometry(doc: CadDocument, dim: DimensionEntity
       default:
         o.warn('dimension.unknown_type');
     }
+  // 꺾기선·끊기 기록(확장 데이터가 있을 때만)
+  applyDimExtras(o);
   const tm = o.textMid ?? { x: dim.textMid.x, y: dim.textMid.y };
   return {
     entities: o.entities,
