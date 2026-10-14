@@ -86,6 +86,8 @@ export interface EntityBase {
   reactors?: string[];
   /** 플롯 스타일 핸들(명명된 플롯 스타일 도면) */
   plotStyle?: string;
+  /** 재질 핸들(347, ByLayer이면 없음) */
+  material?: string;
   /** 하이퍼링크(PE_URL 확장 데이터) */
   hyperlink?: { url: string; description?: string; location?: string };
   /** DWG 리더가 남긴 원본 본문(같은 버전으로 다시 쓸 때만 쓴다) */

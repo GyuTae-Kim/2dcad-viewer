@@ -12,6 +12,7 @@ import {
   type CadObject,
   type DictionaryObject,
   type DimStyle,
+  type GenericObject,
   type HeaderValue,
   type Layer,
   type Layout,
@@ -77,7 +78,11 @@ import {
 } from './objects/nonentities';
 import { type Names, type ParsedEntity, readEntity, xdataFromEed } from './objects/entities';
 import { R2004, R2007, R2010 } from './version';
+import { captureRaw } from './rawbody';
 import { parseDimOverrides } from './xdata';
+
+/** 원본 본문을 남기는 도형 */
+const RAW_TYPES = new Set(['UNKNOWN', 'REGION', '3DSOLID', 'BODY', 'SURFACE', 'PLANESURFACE', 'EXTRUDEDSURFACE', 'LOFTEDSURFACE', 'REVOLVEDSURFACE', 'SWEPTSURFACE', 'NURBSURFACE', 'OLE2FRAME', 'OLEFRAME', 'ACAD_TABLE', 'MULTILEADER', 'MESH']);
 
 export interface BuildOptions {
   onProgress?: (fraction: number) => void;
@@ -150,6 +155,9 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
   };
 
   const deferred: number[] = [];
+  // 비도형 객체의 확장 자료(앱 이름은 APPID를 다 읽은 뒤에 푼다)와 표 제어 객체의 머리
+  const objEed = new Map<number, NonNullable<typeof or.h.eed>>();
+  const controlMeta = new Map<number, { xdict: number; reactors: number[]; eed: typeof or.h.eed }>();
   const dbColors = new Map<number, CadColor>();
   for (const h of objectHandles) {
     progress();
@@ -159,8 +167,10 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       const oh = or.begin(off, h);
       if (!oh.crcOk) crcBad[t] = (crcBad[t] ?? 0) + 1;
       t = oh.typeName;
+      if (oh.eed) objEed.set(h, oh.eed);
       if (CONTROL_TYPES.has(t)) {
         controls.set(h, readControl(or));
+        controlMeta.set(h, { xdict: or.h.xdict, reactors: [...or.h.reactors], eed: or.h.eed });
         continue;
       }
       switch (t) {
@@ -237,16 +247,34 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
           break;
         case 'DBCOLOR': {
           or.commonObject();
-          dbColors.set(h, cmcToCad(or.dat.CMC()));
-          objects.set(hex(h), { type: 'DBCOLOR', handle: hex(h), owner: hex(or.h.owner) } as CadObject);
+          const color = cmcToCad(or.dat.CMC());
+          dbColors.set(h, color);
+          const o: GenericObject = { type: 'DBCOLOR', handle: hex(h), color };
+          if (or.h.owner) o.owner = hex(or.h.owner);
+          if (or.h.reactors.length) o.reactors = or.h.reactors.map(hex);
+          if (or.h.xdict) o.xdict = hex(or.h.xdict);
+          objects.set(hex(h), o);
           break;
         }
         case 'SCALE':
           objects.set(hex(h), readScale(or));
           break;
-        default:
-          objects.set(hex(h), readGenericObject(or));
+        default: {
+          const o = readGenericObject(or) as GenericObject;
+          if (t === 'DICTIONARYVAR') {
+            // 정수(280)와 문자열(1)
+            const schema = or.dat.RC();
+            o.raw = [
+              { code: 280, value: schema },
+              { code: 1, value: or.dat.TV() },
+            ];
+          }
+          // 해석하지 않는 객체: 같은 버전으로 쓸 때 되쓸 본문
+          const raw = captureRaw(or, o);
+          if (raw) o.dwgRaw = raw;
+          objects.set(hex(h), o);
           break;
+        }
       }
     } catch (e) {
       skip(t, h, e);
@@ -262,7 +290,8 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
     for (const rec of blockHeaders.values()) {
       if (/^\*model_space$/i.test(rec.name)) rec.name = '*Model_Space';
       // 이전 형식으로 저장한 동적 블록: 익명 *U 블록 + AcDbDynamicBlockTrueName 확장 자료(본래 이름)
-      else if (/^\*U\d*$/i.test(rec.name)) {
+      // (번호까지 저장된 *U12 같은 이름은 그대로 둔다: 다른 프로그램이 쓴 파일)
+      else if (/^\*U$/i.test(rec.name)) {
         const eed = (rec as { eed?: { app: number; items: { code: number; value: unknown }[] }[] | null }).eed;
         const tn = eed?.find((x) => appName.get(x.app)?.toUpperCase() === 'ACDBDYNAMICBLOCKTRUENAME')?.items.find((i) => i.code === 1000)?.value;
         if (typeof tn === 'string' && tn && !takenNames.has(tn.toUpperCase())) {
@@ -315,7 +344,10 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       const t = oh.typeName;
       if (t === 'MLEADERSTYLE') {
         const isNew = ver >= R2010 || !!oh.eed?.some((x) => appName.get(x.app)?.toUpperCase() === 'ACAD_MLEADERVER');
-        objects.set(hex(h), readMLeaderStyle(or, isNew));
+        const o = readMLeaderStyle(or, isNew);
+        const raw = captureRaw(or, o);
+        if (raw) o.dwgRaw = raw;
+        objects.set(hex(h), o);
       }
     } catch (e) {
       skip(typeOf.get(h) ?? '?', h, e);
@@ -486,6 +518,11 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       t = oh.typeName;
       if (!oh.crcOk) crcBad[t] = (crcBad[t] ?? 0) + 1;
       const p = readEntity(or, names);
+      // 모델이 일부만 담는 도형은 본문을 남긴다(같은 버전으로 쓸 때 되쓴다)
+      if (p.entity && RAW_TYPES.has(p.entity.type)) {
+        const raw = captureRaw(or, p.entity);
+        if (raw) p.entity.dwgRaw = raw;
+      }
       parsed.set(h, p);
       entCount++;
     } catch (e) {
@@ -691,7 +728,10 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
     };
     if (lr.viewport) lay.viewport = hex(lr.viewport);
     doc.layouts.push(lay);
-    objects.set(hex(lr.handle), { type: 'LAYOUT', handle: hex(lr.handle), owner: hex(lr.owner), layout: lay } as CadObject);
+    const lo = { type: 'LAYOUT', handle: hex(lr.handle), owner: hex(lr.owner), layout: lay } as CadObject;
+    if (lr.xdict) lo.xdict = hex(lr.xdict);
+    if (lr.reactors.length) lo.reactors = lr.reactors.map(hex);
+    objects.set(hex(lr.handle), lo);
   }
 
   // 배치 블록의 도형은 DXF처럼 종이 공간(67)으로 표시한다
@@ -705,7 +745,41 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       }
     }
   }
+  // 비도형 객체의 확장 자료
+  for (const [h, eed] of objEed) {
+    const o = objects.get(hex(h));
+    if (o && !o.xdata) {
+      const xd = xdataFromEed(eed, names);
+      if (xd) o.xdata = xd;
+    }
+  }
   doc.objects = objects;
+  // 표 머리(제어 객체): DWG로 다시 쓸 때 핸들·확장 사전을 잇는다
+  {
+    const heads = new Map<string, { handle: string; xdict?: string; reactors?: string[]; xdata?: ReturnType<typeof xdataFromEed> }>();
+    const pairs: [string, number][] = [
+      ['BLOCK_RECORD', refs.blockControl],
+      ['LAYER', refs.layerControl],
+      ['STYLE', refs.styleControl],
+      ['LTYPE', refs.ltypeControl],
+      ['VIEW', refs.viewControl],
+      ['UCS', refs.ucsControl],
+      ['VPORT', refs.vportControl],
+      ['APPID', refs.appidControl],
+      ['DIMSTYLE', refs.dimstyleControl],
+    ];
+    for (const [name, h] of pairs) {
+      const m = controlMeta.get(h);
+      if (!m) continue;
+      const head: { handle: string; xdict?: string; reactors?: string[]; xdata?: ReturnType<typeof xdataFromEed> } = { handle: hex(h) };
+      if (m.xdict) head.xdict = hex(m.xdict);
+      if (m.reactors.length) head.reactors = m.reactors.map(hex);
+      const xd = xdataFromEed(m.eed, names);
+      if (xd) head.xdata = xd;
+      heads.set(name, head);
+    }
+    if (heads.size) doc.tableHeads = heads as CadDocument['tableHeads'];
+  }
   if (refs.namedObjDict) doc.rootDictionary = hex(refs.namedObjDict);
 
   // 헤더 변수

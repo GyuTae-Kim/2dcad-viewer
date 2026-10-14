@@ -43,6 +43,8 @@ export interface LayoutRaw {
   blockRecord: number;
   viewport: number;
   owner: number;
+  xdict: number;
+  reactors: number[];
 }
 
 /** MLINESTYLE 원본(선종류 번호·핸들은 나중에 푼다) */
@@ -133,7 +135,7 @@ export function readLayout(or: ObjectReader): LayoutRaw {
   r.BS();
   const extMin = r.BD3();
   const extMax = r.BD3();
-  if (ver >= R2004) r.RL();
+  if (ver >= R2004) r.BL(); // 뷰포트 수(사양은 RL, 실제는 BL)
   const hr = or.hdl;
   const hb = or.h.handle;
   if (ver >= R2004) hr.H(hb); // 플롯 뷰
@@ -158,6 +160,8 @@ export function readLayout(or: ObjectReader): LayoutRaw {
     blockRecord,
     viewport,
     owner: or.h.owner,
+    xdict: or.h.xdict,
+    reactors: [...or.h.reactors],
   };
 }
 
@@ -386,7 +390,7 @@ export function readXRecord(or: ObjectReader): XRecordObject {
 
 /** DXF 그룹 코드 종류에 따라 값 읽기(XRECORD) */
 function readTagValue(r: BitReader, code: number, ver: number): string | number {
-  const strCode = (code >= 0 && code <= 9) || code === 100 || code === 102 || (code >= 300 && code <= 309) || (code >= 410 && code <= 419) || (code >= 430 && code <= 439) || (code >= 470 && code <= 479) || (code >= 999 && code <= 1009);
+  const strCode = (code >= 0 && code <= 9) || code === 100 || code === 102 || (code >= 300 && code <= 309) || (code >= 410 && code <= 419) || (code >= 430 && code <= 439) || (code >= 470 && code <= 479) || (code >= 999 && code <= 1009 && code !== 1004);
   if (strCode) {
     if (ver >= R2007) {
       const len = r.RSu();
@@ -409,8 +413,10 @@ function readTagValue(r: BitReader, code: number, ver: number): string | number 
     return r.RD();
   }
   if ((code >= 40 && code <= 59) || (code >= 140 && code <= 149) || (code >= 460 && code <= 469) || (code >= 1040 && code <= 1059)) return r.RD();
-  if ((code >= 60 && code <= 79) || (code >= 170 && code <= 179) || (code >= 270 && code <= 289) || (code >= 370 && code <= 389) || (code >= 400 && code <= 409) || (code >= 1060 && code <= 1070)) return r.RS();
-  if ((code >= 90 && code <= 99) || (code >= 420 && code <= 429) || (code >= 440 && code <= 449) || code === 1071) return r.RL();
+  if ((code >= 60 && code <= 79) || (code >= 170 && code <= 179) || (code >= 270 && code <= 279) || (code >= 370 && code <= 389) || (code >= 400 && code <= 409) || (code >= 1060 && code <= 1070)) return r.RS();
+  // 280~289는 8비트 정수(DXF와 같다)
+  if (code >= 280 && code <= 289) return r.RC();
+  if ((code >= 90 && code <= 99) || (code >= 420 && code <= 429) || (code >= 440 && code <= 459) || code === 1071) return r.RL();
   if (code >= 160 && code <= 169) return r.RL() + r.RL() * 0x100000000;
   if (code >= 290 && code <= 299) return r.RC();
   if ((code >= 320 && code <= 369) || (code >= 390 && code <= 399) || (code >= 480 && code <= 481)) {
@@ -421,7 +427,7 @@ function readTagValue(r: BitReader, code: number, ver: number): string | number 
     for (let i = 7; i >= 0; i--) v = v * 256 + bytes[i];
     return hex(v);
   }
-  if (code === 310 || (code >= 1004 && code <= 1004)) {
+  if ((code >= 310 && code <= 319) || code === 1004) {
     const len = r.RC();
     let s = '';
     for (let i = 0; i < len; i++) s += r.RC().toString(16).padStart(2, '0');

@@ -157,6 +157,7 @@ function entBase(or: ObjectReader, c: EntCommon, names: Names): Omit<EntityBase,
   if (h.xdict) e.xdict = hex(h.xdict);
   if (h.reactors.length) e.reactors = h.reactors.map(hex);
   if (c.plotStyle) e.plotStyle = hex(c.plotStyle);
+  if (c.material) e.material = hex(c.material);
   return e;
 }
 
@@ -1719,7 +1720,9 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   const ver = or.ver;
   const hb = or.h.handle;
   const H = () => hr.H(hb);
-  if (ver >= R2010) r.BS();
+  // 모델에 자리가 없는 값은 DXF 그룹 코드로 props에 둔다(DXF·DWG 쓰기용)
+  const props: Record<number, number> = {};
+  if (ver >= R2010) props[270] = r.BS();
   // MLeaderAnnotContext
   const nroots = r.checkCount(r.BL(), 64);
   const leaders: MLeaderLeader[] = [];
@@ -1771,10 +1774,12 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   const textHeight = r.BD();
   const arrowSize = r.BD();
   const landingGap = r.BD();
-  r.BS();
-  r.BS();
+  const cprops: Record<number, number> = {};
+  cprops[174] = r.BS();
+  cprops[175] = r.BS();
   const textAlign = r.BS();
-  r.BS();
+  cprops[176] = textAlign;
+  cprops[177] = r.BS();
   const ctx: MLeaderEntity['context'] = {
     scale,
     contentBase,
@@ -1803,17 +1808,19 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
     const flowDirection = r.BS();
     const backgroundColor = cmcToCad(r.CMC());
     const backgroundScale = r.BD();
-    r.BL();
+    const tprops: Record<number, number> = {};
+    tprops[92] = r.BL();
+    // 사양 순서: 배경색 켜짐(DXF 291), 배경 채우기 켜짐(DXF 292 = backgroundFill)
+    tprops[291] = r.B();
     const backgroundFill = r.B() === 1;
-    r.B();
-    r.BS();
-    r.B();
-    r.BD();
-    r.BD();
-    r.B();
+    tprops[173] = r.BS();
+    tprops[293] = r.B();
+    tprops[142] = r.BD();
+    tprops[143] = r.BD();
+    tprops[294] = r.B();
     const ncs = r.checkCount(r.BL(), 2);
     for (let i = 0; i < ncs; i++) r.BD();
-    r.B();
+    tprops[295] = r.B();
     r.B();
     ctx.text = {
       text,
@@ -1831,6 +1838,7 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
       backgroundFill,
       backgroundColor,
       backgroundScale,
+      props: tprops,
     };
     if (style) ctx.text.styleHandle = hex(style);
   } else if (r.B()) {
@@ -1848,14 +1856,15 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   ctx.basePoint = r.BD3();
   ctx.baseDirection = r.BD3();
   ctx.baseVertical = r.BD3();
-  r.B();
+  cprops[297] = r.B();
   if (ver >= R2010) {
-    r.BS();
-    r.BS();
+    cprops[273] = r.BS();
+    cprops[272] = r.BS();
   }
+  ctx.props = cprops;
   // MLEADER 본체
   const style = H();
-  r.BL(); // 재지정 플래그
+  props[90] = r.BL(); // 재지정 플래그
   const leaderLineType = r.BS();
   const leaderLineColor = cmcToCad(r.CMC());
   const ltype = H();
@@ -1867,10 +1876,10 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   const arrowSz = r.BD();
   const contentType = r.BS();
   const textStyle = H();
-  r.BS();
-  r.BS();
-  r.BS();
-  r.BS();
+  props[173] = r.BS();
+  props[95] = r.BS();
+  props[174] = r.BS();
+  props[175] = r.BS();
   const textColor = cmcToCad(r.CMC());
   const textFrame = r.B() === 1;
   const block = H();
@@ -1878,7 +1887,7 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   const blockScale = r.BD3();
   const blockRotation = r.BD();
   const blockConnection = r.BS();
-  r.B();
+  props[293] = r.B();
   // 화살촉 목록은 R2007까지만 있다(사양의 "-R2007")
   if (ver <= R2007) {
     const na = r.checkCount(r.BL(), 2);
@@ -1896,10 +1905,16 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
     const width = r.BD();
     blockAttributes.push({ attdefHandle: hex(ad), index, width, text });
   }
-  r.B();
-  r.BS();
-  r.BS();
+  props[294] = r.B();
+  props[178] = r.BS();
+  props[179] = r.BS();
   const sc = r.BD();
+  if (ver >= R2010) {
+    props[271] = r.BS();
+    props[273] = r.BS();
+    props[272] = r.BS();
+  }
+  if (ver >= R2013) props[295] = r.B();
   const e: MLeaderEntity = {
     ...b,
     type: 'MULTILEADER',
@@ -1926,6 +1941,7 @@ function readMLeader(or: ObjectReader, b: Omit<EntityBase, 'type'>): MLeaderEnti
   if (textStyle) e.textStyleHandle = hex(textStyle);
   if (block) e.blockHandle = hex(block);
   if (blockAttributes.length) e.blockAttributes = blockAttributes;
+  e.props = props;
   return e;
 }
 

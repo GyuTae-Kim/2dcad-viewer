@@ -36,6 +36,12 @@ export interface ObjHeader {
   reactors: number[];
   xdict: number;
   crcOk: boolean;
+  /** 공통 자료 뒤(형식별 자료 시작) 비트 */
+  bodyBit: number;
+  /** 공통 핸들 뒤 비트 */
+  bodyHandleBit: number;
+  /** R2013+ 자료 저장소 표지 */
+  dataStore: boolean;
 }
 
 /** 도형 공통 자료 */
@@ -74,6 +80,8 @@ export class ObjectReader {
   readonly classByNum: Map<number, CadClass>;
   /** 객체 하나를 읽을 때 R2007 이전 문자열은 dat에서 읽는다 */
   h!: ObjHeader;
+  /** 마지막으로 읽은 도형의 프록시 그림(원본 본문 보관용) */
+  lastGraphics: Uint8Array | null = null;
 
   constructor(buf: Uint8Array, ver: number, decoder: TextDecoder, classes: CadClass[]) {
     this.buf = buf;
@@ -153,6 +161,9 @@ export class ObjectReader {
       reactors: [],
       xdict: 0,
       crcOk,
+      bodyBit: 0,
+      bodyHandleBit: 0,
+      dataStore: false,
     };
     this.h = h;
     return h;
@@ -182,8 +193,10 @@ export class ObjectReader {
     this.setupStreams();
     h.numReactors = r.BL();
     if (this.ver >= R2004) h.xdictMissing = r.B() === 1;
-    if (this.ver >= R2013) r.B();
+    if (this.ver >= R2013) h.dataStore = r.B() === 1;
+    h.bodyBit = r.pos;
     this.objectHandles();
+    h.bodyHandleBit = this.hdl.pos;
   }
 
   private objectHandles(): void {
@@ -219,6 +232,7 @@ export class ObjectReader {
     }
     if (ver <= R14) h.handleBit = h.startBit + r.RLu();
     this.setupStreams();
+    this.lastGraphics = graphics;
     const c: EntCommon = {
       graphics,
       entmode: r.BB(),
@@ -245,19 +259,18 @@ export class ObjectReader {
     };
     h.numReactors = r.BL();
     if (ver >= R2004) h.xdictMissing = r.B() === 1;
-    if (ver >= R2013) r.B();
+    if (ver >= R2013) h.dataStore = r.B() === 1;
     if (ver <= R14) c.isByLayerLt = r.B() === 1;
     if (ver < R2004) c.nolinks = r.B() === 1;
     c.color = r.ENC();
     c.ltscale = r.BD();
     if (ver >= R2000) {
       c.ltypeFlags = r.BB();
+      // R2007+: 선종류 다음 BB는 재질, 그다음이 플롯 스타일이다(사양 표와 다름, AutoCAD 표본의 핸들 종류로 확인)
+      if (ver >= R2007) c.materialFlags = r.BB();
       c.plotFlags = r.BB();
     }
-    if (ver >= R2007) {
-      c.materialFlags = r.BB();
-      c.shadowFlags = r.RC();
-    }
+    if (ver >= R2007) c.shadowFlags = r.RC();
     if (ver >= R2010) {
       c.fullVs = r.B() === 1;
       c.faceVs = r.B() === 1;
@@ -265,6 +278,7 @@ export class ObjectReader {
     }
     c.invisible = r.BS();
     if (ver >= R2000) c.lineweight = r.RC();
+    h.bodyBit = r.pos;
 
     // 핸들 흐름
     const hr = this.hdl;
@@ -299,6 +313,7 @@ export class ObjectReader {
       if (c.faceVs) hr.H(base);
       if (c.edgeVs) hr.H(base);
     }
+    h.bodyHandleBit = hr.pos;
     return c;
   }
 
@@ -339,11 +354,9 @@ export class ObjectReader {
     c.color = r.ENC();
     c.ltscale = r.BD();
     c.ltypeFlags = r.BB();
+    if (ver >= R2007) c.materialFlags = r.BB();
     c.plotFlags = r.BB();
-    if (ver >= R2007) {
-      c.materialFlags = r.BB();
-      c.shadowFlags = r.RC();
-    }
+    if (ver >= R2007) c.shadowFlags = r.RC();
     if (ver >= R2010) {
       c.fullVs = r.B() === 1;
       c.faceVs = r.B() === 1;

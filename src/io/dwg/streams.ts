@@ -36,6 +36,27 @@ export function locateStringStream(r: BitReader, startBit: number, endBit: numbe
   return start;
 }
 
+/** R2007+ 문자열 흐름 내용의 [시작, 끝) 비트(끝 = 크기 필드 앞). 없으면 null */
+export function stringStreamRange(r: BitReader, startBit: number, endBit: number): { start: number; end: number } | null {
+  if (endBit - 1 < startBit) return null;
+  r.pos = endBit - 1;
+  if (!r.B()) return null;
+  let p = endBit - 1 - 16;
+  if (p < startBit) return null;
+  r.pos = p;
+  let size = r.RSu();
+  if (size & 0x8000) {
+    p -= 16;
+    if (p < startBit) return null;
+    r.pos = p;
+    const hi = r.RSu();
+    size = (size & 0x7fff) | (hi << 15);
+  }
+  const start = p - size;
+  if (start < startBit) return null;
+  return { start, end: p };
+}
+
 /** 자료 흐름 dat에 맞춰 문자열 흐름 리더를 붙인다(R2007+). */
 export function attachStringStream(dat: BitReader, str: BitReader, startBit: number, endBit: number): void {
   if (dat.ver < R2007) {

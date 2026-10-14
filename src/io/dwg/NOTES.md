@@ -1,4 +1,4 @@
-# DWG 리더 메모
+# DWG 리더·쓰기 메모
 
 ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만든 독자 구현이다.
 사양과 실제 파일이 다른 곳은 표본(AutoCAD가 저장한 예제 도면)으로 확인해 코드 주석에 남겼다.
@@ -19,6 +19,8 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
 | `objects/tables.ts`, `objects/nonentities.ts`, `objects/entities.ts` | 객체별 해석 |
 | `objects/table.ts` | ACAD_TABLE 셀(R2010+ 표 내용, R2007까지 옛 셀 구조) |
 | `build.ts` | 문서 조립(표 → 도형 → 블록 순서·속성·정점·배치·헤더 이름 풀기) |
+| `rawbody.ts` | 모델이 일부만 담는 객체의 원본 본문 보관(`dwgRaw`)과 지문 |
+| `writer/*` | DWG 쓰기(아래 "쓰기" 절) |
 
 ## 버전별 상태
 
@@ -50,7 +52,7 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
 - 헤더 `$MENU`는 R2004 이후에도 있다. R2013+ `REQUIREDVERSIONS`(BLL)의 길이 필드는 3B가 아니라 고정 3비트다.
 - 클래스(R2004+): 만든 DWG 버전·유지보수 버전은 BS가 아니라 BL이다.
 - R2010+ 객체 크기(MS)는 핸들 흐름 크기(MC) 뒤부터 센다.
-- R2007+ 표 레코드에는 외부 참조 번호(BS)가 없다.
+- R2007+ 표 레코드에는 외부 참조 번호(BS)가 없다(AutoCAD는 64 비트를 늘 1로 쓴다. 다른 리더는 이 비트가 0이면 번호를 읽는다).
 - R13·R14 LAYER의 "켜짐" 비트는 실제로 꺼짐(1 = 꺼짐)이다.
 - STYLE: 첫 비트가 쉐이프 파일(70 비트 1), 둘째가 세로 쓰기(비트 4)다.
 - ENC 색 0x4000(DBCOLOR 참조)이면 RGB BL이 자료에 없다.
@@ -63,7 +65,8 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
 - R2007 섹션 지도의 이름 길이는 끝 0을 포함한 바이트 수다. R2007 압축의 첫 명령은 소비한 뒤 2바이트를 건너뛴다.
 - PDFUNDERLAY 등: 돌출 방향, 삽입점, 회전, 축척 순서(사양에 없음).
 - 익명 블록 이름은 접두("*D")만 저장되고 블록 제어 목록 순번을 붙인다. R2007 이전으로 저장한 동적 블록은
-  익명 *U 블록 + AcDbDynamicBlockTrueName 확장 자료이므로 본래 이름으로 되돌린다.
+  익명 *U 블록 + AcDbDynamicBlockTrueName 확장 자료이므로 본래 이름으로 되돌린다(이름이 접두 "*U"뿐일 때만.
+  "*U17"처럼 번호까지 저장된 이름은 다른 프로그램이 쓴 것으로 보고 그대로 둔다 — 엔진도 그렇게 읽는다).
 
 ## 모델 규칙 적용
 
@@ -76,6 +79,9 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
   해치 그라데이션 색은 색마다 저장된 ACI(BS)를 쓴다.
 - 하이퍼링크(PE_URL), 도면층 설명(AcAecLayerStandard), 도면층 투명도(AcCmTransparency), 문자 스타일 글꼴(ACAD 1000·1071)은 확장 자료에서 꺼낸다.
 - R2018 MTEXT 단 높이의 음수 값은 AutoCAD DXF처럼 0으로 둔다. 평면 스플라인은 법선과 70 비트 8을 둔다.
+- 비도형 객체의 확장 자료(`xdata`), LAYOUT의 확장 사전·반응자, 표 제어 객체(`tableHeads`: 핸들·확장 사전·반응자·확장 자료)를 담는다.
+- MULTILEADER에서 모델에 자리가 없는 값은 DXF 그룹 코드로 `props`(본체·문맥·문맥 텍스트)에 둔다. 도형 재질 핸들은 `material`.
+- 원본 본문(`dwgRaw`)은 CRC가 맞는 객체만 남긴다(망가진 파일에서 엉뚱한 크기의 복사를 막는다).
 
 ## 객체별 상태
 
@@ -111,6 +117,88 @@ Standard 치수 스타일, R14 화살촉 블록), R2004+ ACIS 도형 누락, MES
 트루컬러 도면층 ACI(근사 팔레트), 색상표 색의 RGB 누락, `\U+XXXX`·`^J` 표기.
 객체 단위 비교(`tests/dwg/deep.test.ts`)는 그 밖에 R2018 MTEXT 단 높이(기준은 DWG의 음수 값, AutoCAD DXF는 0), R2004 MTEXT 배경
 (기준이 잃음), LEADER 걸이선·211~213, MULTILEADER 배경·지시선 색, 그라데이션 ACI, SHAPE 이름, PDFUNDERLAY 플래그를 비교하지 않는다.
+
+## 쓰기(`writer/`)
+
+`writeDwg(doc, { version?, onProgress?, raw? }) → { data, warnings }`(`src/io/dwg/index.ts`에서 내보낸다).
+쓰는 버전: AC1015(R2000)·AC1018(R2004)·AC1024(R2010)·AC1027(R2013)·AC1032(R2018, 기본). AC1021을 달라고 하면 AC1018,
+AC1012·AC1014는 AC1015로 쓰고 `dwg.write_version` 경고를 남긴다(R2007 컨테이너의 Reed–Solomon·R21 압축은 쓰지 않는다).
+
+| 파일 | 내용 |
+| --- | --- |
+| `bitwriter.ts` | 비트 단위 쓰기(읽기의 짝, 값마다 가장 짧은 형식) |
+| `codepage.ts` | R2007 이전 코드 페이지 문자열(TextDecoder로 만든 역표, 없는 글자는 `\U+XXXX`) |
+| `lz77enc.ts` | R2004 압축(3바이트 해시 탐욕 방식, 먼 거리 명령은 쓰지 않음) |
+| `context.ts` | 쓰기 계획: 핸들 정하기, 필수 항목 만들기, 쓸 객체(live), 원본 본문 사용 여부 |
+| `objwriter.ts` | 객체 틀: 종류·핸들·EED·공통 자료·공통 핸들, 크기(MS·RL/UMC)·문자열 흐름·CRC |
+| `tables.ts`, `entities.ts`, `objects.ts` | 표 레코드·블록 레코드, 도형, 비도형 객체 |
+| `header.ts`, `classes.ts` | AcDb:Header(헤더 변수, 이름 → 핸들), AcDb:Classes |
+| `container.ts` | 객체 지도, 보조 헤더, R2000 파일, R2004+ 섹션·페이지(압축, 섹션 지도, 페이지 지도, XOR 머리) |
+
+만드는 것(모델에 없으면): 표 제어 객체(DXF 표 머리 핸들을 이어 씀), 선종류 ByLayer·ByBlock·Continuous, 도면층 0,
+도형이 가리키는데 표에 없는 도면층, 문자 스타일 Standard, 치수 스타일(하나도 없을 때), APPID ACAD와 확장 자료의 앱 이름,
+*Active 뷰포트, *Model_Space·*Paper_Space 블록과 BLOCK·ENDBLK, 배치(블록마다), 정점·속성 뒤 SEQEND, 루트 사전과
+ACAD_GROUP·ACAD_LAYOUT·ACAD_PLOTSETTINGS·ACAD_MLINESTYLE(Standard)·ACAD_PLOTSTYLENAME(Normal 자리 표시자)·
+ACAD_MATERIAL·ACAD_COLOR(R2004+)·ACAD_VISUALSTYLE(R2007+), 색상표 색의 DBCOLOR, 클래스 목록(문서 순서를 지킨다).
+핸들은 문서 값을 그대로 쓰고 없거나 겹치는 것만 가장 큰 핸들 뒤에서 준다. 쓰지 않는 객체를 가리키는 핸들은 0으로 쓴다.
+
+원본 본문(`dwgRaw`): 읽을 때 CRC가 맞는 객체 중 모델이 일부만 담는 것(모르는 클래스·프록시, ACIS 도형, OLE, ACAD_TABLE,
+MULTILEADER, MESH, MLEADERSTYLE, 해석하지 않는 비도형 객체)은 공통 자료 뒤의 자료·문자열·핸들 비트와 프록시 그림을 남긴다.
+쓰는 버전이 원본과 같고, 핸들이 같고, 모델 값의 지문이 같으면 공통 자료만 모델에서 다시 쓰고 본문은 그대로 붙인다.
+아니면 모델 값으로 쓸 수 있는 것은 쓰고(MULTILEADER·MESH·MLEADERSTYLE·DICTIONARYVAR·DBCOLOR·자리 표시자 등),
+ACAD_TABLE은 그림 블록(*T)의 블록 참조로, 나머지(ACIS, 프록시, 동적 블록 객체, VISUALSTYLE·MATERIAL·TABLESTYLE 등)는
+빼고 경고(`dwg.write_entity_dropped`, `dwg.write_object_dropped`, `dwg.write_table_as_insert`)를 남긴다.
+자료가 하나도 없는 객체(새 도면의 TABLESTYLE 등)는 경고 없이 뺀다.
+
+읽기 정규화를 되돌려 쓰는 것: 지시선 걸이선 점 빼기, 이미지 다각형 경계의 닫는 점 빼기, 폴리페이스 면 번호 4개로 채우기,
+해치 호·타원 각도(시계 방향), MTEXT 방향(회전에서), R2010+ 지시선 글 상자 → 주석 MTEXT 범위, 도면층 투명도·문자 스타일 글꼴
+→ 확장 자료, R2013+ 스플라인 플래그(7비트 위), 블록 이름은 번호까지 그대로(*D12, *Paper_Space0).
+R2007 이전으로 쓸 때 도면 코드 페이지로 못 쓰는 글자가 있으면 더 맞는 코드 페이지(한·일·중·대만·키릴 …)를 고르고
+`dwg.write_codepage` 경고를 남긴다. 그래도 못 쓰는 글자는 `\U+XXXX`.
+
+### 표본으로 확인한 쓰기 규칙(사양과 다르거나 사양에 없음)
+
+- R2007+ 도형 공통 자료: 선종류 BB 다음이 재질 BB, 그다음이 플롯 스타일 BB다(사양 표와 순서가 다름. 리더도 고쳤다:
+  예전에는 재질 핸들을 플롯 스타일로 읽었다). 재질 핸들은 모델 `material`에 둔다.
+- 표 레코드의 64 비트: AutoCAD는 늘 1을 쓴다. R2007+에서 0이면 다른 리더가 외부 참조 번호(BS)를 더 읽는다.
+- DIMSTYLE_CONTROL(R2000+)은 항목 수 뒤에 추가 핸들 수(RC)와 그만큼의 핸들이 더 있다.
+- LAYOUT의 뷰포트 수(R2004+)는 RL이 아니라 BL이다. PLOTSETTINGS(R2004+)도 플롯 뷰·(R2007+)시각 스타일 핸들이 있다.
+- VIEW: AutoCAD처럼 연결된 UCS(세계 좌표계)를 두고 UCS 핸들 둘을 쓴다.
+- MLEADERSTYLE(R2013+)은 끝에 비트 하나가 더 있다. MESH는 주름 값 뒤에 개수(BL) 하나가 더 있다.
+- 선종류 ByLayer·ByBlock·Continuous는 R2000+ 표기로 쓴다(R14·R12에서 온 대문자 이름). 이름 없는 STYLE은 쉐이프 파일로 쓴다.
+- MULTILEADER 선마다의 재지정 값은 기본값(선종류 0, 화살촉 0)으로 쓴다. 문맥 텍스트의 291·292 순서는 배경색 켜짐, 배경 채우기.
+- R2013+ SPLINE: 첫 BL은 늘 1이고 맞춤점 방식은 플래그 비트 1(+8), 매듭 매개변수 2(조정점 방식은 15)다.
+- EED 문자열(R2007 이전)의 코드 페이지 2바이트는 높은 바이트가 앞이다.
+- XRECORD 280~289는 8비트(리더도 고쳤다), 1004는 길이(RC) + 바이트. DXF에서 읽은 점(10·20·30)은 X 코드 하나로 합친다.
+- 해치 그라데이션은 색 두 개를 늘 쓴다. 트루컬러의 ACI 칸은 가장 가까운 색, 표 레코드 CMC의 ACI 칸은 0(AutoCAD와 같다).
+- R2004+ 파일 머리 0xEC~0x100은 같은 수열의 0xEC번째부터다(XOR에 쓰는 0x6C바이트 뒤가 아님).
+- 압축: 먼 거리 명령(0x10~0x1F)은 쓰지 않는다(사양이 거리 기준을 분명히 하지 않고 다른 리더가 다르게 읽었다).
+- R2000 파일: 위치 기록 6개(0 헤더, 1 클래스, 2 객체 지도, 3 없음, 4 MEASUREMENT, 5 보조 헤더), 보조 헤더 0x61, 빈 그림,
+  객체 영역 앞 RL 0x0DCA. 둘째 파일 머리(사양 26장)는 쓰지 않는다.
+- R2004+ 섹션: SummaryInfo·Preview(비압축), RevHistory·AcDbObjects(RL 0x0DCA로 시작)·ObjFreeSpace·Template·Handles·
+  Classes·AuxHeader·Header(압축). AppInfo·FileDepList·Security·VBA는 쓰지 않는다. 0만 있는 페이지는 쓰지 않는다.
+
+### 시험
+
+- `tests/dwg/writer.test.ts`: 비트 쓰기↔읽기(모든 버전), LZ77 압축↔풀기, 객체 지도, 버전 대응·진행률, 새 도면(미터·인치)·
+  여러 도형 도면 × 5버전, 원본 본문 사용 조건, 표본 DWG 34개 × 5버전, DXF 원본 53개(표본 DXF 7, 생성 11, 엔진 DXF 34, 앱 예제 1) × 5버전.
+  요약(`summarizeDocument`) + 객체 단위 비교(`tests/dwg/writer-compare.ts`, 알려진 손실은 머리말에 근거).
+- `tests/dwg/writer-oracle.test.ts`: 위 원본을 쓴 파일(표본 DWG × 5, DXF × 3, 새 도면·여러 도형 × 5)을 엔진 `read_dwg`가
+  오류·버린 객체 없이 읽고, 엔진 DXF의 ezdxf 요약이 우리 리더의 요약과 같은지(`normalize.ts`). 결과는 쓴 파일 SHA-1로
+  `.runtime/dwg-writer/`에 캐시한다.
+- 개발 도구(`.runtime/dwgw/`): `objdiff2.ts`(같은 버전 원본↔쓴 파일을 객체마다 EED·공통·본문·문자열·핸들 구역별 비트 비교),
+  `native.ts`(원본 본문 없이 모델 값으로만 쓰기, `raw: false`), 필드별 해석기(`mls.ts`, `ml.ts`, `vp.ts`, `ps.ts` 등).
+  모델 값으로 쓴 표본 객체 대부분이 AutoCAD 원본과 비트 단위로 같다(다른 것은 모델에 없는 값: 치수 플래그 8, 범위 등).
+
+### 쓰기의 알려진 빈틈
+
+- R2007(AC1021) 컨테이너는 쓰지 않는다(AC1018로 쓴다).
+- ACIS(REGION·3DSOLID·BODY·SURFACE), 프록시, OLE, 동적 블록·연관 객체는 같은 버전일 때만 남는다. R2013+ 자료 저장소
+  (AcDb:AcDsPrototype_1b)는 쓰지 않아 같은 버전으로 되쓴 ACIS 도형도 형상 자료가 빠질 수 있다(`dataStore` 표지는 그대로).
+- ACAD_TABLE은 다른 버전이면 블록 참조가 된다. TABLESTYLE·VISUALSTYLE·MATERIAL은 다른 버전이면 빠진다.
+- 모델에 없는 값은 기본값으로 쓴다: MTEXT 실제 범위, 치수 플래그 8·화살표 뒤집기, LAYOUT 뷰포트 목록, VPORT 격자 표시 등.
+- 미리 보기 그림·AppInfo·파일 의존 목록은 쓰지 않는다. BLOCK·ENDBLK 도형의 확장 자료는 모델에 없어 빠진다.
+- MPOLYGON은 HATCH로 쓴다. SHAPE 이름만 있는 경우(DXF) 쉐이프 번호를 모른다.
 
 ## 리드에게 요청·보고
 
