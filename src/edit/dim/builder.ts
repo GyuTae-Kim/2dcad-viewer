@@ -21,6 +21,7 @@ import {
 import { invert, ocsMatrix, apply as applyMat } from '../../geom/matrix';
 import { dimensionText, dimKindName, type DimKindName } from './format';
 import type { MeasureText, TextBox } from './textbox';
+import { type InspectLayout, inspectGeometry, inspectLayout, readInspect } from './inspect';
 import type { DimVars } from './vars';
 import { type P, dir, dot, madd, mul, norm2pi, normPi, p, perp, sub } from './vec';
 
@@ -57,6 +58,8 @@ export class Out {
   measurement = NaN;
   textMid: P | null = null;
   text: TextInfo | null = null;
+  /** 검사 치수(DIMINSPECT)면 프레임 배치 */
+  inspect: InspectLayout | null = null;
   readonly defpointsLayer: string;
 
   constructor(
@@ -175,11 +178,30 @@ export class Out {
     if (!t.mtext) return null;
     const mtext = (this.v.tad === 0 ? '\\A1;' : '') + t.mtext;
     const box = this.measure(mtext, this.v.txt, this.v.textStyle);
+    // 검사 치수: 레이블·값·검사율 칸을 문자 자리에(치수선은 프레임에서 끊긴다)
+    const ins = readInspect(this.dim);
+    if (ins?.on) {
+      const lay = inspectLayout(ins, mtext, box, this.v.txt, this.v.gap, (t) => this.measure(t, this.v.txt, this.v.textStyle));
+      this.inspect = lay;
+      this.text = { mtext, box: { w: lay.W, h: lay.H } };
+      return this.text;
+    }
     this.text = { mtext, box };
     return this.text;
   }
 
   mtext(t: TextInfo, at: TextPlace): void {
+    if (this.inspect) {
+      const g = inspectGeometry(this.inspect, at.center.x, at.center.y, at.angle);
+      const lp = this.dimLineProps();
+      for (const [x0, y0, x1, y1] of g.lines) this.line(p(x0, y0), p(x1, y1), lp);
+      for (const a of g.arcs) this.arc(p(a.cx, a.cy), a.r, a.a0, a.a1, lp);
+      const inspect = this.inspect;
+      this.inspect = null;
+      for (const c of g.texts) this.mtext({ mtext: c.text, box: t.box }, { center: p(c.x, c.y), angle: at.angle });
+      this.inspect = inspect;
+      return;
+    }
     const pr = this.textProps();
     const e: MTextEntity = {
       ...this.base(pr),

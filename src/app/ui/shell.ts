@@ -366,6 +366,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DIMDISASSOCIATE', label: '연관 해제', icon: 'dimLinear', tip: '치수의 연관 끊기 (DDA)' },
             { cmd: 'DIMREGEN', label: '치수 재생성', icon: 'redo', tip: '연관 치수를 다시 맞추기' },
           ],
+          [{ cmd: 'DIMINSPECT', label: '검사', icon: 'dimLinear', tip: '검사 치수(레이블·검사율 프레임)' }],
         ],
       },
       {
