@@ -21,6 +21,7 @@ import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack }
 import { gripPoints } from '../edit/geom';
 import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
+import { kindName as entityKindName } from '../edit/extract';
 import { EditManager } from './edits';
 import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
@@ -1212,10 +1213,14 @@ export class App {
         this.finishWindow(this.windowStart.screen, s, ev, r.remove);
         return;
       }
-      const h = pk.pick(w.x, w.y, tol);
-      if (h) {
+      const pickIt = (h: string) => {
         this.setSelection(this.expandPick([h]), r.remove || ev.shiftKey ? 'remove' : 'add');
         this.clearHover();
+      };
+      if (this.cycleMenu(pk, w, tol, ev, pickIt)) return;
+      const h = pk.pick(w.x, w.y, tol);
+      if (h) {
+        pickIt(h);
         return;
       }
       this.windowStart = { screen: s, world: w, viaClick: true };
@@ -1252,11 +1257,15 @@ export class App {
     const h = pk.pick(w.x, w.y, tol);
     // Ctrl+클릭: 하이퍼링크를 따라간다
     if (h && (ev.ctrlKey || ev.metaKey) && !r && this.linkClick?.(h)) return;
-    if (h) {
+    const pickIt = (h: string) => {
       const hs = this.expandPick([h]);
       if (ev.shiftKey) this.setSelection(hs, st.selection.has(h) ? 'remove' : 'add');
       else this.setSelection(hs, 'add');
       this.clearHover();
+    };
+    if (h && this.cycleMenu(pk, w, tol, ev, pickIt)) return;
+    if (h) {
+      pickIt(h);
       return;
     }
     if (ev.pointerType === 'touch') {
@@ -1288,6 +1297,28 @@ export class App {
     const hits = this.expandPick(pk.select(rect, crossing));
     this.setSelection(hits, ev.shiftKey || remove ? 'remove' : 'add');
     this.view.requestOverlay();
+  }
+
+  /** 선택 순환(SELECTIONCYCLING 2): 겹친 객체가 여럿이면 목록에서 고르게 한다. 목록을 띄웠으면 true */
+  selectionCycling = 0;
+  private cycleMenu(pk: Picker, w: Pt, tol: number, ev: PointerEvent, pick: (h: string) => void): boolean {
+    if (this.selectionCycling !== 2) return false;
+    const all = pk.pickAll(w.x, w.y, tol);
+    if (all.length < 2) return false;
+    const st = this.active!;
+    const items = all.slice(0, 20).map((h) => {
+      const e = st.doc.entityIndex.get(h);
+      return {
+        label: e ? `${entityKindName(e.type)} · ${e.layer}` : h,
+        run: () => pick(h),
+        hover: () => {
+          this.view.overlay.hover = pk.geometry(h);
+          this.view.requestOverlay();
+        },
+      };
+    });
+    showMenu(ev.clientX + 8, ev.clientY + 8, [{ heading: `선택 순환 — ${all.length}개 겹침` }, ...items]);
+    return true;
   }
 
   private expandPick(hs: string[]): string[] {

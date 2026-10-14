@@ -49,6 +49,8 @@ export interface MenuItem {
   separator?: boolean;
   heading?: string;
   run?: () => void;
+  /** 마우스가 올라갈 때(선택 순환의 강조 등) */
+  hover?: () => void;
 }
 
 let openMenu: HTMLDivElement | null = null;
@@ -79,6 +81,7 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
           closeMenu();
           it.run?.();
         },
+        onmouseenter: () => it.hover?.(),
       },
       it.icon ? iconSpan(it.icon) : h('span', { class: 'ic' }),
       it.label ?? '',

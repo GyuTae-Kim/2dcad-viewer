@@ -267,6 +267,21 @@ export class Picker {
     return best;
   }
 
+  /** 허용 거리 안의 객체 모두(앞에 그린 것·가까운 것 먼저) — 선택 순환용 */
+  pickAll(x: number, y: number, tol: number): string[] {
+    const hits: { h: string; d: number; ord: number }[] = [];
+    const seen = new Set<string>();
+    for (const b of this.candidates(x, y, tol)) {
+      if (seen.has(b.handle)) continue;
+      const d = this.distance(b.handle, x, y);
+      if (d > tol) continue;
+      seen.add(b.handle);
+      hits.push({ h: b.handle, d, ord: this.extra.includes(b) ? Number.MAX_SAFE_INTEGER : (this.order.get(b.handle) ?? 0) });
+    }
+    hits.sort((a, b) => (Math.abs(a.d - b.d) > tol * 0.05 ? a.d - b.d : b.ord - a.ord));
+    return hits.map((x) => x.h);
+  }
+
   /** 창 선택(window = 완전히 안, 아니면 걸침) */
   select(r: [number, number, number, number], crossing: boolean): string[] {
     const out: string[] = [];
