@@ -123,6 +123,15 @@ function binaryValueType(code: number): VT {
   return VT.Str;
 }
 
+export type ValueKind = 'str' | 'dbl' | 'i16' | 'i32' | 'i64' | 'bool' | 'bin';
+
+const KIND_NAMES: ValueKind[] = ['str', 'dbl', 'i16', 'i32', 'i64', 'bool', 'bin'];
+
+/** 그룹 코드의 값 형식(이진 DXF 기준, ASCII 쓰기에서도 숫자 표기를 정할 때 쓴다) */
+export function valueKind(code: number): ValueKind {
+  return KIND_NAMES[binaryValueType(code)]!;
+}
+
 /** 문자열 값을 갖는 그룹 코드인지(헤더 변수 해석용) */
 export function isStringCode(code: number): boolean {
   const t = binaryValueType(code);

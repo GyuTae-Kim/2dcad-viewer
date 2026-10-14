@@ -13,6 +13,7 @@ import type {
   ObjectBase,
   PlotSettings,
   PlotSettingsObject,
+  RawTag,
   ScaleObject,
   SortEntsTableObject,
   SpatialFilterObject,
@@ -25,7 +26,7 @@ import { defaultLayout } from '../../core/finalize';
 import type { DxfRecord } from './records';
 import { DEG, Tags, handle, int, name, num, parseColor, parseXData, str } from './tagutil';
 
-function split(rec: DxfRecord): { base: ObjectBase; tags: Tags } {
+function split(rec: DxfRecord, raw?: RawTag[]): { base: ObjectBase; tags: Tags } {
   const codes = rec.codes;
   const values = rec.values;
   const base: ObjectBase = { type: rec.type, handle: '' };
@@ -41,6 +42,7 @@ function split(rec: DxfRecord): { base: ObjectBase; tags: Tags } {
     if (c >= 1000 && rec.type !== 'XRECORD') break;
     if (c === 100) {
       sub = str(v).trim();
+      raw?.push({ code: c, value: v });
       continue;
     }
     if (c === 102 && sub === '') {
@@ -48,10 +50,14 @@ function split(rec: DxfRecord): { base: ObjectBase; tags: Tags } {
       if (s.startsWith('{')) {
         const app = s.slice(1).toUpperCase();
         let j = i + 1;
+        const known = app === 'ACAD_REACTORS' || app === 'ACAD_XDICTIONARY';
+        if (!known) raw?.push({ code: c, value: v });
         for (; j < codes.length && codes[j] !== 102; j++) {
           if (app === 'ACAD_REACTORS' && codes[j] === 330) (base.reactors ??= []).push(handle(values[j]));
           else if (app === 'ACAD_XDICTIONARY' && codes[j] === 360) base.xdict = handle(values[j]);
+          else if (!known) raw?.push({ code: codes[j]!, value: values[j]! });
         }
+        if (!known && j < codes.length) raw?.push({ code: 102, value: values[j]! });
         i = j;
       }
       continue;
@@ -70,6 +76,7 @@ function split(rec: DxfRecord): { base: ObjectBase; tags: Tags } {
     sc.push(c);
     sv.push(v);
     ss.push(sub);
+    raw?.push({ code: c, value: v });
   }
   if (i < codes.length) base.xdata = parseXData(codes, values, i);
   return { base, tags: new Tags(sc, sv, ss) };
@@ -232,7 +239,14 @@ function group(rec: DxfRecord): GroupObject {
 
 function xrecord(rec: DxfRecord): XRecordObject {
   const { base, tags: t } = split(rec);
-  return { ...base, type: 'XRECORD', cloning: t.int(280, 1), data: t.raw() };
+  // AcDbXrecord 첫 280은 복제 플래그다. 자료 태그는 그 뒤부터다.
+  const data = t.raw();
+  let cloning = 1;
+  if (data.length && data[0]!.code === 280 && t.subs[0] === 'AcDbXrecord') {
+    cloning = int(data[0]!.value);
+    data.shift();
+  }
+  return { ...base, type: 'XRECORD', cloning, data };
 }
 
 function spatialFilter(rec: DxfRecord): SpatialFilterObject {
@@ -286,7 +300,8 @@ function spatialFilter(rec: DxfRecord): SpatialFilterObject {
 }
 
 function mleaderStyle(rec: DxfRecord): MLeaderStyleObject {
-  const { base, tags: t } = split(rec);
+  const raw: RawTag[] = [];
+  const { base, tags: t } = split(rec, raw);
   const s: MLeaderStyleObject = {
     ...base,
     type: 'MLEADERSTYLE',
@@ -306,6 +321,7 @@ function mleaderStyle(rec: DxfRecord): MLeaderStyleObject {
   if (t.has(341)) s.arrowHeadHandle = handle(t.str(341));
   if (t.has(342)) s.textStyleHandle = handle(t.str(342));
   if (t.has(343)) s.blockHandle = handle(t.str(343));
+  s.raw = raw;
   return s;
 }
 
@@ -353,8 +369,9 @@ export function parseObject(rec: DxfRecord): CadObject | null {
     case 'SCALE':
       return scale(rec);
     default: {
-      const { base } = split(rec);
-      return { ...base } as GenericObject;
+      const raw: RawTag[] = [];
+      const { base } = split(rec, raw);
+      return { ...base, raw } as GenericObject;
     }
   }
 }

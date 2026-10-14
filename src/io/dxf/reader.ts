@@ -9,6 +9,8 @@ import type {
   InsertEntity,
   LayoutObject,
   PolylineEntity,
+  RawSection,
+  TableHead,
 } from '../../core/model';
 import { MODEL_SPACE, PAPER_SPACE, createDocument, normalizeHandle, tableKey } from '../../core/model';
 import { CadReadError } from '../../core/errors';
@@ -18,13 +20,15 @@ import { type DxfRecord, type RecordStream, isStringCode, openDxf } from './reco
 import { type EntityContext, parseEntity, parseVertex } from './entities';
 import { createTableHandles, readTableEntry, resolveDimStyleHandles } from './tables';
 import { parseObject } from './objects';
-import { handle, int, name, num, str } from './tagutil';
+import { handle, int, name, num, parseXData, str } from './tagutil';
 
 export interface DxfReadOptions {
   onProgress?: (fraction: number) => void;
   /** 이 수를 넘는 객체는 읽지 않고 경고한다 */
   maxEntities?: number;
 }
+
+const KNOWN_SECTIONS = new Set(['HEADER', 'CLASSES', 'TABLES', 'BLOCKS', 'ENTITIES', 'OBJECTS']);
 
 function sectionName(rec: DxfRecord): string {
   const i = rec.codes.indexOf(2);
@@ -64,8 +68,36 @@ function readHeader(doc: CadDocument, rec: DxfRecord): void {
       value = num(values[i]);
     }
     // 같은 변수에 값이 여럿이면 첫 값을 둔다.
-    if (!doc.header.has(varName)) doc.header.set(varName, value);
+    if (!doc.header.has(varName)) {
+      doc.header.set(varName, value);
+      (doc.headerCodes ??= new Map()).set(varName, c);
+    }
   }
+}
+
+/** TABLE 레코드(표 머리): 핸들·확장 사전·반응자·확장 자료 */
+function readTableHead(doc: CadDocument, rec: DxfRecord): void {
+  const { codes, values } = rec;
+  let tableName = '';
+  const head: TableHead = { handle: '' };
+  let i = 0;
+  for (; i < codes.length; i++) {
+    const c = codes[i]!;
+    if (c >= 1000) break;
+    if (c === 2 && !tableName) tableName = str(values[i]).trim().toUpperCase();
+    else if (c === 5 && !head.handle) head.handle = handle(values[i]);
+    else if (c === 102) {
+      const app = str(values[i]).trim().toUpperCase();
+      let j = i + 1;
+      for (; j < codes.length && codes[j] !== 102; j++) {
+        if (app === '{ACAD_XDICTIONARY' && codes[j] === 360) head.xdict = handle(values[j]);
+        else if (app === '{ACAD_REACTORS' && codes[j] === 330) (head.reactors ??= []).push(handle(values[j]));
+      }
+      i = j;
+    }
+  }
+  if (i < codes.length) head.xdata = parseXData(codes, values, i);
+  if (tableName && head.handle) (doc.tableHeads ??= new Map()).set(tableName, head);
 }
 
 function readClass(rec: DxfRecord): CadClass {
@@ -125,6 +157,7 @@ export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocu
   const looseEntities: Entity[] = [];
   let sawSection = false;
   let records = 0;
+  let rawSection: RawSection | null = null;
 
   const progress = () => {
     if (options.onProgress && (++records & 4095) === 0) options.onProgress(stream.progress());
@@ -152,6 +185,14 @@ export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocu
       if (stream.peek()?.type === 'ENDSEC') stream.next();
       continue;
     }
+    if (sec && !KNOWN_SECTIONS.has(sec)) {
+      // 모델이 해석하지 않는 구역(THUMBNAILIMAGE, ACDSDATA …)은 다시 쓸 수 있게 원본 태그를 둔다.
+      // 구역 이름(2) 뒤의 태그는 SECTION 레코드 안에 있다(THUMBNAILIMAGE의 90·310).
+      rawSection = { name: sec, version: src.version, tags: [] };
+      (doc.rawSections ??= []).push(rawSection);
+      const ni = rec.codes.indexOf(2);
+      for (let i = ni + 1; i < rec.codes.length; i++) rawSection.tags.push({ code: rec.codes[i]!, value: rec.values[i]! });
+    }
     for (let r = stream.next(); r && r.type !== 'ENDSEC' && r.type !== 'EOF'; r = stream.next()) {
       progress();
       switch (sec) {
@@ -159,7 +200,8 @@ export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocu
           if (r.type === 'CLASS') doc.classes.push(readClass(r));
           break;
         case 'TABLES':
-          if (r.type !== 'TABLE' && r.type !== 'ENDTAB') readTableEntry(doc, r, th);
+          if (r.type === 'TABLE') readTableHead(doc, r);
+          else if (r.type !== 'ENDTAB') readTableEntry(doc, r, th);
           break;
         case 'BLOCKS': {
           if (r.type !== 'BLOCK') break;
@@ -217,9 +259,15 @@ export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocu
           break;
         }
         default:
+          // 모델이 해석하지 않는 구역(THUMBNAILIMAGE, ACDSDATA …)은 다시 쓸 수 있게 원본 태그를 둔다.
+          if (rawSection) {
+            rawSection.tags.push({ code: 0, value: r.type });
+            for (let i = 0; i < r.codes.length; i++) rawSection.tags.push({ code: r.codes[i]!, value: r.values[i]! });
+          }
           break;
       }
     }
+    rawSection = null;
   }
 
   if (!sawSection) throw new CadReadError('dxf.invalid', { reason: 'no_section' });

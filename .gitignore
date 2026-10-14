@@ -8,3 +8,6 @@ dist/
 
 # 전역 gitignore가 *.dxf를 빼므로 예제 도면은 다시 포함한다.
 !public/samples/*.dxf
+
+# 파이썬 검사 스크립트 캐시
+__pycache__/

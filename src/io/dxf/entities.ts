@@ -31,6 +31,7 @@ import type {
   Ole2FrameEntity,
   PointEntity,
   PolyVertex,
+  RawTag,
   PolylineEntity,
   ShapeEntity,
   SplineEntity,
@@ -60,16 +61,19 @@ interface Common {
   base: EntityBase;
   tags: Tags;
   graphics?: Uint8Array;
+  /** AcDbEntity 다음의 원본 태그(하위 클래스 표지 포함, 확장 자료 제외) — keepRaw일 때만 */
+  raw?: RawTag[];
 }
 
 /** 공통 속성(AcDbEntity까지)과 객체 고유 태그를 나눈다. */
-function splitCommon(rec: DxfRecord): Common {
+function splitCommon(rec: DxfRecord, keepRaw = false): Common {
   const codes = rec.codes;
   const values = rec.values;
   const base: EntityBase = { type: rec.type, ...entityDefaults() };
   const sc: number[] = [];
   const sv: TagValue[] = [];
   const ss: string[] = [];
+  const raw: RawTag[] | undefined = keepRaw ? [] : undefined;
   let sub = '';
   let aci: number | undefined;
   let rgb: number | undefined;
@@ -82,10 +86,12 @@ function splitCommon(rec: DxfRecord): Common {
     if (c >= 1000) break;
     if (c === 100) {
       sub = str(v).trim();
+      if (raw && sub !== 'AcDbEntity') raw.push({ code: c, value: v });
       continue;
     }
     if (c === 101) {
       sub = 'Embedded:' + str(v).trim();
+      if (raw) raw.push({ code: c, value: v });
       continue;
     }
     if (c === 102) {
@@ -168,12 +174,14 @@ function splitCommon(rec: DxfRecord): Common {
     sc.push(c);
     sv.push(v);
     ss.push(sub);
+    if (raw) raw.push({ code: c, value: v });
   }
   if (i < codes.length) base.xdata = parseXData(codes, values, i);
   if (aci !== undefined && aci < 0) aci = -aci; // 일부 프로그램이 음수 색을 쓴다
   base.color = parseColor(aci, rgb, colorName);
   const tags = new Tags(sc, sv, ss);
   const out: Common = { base, tags };
+  if (raw) out.raw = raw;
   if (gfx && gfx.length) out.graphics = hexToBytes(gfx.join(''));
   if (base.xdata) {
     const url = base.xdata.find((x) => x.app.toUpperCase() === 'PE_URL');
@@ -387,8 +395,10 @@ function spline(c: Common): SplineEntity {
     fitTolerance: t.num(44, 1e-10),
   } as SplineEntity;
   if (weights.length && weights.length === controlPoints.length && weights.some((w) => w !== 1)) e.weights = weights;
-  if (t.has(12)) e.startTangent = t.point(12, undefined, 'AcDbSpline');
-  if (t.has(13)) e.endTangent = t.point(13, undefined, 'AcDbSpline');
+  // 접선은 AcDbSpline 안에서만(나선의 12는 축 벡터다)
+  const sp = t.subs.includes('AcDbSpline') ? 'AcDbSpline' : undefined;
+  if (t.find(12, sp) >= 0) e.startTangent = t.point(12, undefined, sp);
+  if (t.find(13, sp) >= 0) e.endTangent = t.point(13, undefined, sp);
   if (t.has(210)) e.normal = t.point(210);
   if (helix) e.helix = helix;
   return e;
@@ -442,7 +452,12 @@ function attrib(c: Common, type: 'ATTRIB' | 'ATTDEF'): AttribEntity {
   base.tag = name(mainTags.str(2, '', hasSub ? tagSub : undefined));
   base.attFlags = mainTags.int(70, 0, hasSub ? tagSub : undefined);
   if (type === 'ATTDEF') base.prompt = mainTags.str(3, '', hasSub ? tagSub : undefined);
-  if (mainTags.int(280, 0, hasSub ? tagSub : undefined) === 1 && hasSub) base.lockPosition = true;
+  // R2010+는 하위 클래스 표지 바로 뒤에 280(버전)이 하나 더 있다. 잠금은 마지막 280이다.
+  if (hasSub) {
+    let lock: number | undefined;
+    for (let i = 0; i < mainTags.codes.length; i++) if (mainTags.codes[i] === 280 && mainTags.subs[i] === tagSub) lock = int(mainTags.values[i]);
+    if (lock === 1) base.lockPosition = true;
+  }
   if (mtext) base.mtext = mtext;
   return base;
 }
@@ -800,8 +815,10 @@ function mleader(c: Common): MLeaderEntity {
           case 142:
           case 143:
           case 294:
-          case 144:
           case 295:
+            (x.props ??= {})[code] = num(v);
+            continue;
+          case 144:
             continue;
           default:
             content = 'none';
@@ -858,6 +875,15 @@ function mleader(c: Common): MLeaderEntity {
           break;
         case 112:
           ctx.baseVertical = v3(i);
+          break;
+        case 174:
+        case 175:
+        case 176:
+        case 177:
+        case 297:
+        case 272:
+        case 273:
+          (ctx.props ??= {})[code] = num(v);
           break;
         case 290:
           if (int(v) === 1) {
@@ -1033,6 +1059,22 @@ function mleader(c: Common): MLeaderEntity {
         break;
       case 302:
         if (curAttr) curAttr.text = str(v);
+        break;
+      case 270:
+      case 90:
+      case 173:
+      case 95:
+      case 174:
+      case 175:
+      case 293:
+      case 294:
+      case 178:
+      case 179:
+      case 271:
+      case 272:
+      case 273:
+      case 295:
+        (e.props ??= {})[code] = num(v);
         break;
     }
   }
@@ -1387,7 +1429,14 @@ function image(c: Common, type: 'IMAGE' | 'WIPEOUT'): ImageEntity {
     clipBoundaryType: t.int(71, 1),
     clipBoundary: clip,
   } as ImageEntity;
-  if (t.has(340)) e.imageDef = handle(t.str(340));
+  if (t.has(340)) {
+    const d = handle(t.str(340));
+    if (d && d !== '0') e.imageDef = d;
+  }
+  if (t.has(360)) {
+    const r = handle(t.str(360));
+    if (r && r !== '0') e.imageDefReactor = r;
+  }
   if (t.int(290) === 1) e.clipInverted = true;
   return e;
 }
@@ -1499,7 +1548,7 @@ function shape(c: Common): ShapeEntity {
   return e;
 }
 
-function table(c: Common): TableEntity {
+function table(c: Common, version: string): TableEntity {
   const t = c.tags;
   // 축척·회전은 AcDbBlockReference 부분에만 있다(AcDbTable의 40번대는 셀 여백 등).
   const br = t.subs.includes('AcDbBlockReference') ? 'AcDbBlockReference' : undefined;
@@ -1519,9 +1568,32 @@ function table(c: Common): TableEntity {
     columnWidths,
   } as TableEntity;
   if (t.has(342)) e.tableStyle = handle(t.str(342));
-  const cells = t.all(1).map((v) => ({ text: str(v) }));
+  // 셀: 171(셀 종류)마다 하나. R2007+는 302에 문자 전체, 그 전은 2·3 조각 + 1.
+  const cells: { text: string }[] = [];
+  let parts: string[] | null = null;
+  let full: string | undefined;
+  const flush = () => {
+    if (parts) cells.push({ text: full ?? parts.join('') });
+  };
+  for (let i = 0; i < t.codes.length; i++) {
+    if (t.subs[i] !== 'AcDbTable') continue;
+    const code = t.codes[i]!;
+    if (code === 171) {
+      flush();
+      parts = [];
+      full = undefined;
+    } else if (parts) {
+      if (code === 302 && full === undefined) full = str(t.values[i]);
+      else if (code >= 1 && code <= 3) parts.push(str(t.values[i]));
+    }
+  }
+  flush();
   if (cells.length) e.cells = cells;
   ocs(t, e);
+  if (c.raw) {
+    e.raw = c.raw;
+    e.rawVersion = version;
+  }
   return e;
 }
 
@@ -1605,6 +1677,7 @@ function proxy(c: Common): UnknownEntity {
   const e = { ...c.base, type: 'UNKNOWN', originalType: 'ACAD_PROXY_ENTITY' } as UnknownEntity;
   if (gfx && gfx.length) e.graphics = hexToBytes(gfx.join(''));
   else if (c.graphics) e.graphics = c.graphics;
+  if (c.raw) e.raw = c.raw;
   return e;
 }
 
@@ -1622,8 +1695,18 @@ const ACIS_TYPES = new Set([
 ]);
 
 /** 레코드 하나를 객체로. POLYLINE의 정점·INSERT의 속성은 호출한 쪽이 붙인다. */
+/** 원본 태그를 남길 객체 종류(모르는 종류도 남긴다) */
+const RAW_TYPES = new Set(['ACAD_TABLE', 'ACAD_PROXY_ENTITY']);
+const MODELED_TYPES = new Set([
+  'LINE', 'POINT', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'POLYLINE', 'SPLINE', 'HELIX', 'XLINE', 'RAY', 'TEXT', 'ATTRIB',
+  'ATTDEF', 'MTEXT', 'INSERT', 'DIMENSION', 'ARC_DIMENSION', 'LARGE_RADIAL_DIMENSION', 'LEADER', 'MULTILEADER', 'MLEADER',
+  'HATCH', 'MPOLYGON', 'SOLID', 'TRACE', '3DFACE', 'IMAGE', 'WIPEOUT', 'VIEWPORT', 'MLINE', 'TOLERANCE', 'SHAPE', 'MESH',
+  'PDFUNDERLAY', 'DWFUNDERLAY', 'DGNUNDERLAY', 'OLE2FRAME', 'OLEFRAME', 'VERTEX', 'SEQEND',
+]);
+
 export function parseEntity(rec: DxfRecord, ctx: EntityContext): Entity | null {
-  const c = splitCommon(rec);
+  const keepRaw = RAW_TYPES.has(rec.type) || ACIS_TYPES.has(rec.type) || !MODELED_TYPES.has(rec.type);
+  const c = splitCommon(rec, keepRaw);
   switch (rec.type) {
     case 'LINE':
       return line(c);
@@ -1683,7 +1766,7 @@ export function parseEntity(rec: DxfRecord, ctx: EntityContext): Entity | null {
     case 'SHAPE':
       return shape(c);
     case 'ACAD_TABLE':
-      return table(c);
+      return table(c, ctx.version);
     case 'MESH':
       return mesh(c);
     case 'PDFUNDERLAY':
@@ -1696,13 +1779,21 @@ export function parseEntity(rec: DxfRecord, ctx: EntityContext): Entity | null {
     case 'ACAD_PROXY_ENTITY':
       return proxy(c);
     default:
-      if (ACIS_TYPES.has(rec.type)) return { ...c.base, type: rec.type } as AcisEntity;
+      if (ACIS_TYPES.has(rec.type)) {
+        const a = { ...c.base, type: rec.type } as AcisEntity;
+        if (c.raw) {
+          a.raw = c.raw;
+          a.rawVersion = ctx.version;
+        }
+        return a;
+      }
       ctx.unsupported.set(rec.type, (ctx.unsupported.get(rec.type) ?? 0) + 1);
       return {
         ...c.base,
         type: 'UNKNOWN',
         originalType: rec.type,
         ...(c.graphics ? { graphics: c.graphics } : {}),
+        ...(c.raw ? { raw: c.raw } : {}),
       } as UnknownEntity;
   }
 }
