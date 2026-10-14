@@ -145,7 +145,7 @@ export function warningText(code: string): string {
     case 'hatch.pattern_truncated':
       return '무늬가 너무 촘촘한 해치는 무늬를 생략했습니다.';
     case 'shape.unsupported':
-      return '쉐이프(SHX) 객체는 아직 그리지 않습니다.';
+      return '도형 파일(SHX)이 없어 쉐이프 객체를 그리지 못했습니다. SHXFONTS로 도형 파일을 불러올 수 있습니다.';
     case 'dimension.generated':
       return '치수 블록이 없는 치수는 정의점으로 간단히 그렸습니다.';
     case 'font.unavailable':

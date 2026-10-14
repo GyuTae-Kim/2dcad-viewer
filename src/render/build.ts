@@ -45,6 +45,7 @@ import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, lay
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
+import { type ShxFont, ShxRunner } from '../text/shx';
 
 export interface BuildOptions {
   text: TextEngine;
@@ -228,6 +229,10 @@ export class SceneBuilder {
           if (el.flags & 2 && el.text) {
             const st = el.styleHandle ? this.styleByHandle.get(el.styleHandle) : undefined;
             texts.push({ at, text: el.text, style: st?.name, scale: el.scale, rotation: el.rotation, absolute: (el.flags & 1) !== 0, dx: el.offset.x, dy: el.offset.y });
+          } else if (el.flags & 4 && el.shapeNumber) {
+            // 도형 요소: 문자 스타일의 글꼴이 도형 파일(예: ltypeshp.shx)
+            const st = el.styleHandle ? this.styleByHandle.get(el.styleHandle) : undefined;
+            if (st?.font) texts.push({ at, text: '', scale: el.scale, rotation: el.rotation, absolute: (el.flags & 1) !== 0, dx: el.offset.x, dy: el.offset.y, shape: { file: st.font, num: el.shapeNumber } });
           }
           at += Math.abs(el.length);
         }
@@ -267,6 +272,14 @@ export class SceneBuilder {
       pat,
       (x0, y0, x1, y1) => this.out.segment(x0, y0, x1, y1, r.style),
       (x, y, ang, t) => {
+        if (t.shape) {
+          // 복합 선종류 도형(SHX를 불러왔을 때만)
+          const a = t.absolute ? t.rotation : ang + t.rotation;
+          const c = Math.cos(ang);
+          const s = Math.sin(ang);
+          this.emitShape(t.shape.file, t.shape.num, t.scale, 1, 0, a, x + c * t.dx - s * t.dy, y + s * t.dx + c * t.dy, r);
+          return;
+        }
         // 복합 선종류 문자
         const st = t.style ? this.doc.textStyles.get(tableKey(t.style)) : undefined;
         const lay = this.opt.text.layoutText({
@@ -291,6 +304,52 @@ export class SceneBuilder {
         this.emitText(lay, [ca, sa, -sa, ca, px, py], r, ctx);
       },
     );
+  }
+
+  private shapeCache = new Map<string, number[][] | null>();
+
+  /** 불러온 SHX 도형 파일에서 번호(또는 이름)로 도형 찾기 */
+  private findShape(file: string | undefined, num: number | undefined, name: string | undefined): { font: ShxFont; num: number } | null {
+    const lib = this.opt.text.shx;
+    if (!lib?.size) return null;
+    const fonts: ShxFont[] = [];
+    const f0 = file ? lib.get(file) : undefined;
+    if (f0) fonts.push(f0);
+    else for (const n of lib.names()) fonts.push(lib.get(n)!);
+    for (const f of fonts) {
+      if (num && f.defs.has(num)) return { font: f, num };
+      if (name) for (const [n, nm] of f.names) if (nm.toUpperCase() === name.toUpperCase()) return { font: f, num: n };
+    }
+    return null;
+  }
+
+  /** SHX 도형을 그린다(도형 단위 × k, 폭 비율·기울기·회전, 위치) */
+  private emitShape(file: string, num: number, k: number, widthFactor: number, oblique: number, angle: number, x: number, y: number, r: Resolved, extra = 1): void {
+    const lib = this.opt.text.shx;
+    const font = lib?.get(file);
+    if (!font) return;
+    const key = `${font.name}|${num}`;
+    let strokes = this.shapeCache.get(key);
+    if (strokes === undefined) {
+      strokes = new ShxRunner(font).run(num)?.strokes ?? null;
+      this.shapeCache.set(key, strokes);
+    }
+    if (!strokes) return;
+    const s = k * extra;
+    const c = Math.cos(angle);
+    const sn = Math.sin(angle);
+    const t = Math.tan(oblique);
+    for (const st of strokes) {
+      const out = new Array<number>(st.length);
+      for (let i = 0; i < st.length; i += 2) {
+        const lx = (st[i]! + st[i + 1]! * t) * widthFactor * s;
+        const ly = st[i + 1]! * s;
+        out[i] = x + c * lx - sn * ly;
+        out[i + 1] = y + sn * lx + c * ly;
+      }
+      if (out.length === 2) this.out.segment(out[0]!, out[1]!, out[0]!, out[1]!, r.style);
+      else this.out.polyline(out, false, r.style);
+    }
   }
 
   /** 로컬 2D 점들을 행렬로 옮긴다 */
@@ -679,9 +738,22 @@ export class SceneBuilder {
         this.out.polyline(this.xf(m, pts), true, r.style);
         return;
       }
-      case 'SHAPE':
-        this.warnInc('shape.unsupported');
+      case 'SHAPE': {
+        // 도형 파일: 스타일 핸들의 글꼴, 없으면 이름으로 불러온 도형 파일에서 찾는다
+        const st = e.styleHandle ? this.styleByHandle.get(e.styleHandle) : undefined;
+        const found = this.findShape(st?.font, e.shapeNumber, e.name);
+        if (!found) {
+          this.warnInc('shape.unsupported');
+          return;
+        }
+        const r = this.resolve(e, ctx);
+        const m = this.ocsM(ctx, e.extrusion);
+        const p = applyXY(m, e.insert.x, e.insert.y, e.insert.z);
+        const k = e.size / (found.font.above || 1);
+        const d = applyDir(m, Math.cos(e.rotation), Math.sin(e.rotation), 0);
+        this.emitShape(found.font.name, found.num, k, e.widthFactor || 1, e.oblique || 0, Math.atan2(d.y, d.x), p.x, p.y, r, planarScale(m));
         return;
+      }
       case 'UNKNOWN':
       case 'REGION':
       case '3DSOLID':

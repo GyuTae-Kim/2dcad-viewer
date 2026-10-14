@@ -6,7 +6,7 @@ export interface DashPattern {
   dashes: number[];
   period: number;
   /** 문자가 든 복합 선종류 요소(위치는 무늬 안 거리) */
-  texts?: { at: number; text: string; style?: string; scale: number; rotation: number; absolute: boolean; dx: number; dy: number }[];
+  texts?: { at: number; text: string; style?: string; scale: number; rotation: number; absolute: boolean; dx: number; dy: number; shape?: { file: string; num: number } }[];
 }
 
 export type SegmentSink = (x0: number, y0: number, x1: number, y1: number) => void;
