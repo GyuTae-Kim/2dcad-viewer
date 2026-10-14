@@ -78,6 +78,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
               tip: '해치 (H)',
               menu: [
                 { label: '해치', cmd: 'HATCH', icon: 'hatch' },
+                { label: '해치 편집', cmd: 'HATCHEDIT', icon: 'hatch' },
                 { label: '경계', cmd: 'BOUNDARY', icon: 'pline' },
               ],
             },
@@ -305,7 +306,9 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'FIELD', label: '필드', icon: 'text', tip: '날짜·파일 이름·객체 특성 등을 문자에 넣기' },
             { cmd: 'UPDATEFIELD', label: '필드 업데이트', icon: 'redo', tip: '고른 문자의 필드를 다시 계산' },
+            { cmd: 'HYPERLINK', label: '하이퍼링크', icon: 'info', tip: '객체에 웹 주소·도면 안 위치 넣기(Ctrl+클릭으로 열기)' },
           ],
+          [{ cmd: 'DATAEXTRACTION', label: '데이터 추출', icon: 'table', tip: '블록 개수·속성을 표나 CSV로 (DX)' }],
         ],
       },
     ],
@@ -499,6 +502,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         cols: [
           [
             { cmd: 'AUDIT', label: '감사', icon: 'info', tip: '도면 오류 찾기·고치기' },
+            { cmd: 'DRAWINGRECOVERY', label: '도면 복구', icon: 'folder', tip: '자동 저장한 도면 열기 (DRM)', noDoc: true },
             { cmd: 'PURGE', label: '소거', icon: 'erase', tip: '쓰지 않는 블록·도면층·스타일 지우기' },
             { cmd: 'OVERKILL', label: '중복 정리', icon: 'erase' },
           ],
