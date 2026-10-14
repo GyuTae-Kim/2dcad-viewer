@@ -4,7 +4,7 @@
  * 프롬프트와 옵션은 AutoCAD 2026 한국어판을 따른다. 기하 계산은 src/edit/geom.
  */
 import type { BlockDef, BlockRecord, CadDocument, Entity, HatchEntity } from '../core/model';
-import { tableKey } from '../core/model';
+import { entityDefaults, tableKey } from '../core/model';
 import { formatLength } from '../core/units';
 import type { EditOp } from '../edit/session';
 import { cloneEntity } from '../edit/session';
@@ -40,6 +40,7 @@ import type { OverlayGeom, Pt } from './view';
 import { unlockedOnly } from './layers';
 import { form } from './ui/dom';
 import { dynGripEdit } from './dynblock';
+import { currentProps } from './draw';
 import { constraintEditHook } from './constraints-hook';
 
 // ---------------------------------------------------------------------------
@@ -1713,6 +1714,98 @@ export function registerModifyCommands(app: App): void {
       const a = commitResults(app, ctx, results, 'PASTECLIP');
       app.setSelection(a.added.slice(0, 5000));
       ctx.print(`${a.added.length}개를 붙여 넣었습니다.`);
+    },
+  });
+  app.register({
+    name: 'PASTEORIG',
+    title: '원래 좌표에 붙여넣기',
+    async run(ctx) {
+      const st = app.active!;
+      const clip = clipboard;
+      if (!clip || !clip.entities.length) {
+        ctx.print('클립보드가 비어 있습니다. 먼저 객체를 복사(Ctrl+C)하십시오.', 'err');
+        return;
+      }
+      // AutoCAD처럼 복사한 도면에는 쓸 수 없다(같은 자리에 겹친다)
+      if (clip.doc === st.doc) {
+        ctx.print('같은 도면에서 복사한 객체는 원래 좌표에 붙여 넣을 수 없습니다.', 'err');
+        return;
+      }
+      const list = clip.entities.map((e) => cloneEntity(e));
+      const deps = importDependencies(st, clip.doc, list);
+      if (deps.length) st.session.commit({ label: 'PASTEORIG', ops: deps, group: ctx.group });
+      st.selection.clear();
+      const a = commitResults(app, ctx, list.map((e) => copyEntity(e, translate(0, 0), st.doc)), 'PASTEORIG');
+      app.setSelection(a.added.slice(0, 5000));
+      ctx.print(`${a.added.length}개를 원래 좌표에 붙여 넣었습니다.`);
+    },
+  });
+  app.register({
+    name: 'PASTEBLOCK',
+    title: '블록으로 붙여넣기',
+    async run(ctx) {
+      const st = app.active!;
+      const clip = clipboard;
+      if (!clip || !clip.entities.length) {
+        ctx.print('클립보드가 비어 있습니다. 먼저 객체를 복사(Ctrl+C)하십시오.', 'err');
+        return;
+      }
+      const pk = app.picker();
+      const preview = pk && clip.doc === st.doc ? pk.geometryOf(clip.entities) : null;
+      const pg = preview ? Ghost.of(preview) : null;
+      const r = await ctx.getPoint('삽입점 지정:', { ghost: (p) => (pg ? pg.at(translate(p.x - clip.base.x, p.y - clip.base.y)) : []) });
+      if (!('point' in r)) return;
+      const list = clip.entities.map((e) => cloneEntity(e));
+      const deps = importDependencies(st, clip.doc, list);
+      // AutoCAD처럼 A$C + 16진 8자리 이름의 블록(기준점 = 복사 기준점)
+      let name = '';
+      do name = `A$C${Math.floor(Math.random() * 0x100000000).toString(16).toUpperCase().padStart(8, '0')}`;
+      while (st.doc.blocks.has(tableKey(name)));
+      const recordHandle = st.session.newHandle();
+      for (const e of list) {
+        e.handle = st.session.newHandle();
+        e.owner = recordHandle;
+        delete e.xdict;
+        delete e.reactors;
+        if (e.type === 'INSERT') for (const at of e.attribs) at.handle = st.session.newHandle();
+      }
+      const record: BlockRecord = { name, handle: recordHandle, flags: 0, insertUnits: Number(st.doc.header.get('$INSUNITS') ?? 0) || 0, explodable: true, scalable: true };
+      const def: BlockDef = {
+        name,
+        handle: st.session.newHandle(),
+        recordHandle,
+        basePoint: { x: clip.base.x, y: clip.base.y, z: 0 },
+        flags: 0,
+        layer: '0',
+        entities: list,
+        endHandle: st.session.newHandle(),
+      };
+      const space = st.doc.blocks.get(st.space)!;
+      const ins: Entity = {
+        ...entityDefaults(),
+        ...currentProps(app),
+        type: 'INSERT',
+        handle: st.session.newHandle(),
+        owner: space.recordHandle,
+        block: name,
+        insert: { x: r.point.x, y: r.point.y, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+        rotation: 0,
+        columnCount: 1,
+        rowCount: 1,
+        columnSpacing: 0,
+        rowSpacing: 0,
+        attribs: [],
+      };
+      if (/^\*PAPER_SPACE/i.test(st.space)) ins.paperSpace = true;
+      st.selection.clear();
+      st.session.commit({
+        label: 'PASTEBLOCK',
+        ops: [...deps, { kind: 'blockRecord', key: tableKey(name), before: null, after: record }, { kind: 'blockDef', key: tableKey(name), before: null, after: def }, { kind: 'add', block: st.space, entity: ins }],
+        group: ctx.group,
+      });
+      app.setSelection([ins.handle]);
+      ctx.print(`블록 "${name}"(객체 ${list.length}개)으로 붙여 넣었습니다.`);
     },
   });
 }

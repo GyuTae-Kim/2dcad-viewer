@@ -1443,6 +1443,10 @@ export class App {
       { label: '리스트', icon: 'list', disabled: !sel, run: () => void this.run('LIST') },
       { label: '선택한 객체로 확대', icon: 'zoomWindow', disabled: !sel, run: () => void this.run('ZOOM', 'O') },
       { label: '선택 해제', disabled: !sel, kbd: 'Esc', run: () => this.clearSelection() },
+      { separator: true },
+      { label: '붙여넣기', kbd: 'Ctrl+V', run: () => void this.run('PASTECLIP') },
+      { label: '블록으로 붙여넣기', kbd: 'Ctrl+Shift+V', run: () => void this.run('PASTEBLOCK') },
+      { label: '원래 좌표에 붙여넣기', run: () => void this.run('PASTEORIG') },
       ...(dynRef
         ? [
             { separator: true },
@@ -1573,12 +1577,14 @@ export class App {
       }
       if ((k === 'c' || k === 'x') && !typing && this.active?.selection.size) {
         ev.preventDefault();
-        void this.run(k === 'c' ? 'COPYCLIP' : 'CUTCLIP');
+        // Ctrl+Shift+C = 기준점을 두고 복사(AutoCAD와 같다)
+        void this.run(k === 'c' ? (ev.shiftKey ? 'COPYBASE' : 'COPYCLIP') : 'CUTCLIP');
         return;
       }
       if (k === 'v' && !typing) {
         ev.preventDefault();
-        void this.run('PASTECLIP');
+        // Ctrl+Shift+V = 블록으로 붙여넣기
+        void this.run(ev.shiftKey ? 'PASTEBLOCK' : 'PASTECLIP');
         return;
       }
       if (k === 's') {
