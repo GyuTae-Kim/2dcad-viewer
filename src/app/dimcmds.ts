@@ -100,7 +100,7 @@ export function dimensionBlockOps(st: DocState, dim: DimensionEntity, reuse: boo
  * 새 치수를 지금 공간에 넣는다. refs는 점 참조 번호 차례의 연관 참조(DIMASSOC 2일 때만 쓴다).
  * 넣은 작업 수를 돌려준다(명령 안의 명령 취소용).
  */
-function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label: string, refs: readonly (PointRef | null)[] = []): number {
+export function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label: string, refs: readonly (PointRef | null)[] = []): number {
   const st = app.active!;
   const assoc = snapNewDimension(app, dim, refs);
   const blockOps = dimensionBlockOps(st, dim, false);

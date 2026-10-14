@@ -169,6 +169,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
               menu: [
                 { label: '직사각형 배열', cmd: 'ARRAYRECT', icon: 'arrayRect' },
                 { label: '원형 배열', cmd: 'ARRAYPOLAR', icon: 'arrayPolar' },
+                { label: '경로 배열', cmd: 'ARRAYPATH', icon: 'spline' },
               ],
             },
           ],
@@ -356,7 +357,10 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       },
       {
         title: '치수',
-        large: [{ cmd: 'DIMLINEAR', label: '선형', icon: 'dimLinear', tip: '선형 치수 (DLI)' }],
+        large: [
+          { cmd: 'DIM', label: '치수', icon: 'dimLinear', tip: '객체에 맞는 치수를 자동으로 (DIM)' },
+          { cmd: 'DIMLINEAR', label: '선형', icon: 'dimLinear', tip: '선형 치수 (DLI)' },
+        ],
         cols: [
           [
             { cmd: 'DIMALIGNED', label: '정렬', icon: 'dimAligned', tip: '정렬 치수 (DAL)' },
@@ -403,6 +407,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'MLEADERCOLLECT', label: '수집', icon: 'blocks', tip: '블록 다중 지시선 모으기 (MLC)' },
             { cmd: 'MLEADERSTYLE', label: '지시선 스타일', icon: 'settings', tip: '다중 지시선 스타일 (MLS)' },
+            { cmd: 'LEADER', label: '옛 지시선', icon: 'leader', tip: '지시선과 주석 (LEAD)' },
           ],
         ],
       },
