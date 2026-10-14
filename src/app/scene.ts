@@ -8,6 +8,7 @@ import type { LayerState, PlotStyle, StyleSpec } from '../render/styles';
 import { HIDDEN_STYLE, StyleTable, resolveStyles } from '../render/styles';
 import type { GLRenderer, GpuScene } from '../render/webgl';
 import type { SceneMessage } from '../worker/protocol';
+import { bulgePolylinePoints, circlePoints, ellipsePoints, nurbsPoints } from '../geom/curves';
 
 export class SpaceScene {
   gpu: GpuScene;
@@ -205,16 +206,47 @@ export function viewportXf(doc: CadDocument, vp: ViewportEntity): ViewportXf {
   return out;
 }
 
+/** 뷰포트 자르기 경계 객체의 윤곽(종이 좌표, [x, y, …]) */
 function outlineOf(e: Entity): number[] | null {
-  if (e.type === 'LWPOLYLINE') return e.vertices.flatMap((v) => [v.x, v.y]);
-  if (e.type === 'POLYLINE') return e.vertices.flatMap((v) => [v.location.x, v.location.y]);
-  if (e.type === 'CIRCLE') {
-    const out: number[] = [];
-    for (let i = 0; i < 64; i++) {
-      const a = (i / 64) * Math.PI * 2;
-      out.push(e.center.x + e.radius * Math.cos(a), e.center.y + e.radius * Math.sin(a));
+  const tol = 0;
+  switch (e.type) {
+    case 'LWPOLYLINE': {
+      const pts = bulgePolylinePoints(e.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge ?? 0 })), true, tol || polySize(e.vertices.map((v) => [v.x, v.y])) * 1e-3);
+      return pts;
     }
-    return out;
+    case 'POLYLINE': {
+      const vs = e.vertices.map((v) => ({ x: v.location.x, y: v.location.y, bulge: v.bulge ?? 0 }));
+      return bulgePolylinePoints(vs, true, polySize(vs.map((v) => [v.x, v.y])) * 1e-3);
+    }
+    case 'CIRCLE':
+      return circlePoints(e.center.x, e.center.y, e.radius, e.radius * 1e-3);
+    case 'ELLIPSE': {
+      const r = Math.hypot(e.majorAxis.x, e.majorAxis.y);
+      return ellipsePoints(e.center.x, e.center.y, e.majorAxis.x, e.majorAxis.y, e.ratio, e.startParam, e.endParam, r * 1e-3);
+    }
+    case 'SPLINE': {
+      if (e.controlPoints.length >= 2) {
+        const pts3 = nurbsPoints(e.degree, e.knots, e.controlPoints, e.weights, 1e-3 * polySize(e.controlPoints.map((p) => [p.x, p.y])));
+        const out: number[] = [];
+        for (let i = 0; i + 2 < pts3.length; i += 3) out.push(pts3[i]!, pts3[i + 1]!);
+        return out;
+      }
+      return e.fitPoints.flatMap((p) => [p.x, p.y]);
+    }
   }
   return null;
+}
+
+function polySize(pts: number[][]): number {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of pts) {
+    minX = Math.min(minX, x!);
+    maxX = Math.max(maxX, x!);
+    minY = Math.min(minY, y!);
+    maxY = Math.max(maxY, y!);
+  }
+  return Math.max(maxX - minX, maxY - minY, 1e-9);
 }

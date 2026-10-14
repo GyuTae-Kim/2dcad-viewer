@@ -245,7 +245,7 @@ export class GLRenderer {
   dpr = 1;
 
   constructor(readonly canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, premultipliedAlpha: false, preserveDrawingBuffer: true, stencil: true });
     if (!gl) throw new Error('이 브라우저는 WebGL2를 지원하지 않습니다.');
     this.gl = gl;
     this.init();
@@ -533,6 +533,28 @@ export class GLRenderer {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, tris.length / 2);
     gl.bindVertexArray(null);
+  }
+
+  /**
+   * 다각형 자르기(스텐실): 화면 픽셀 삼각형 안에만 그린다. null이면 해제.
+   * 가위 영역이 켜져 있으면 그 안의 스텐실만 지운다.
+   */
+  stencilClip(tris: number[] | null): void {
+    const gl = this.gl;
+    if (!tris) {
+      gl.disable(gl.STENCIL_TEST);
+      return;
+    }
+    gl.enable(gl.STENCIL_TEST);
+    gl.clearStencil(0);
+    gl.clear(gl.STENCIL_BUFFER_BIT);
+    gl.colorMask(false, false, false, false);
+    gl.stencilFunc(gl.ALWAYS, 1, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    this.screenFill(tris, [0, 0, 0, 1]);
+    gl.colorMask(true, true, true, true);
+    gl.stencilFunc(gl.EQUAL, 1, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
   }
 
   /** 가위(scissor) 영역(화면 픽셀, 위쪽 원점) 설정·해제 */

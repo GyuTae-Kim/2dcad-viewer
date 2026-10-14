@@ -2,6 +2,7 @@
  * 도면 영역: 카메라(확대·이동), WebGL 그리기, 배치·뷰포트, 오버레이(커서·선택·스냅·고무줄).
  */
 import { MODEL_SPACE, tableKey } from '../core/model';
+import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
 import type { Camera, DocState } from './docstate';
 import { type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
@@ -386,6 +387,18 @@ export class CadView {
     if (x1 <= x0 || y1 <= y0) return;
     r.scissor([x0, y0, x1 - x0, y1 - y0]);
     r.clearDepth();
+    // 다각형·원 뷰포트: 경계 안만(스텐실)
+    if (vx.clip) {
+      const px: number[] = [];
+      for (let i = 0; i + 1 < vx.clip.length; i += 2) {
+        const q = this.worldToScreen(vx.clip[i]!, vx.clip[i + 1]!);
+        px.push(q.x * this.dpr, q.y * this.dpr);
+      }
+      const idx = earcut(px);
+      const tris: number[] = [];
+      for (const i of idx) tris.push(px[i * 2]!, px[i * 2 + 1]!);
+      r.stencilClip(tris.length ? tris : null);
+    }
     const frozen = new Set<number>();
     for (const n of vx.frozen) {
       const i = layerIdx.get(n);
@@ -406,6 +419,7 @@ export class CadView {
     const vis: [number, number, number, number] = [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad];
     r.draw(model.gpu, xf, { lwScale, visible: vis });
     this.drawOverlayScene(MODEL_SPACE, xf, lwScale, false, 0xffffff, vx.frozen, vis);
+    if (vx.clip) r.stencilClip(null);
   }
 
   private renderOverlay(): void {

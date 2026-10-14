@@ -115,7 +115,7 @@ export interface Page {
   width: number;
   height: number;
   /** 그릴 장면들(순서대로), 출력 좌표 변환, 스타일 표, 자르기 */
-  layers: { scene: SpaceScene; m: Affine; styles: Float32Array; clipPx?: [number, number, number, number]; clipWorld?: [number, number, number, number] }[];
+  layers: { scene: SpaceScene; m: Affine; styles: Float32Array; clipPx?: [number, number, number, number]; clipWorld?: [number, number, number, number]; clipPoly?: number[] }[];
   background: number;
   /** 선가중치 mm → 출력 단위 */
   lwScale: number;
@@ -181,6 +181,8 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
         styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle),
         clipPx: [cx - hw * k, cy - hh * k, cx + hw * k, cy + hh * k],
         clipWorld: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
+        // 다각형·원 뷰포트 경계(출력 좌표)
+        clipPoly: vx.clip ? vx.clip.map((v, i) => (i & 1 ? (paper.maxY - v) * k : (v - paper.minX) * k)) : undefined,
       });
     }
   }
@@ -231,7 +233,12 @@ export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
   for (const L of page.layers) {
     const styles = L.styles;
     const visible = (s: number) => styles[s * 8 + 5]! > 0;
-    if (L.clipPx) {
+    if (L.clipPoly && L.clipPoly.length >= 6) {
+      const pts = [];
+      for (let i = 0; i + 1 < L.clipPoly.length; i += 2) pts.push(`${L.clipPoly[i]!.toFixed(3)},${L.clipPoly[i + 1]!.toFixed(3)}`);
+      out.push(`<clipPath id="c${clipId}"><polygon points="${pts.join(' ')}"/></clipPath><g clip-path="url(#c${clipId})">`);
+      clipId++;
+    } else if (L.clipPx) {
       const [x0, y0, x1, y1] = L.clipPx;
       out.push(`<clipPath id="c${clipId}"><rect x="${x0.toFixed(3)}" y="${y0.toFixed(3)}" width="${(x1 - x0).toFixed(3)}" height="${(y1 - y0).toFixed(3)}"/></clipPath><g clip-path="url(#c${clipId})">`);
       clipId++;
@@ -299,7 +306,12 @@ export function pdfContent(page: Page): string {
     const styles = L.styles;
     const visible = (s: number) => styles[s * 8 + 5]! > 0;
     ops.push('q');
-    if (L.clipPx) {
+    if (L.clipPoly && L.clipPoly.length >= 6) {
+      const p = L.clipPoly;
+      const path = [`${p[0]!.toFixed(2)} ${(H - p[1]!).toFixed(2)} m`];
+      for (let i = 2; i + 1 < p.length; i += 2) path.push(`${p[i]!.toFixed(2)} ${(H - p[i + 1]!).toFixed(2)} l`);
+      ops.push(...path, 'h W n');
+    } else if (L.clipPx) {
       const [x0, y0, x1, y1] = L.clipPx;
       ops.push(`${x0.toFixed(2)} ${(H - y1).toFixed(2)} ${(x1 - x0).toFixed(2)} ${(y1 - y0).toFixed(2)} re W n`);
     }
