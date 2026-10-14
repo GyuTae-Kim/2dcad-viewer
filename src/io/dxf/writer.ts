@@ -13,6 +13,7 @@ import { type DxfWriteOptions, WriteContext } from './wcontext';
 import { TagOut, writeEntity } from './wentities';
 import { writeObjects } from './wobjects';
 import { writeTables } from './wtables';
+import { arcTextsForWrite } from '../arctext';
 
 export type { DxfVersion } from './tagwriter';
 export type { DxfWriteOptions } from './wcontext';
@@ -285,7 +286,9 @@ export function writeDxf(doc: CadDocument, options: DxfWriteOptions = {}): DxfWr
   const docCp = (typeof doc.header.get('$DWGCODEPAGE') === 'string' ? (doc.header.get('$DWGCODEPAGE') as string) : doc.codepage) || 'ANSI_1252';
   const codepage = (options.codepage ?? docCp).toUpperCase();
   const escapeNonAscii = options.escapeNonAscii ?? !options.codepage;
-  const res = serialize(doc, { ...options, version, escapeNonAscii }, codepage);
+  const arc = arcTextsForWrite(doc, 'dxf', version);
+  const res = serialize(arc.doc, { ...options, version, escapeNonAscii }, codepage);
+  res.warnings.push(...arc.warnings);
   if (asked && asked !== version) res.warnings.push({ code: 'version.changed', message: `${asked}로는 쓸 수 없어 ${version}로 썼습니다.`, detail: { from: asked, to: version } });
   if (res.unencodable.size && !escapeNonAscii) {
     res.warnings.push({ code: 'text.escaped', message: '코드 페이지에 없는 문자를 \\U+XXXX로 썼습니다.', count: res.unencodable.size });

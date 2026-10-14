@@ -300,6 +300,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'ATTSYNC', label: '속성 동기화', icon: 'redo' },
             { cmd: 'MINSERT', label: '다중 삽입', icon: 'arrayRect', tip: '행·열로 배열한 블록 참조' },
           ],
+          [{ cmd: 'ATTIPEDIT', label: '속성 바로 편집', icon: 'insert', tip: '누른 속성 하나의 값 고치기 (ATTIPEDIT)' }],
           [
             { cmd: 'BCOUNT', label: '블록 개수', icon: 'list' },
             { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
@@ -348,6 +349,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'TEXT', label: '단일 행', icon: 'text', tip: '단일 행 문자 (DT)' },
             { cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' },
             { cmd: 'STYLE', label: '문자 스타일', icon: 'text', tip: '문자 스타일 (ST)' },
+          ],
+          [
+            { cmd: 'TXT2MTXT', label: '여러 줄로 변환', icon: 'mtext', tip: '한 줄 문자를 여러 줄 문자로 결합 (TXT2MTXT)' },
+            { cmd: 'TEXTALIGN', label: '문자 정렬', icon: 'text', tip: '기준 문자에 맞춰 문자 줄 세우기 (TEXTALIGN)' },
+            { cmd: 'ARCTEXT', label: '원호 정렬 문자', icon: 'arc', tip: '호를 따라 문자 놓기 (ARCTEXT)' },
           ],
           [
             { cmd: 'SCALETEXT', label: '문자 축척', icon: 'scale', tip: '문자 높이를 한 번에 바꾸기' },

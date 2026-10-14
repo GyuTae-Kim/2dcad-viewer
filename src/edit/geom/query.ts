@@ -15,6 +15,7 @@ import { planProj } from './ocs';
 import { transformEntity } from './transform';
 import { type EditResult, MSG, type TransformOptions } from './types';
 import { metrics, mtextDir, mtextLocalBox } from './xtext';
+import { arcTextParts } from '../../text/arctext';
 
 // ---------------------------------------------------------------------------
 // 교점
@@ -143,6 +144,9 @@ export function entityBounds(e: Entity, doc: CadDocument, depth = 0): Box | null
   switch (e.type) {
     case 'POINT':
       growBox(b, e.position.x, e.position.y);
+      break;
+    case 'ARCALIGNEDTEXT':
+      union(arcTextParts(e));
       break;
     case 'TEXT':
     case 'ATTRIB':

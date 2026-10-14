@@ -4,6 +4,7 @@ import { CadReadError } from '../core/errors';
 import { readDxf } from './dxf/reader';
 import { isBinaryDxf } from './dxf/records';
 import { isDwg, readDwg } from './dwg/index';
+import { restoreArcTexts } from './arctext';
 
 export type CadFormat = 'dxf' | 'dwg';
 
@@ -27,6 +28,7 @@ export function readCadFile(data: Uint8Array, fileName = '', options: ReadOption
   const fmt = detectFormat(data);
   if (!fmt) throw new CadReadError('file.unrecognized');
   const doc = fmt === 'dwg' ? readDwg(data, { onProgress: options.onProgress }) : readDxf(data, { onProgress: options.onProgress });
+  restoreArcTexts(doc);
   const ext = fileName.toLowerCase().split('.').pop();
   if (ext && (ext === 'dxf' || ext === 'dwg') && ext !== fmt) {
     doc.warnings.push({ code: 'file.extension_mismatch', message: `확장자는 .${ext}이지만 내용은 ${fmt.toUpperCase()}입니다.` });

@@ -771,6 +771,51 @@ export interface AcisEntity extends EntityBase {
   rawVersion?: string;
 }
 
+/**
+ * 원호 정렬 문자(Express Tools ARCALIGNEDTEXT, AcDbArcAlignedText). 호를 따라 글자마다 놓고 돌린 한 줄 문자.
+ * 원호 중심·각도는 OCS(extrusion), 각도는 라디안(반시계 원호). 글자 배치는 src/text/arctext.ts.
+ */
+export interface ArcTextEntity extends EntityBase {
+  type: 'ARCALIGNEDTEXT';
+  text: string;
+  center: Vec3;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  /** 따라가는 호 핸들(연관). 없으면 연관 없음 */
+  arc?: string;
+  style: string;
+  /** 글꼴 파일(빈 문자열 = 스타일의 것)과 큰 글꼴 */
+  font: string;
+  bigFont: string;
+  height: number;
+  widthFactor: number;
+  /** 글자 사이에 더하는 간격 */
+  charSpacing: number;
+  /** 호에서의 간격띄우기 */
+  offset: number;
+  /** 읽기 시작(왼쪽)·끝(오른쪽)에서 호를 따라 띄우는 거리 */
+  leftOffset: number;
+  rightOffset: number;
+  /** 1 맞춤, 2 왼쪽, 3 오른쪽, 4 중심 */
+  alignment: number;
+  /** 1 볼록(호 바깥), 2 오목(호 안) */
+  position: number;
+  /** 1 바깥쪽(글자 머리가 바깥), 2 안쪽(중심 쪽) */
+  direction: number;
+  /** 문자 순서 반전 */
+  reversed: boolean;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  /** 프록시 그림(AutoCAD가 저장한 그림) */
+  graphics?: Uint8Array;
+  /** DXF에서 읽은 AcDbEntity 다음 원본 태그와 그 파일 버전, 읽을 때 정의의 지문(바뀌었으면 원본을 쓰지 않는다) */
+  raw?: RawTag[];
+  rawVersion?: string;
+  rawSig?: string;
+}
+
 /** 모르는 객체, 프록시 객체. 프록시 그림이 있으면 graphics에 원본 바이트 */
 export interface UnknownEntity extends EntityBase {
   type: 'UNKNOWN';
@@ -808,6 +853,7 @@ export type Entity =
   | UnderlayEntity
   | Ole2FrameEntity
   | AcisEntity
+  | ArcTextEntity
   | UnknownEntity;
 
 export type EntityType = Entity['type'];

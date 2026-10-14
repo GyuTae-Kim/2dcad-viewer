@@ -14,6 +14,7 @@ import { writeHeader, type HeaderRefs } from './header';
 import { writeClasses } from './classes';
 import { ByteOut, type R2004Section, auxHeader, emptyPreview, objectMap, templateData, writeR2000, writeR2004 } from './container';
 import { parseHandle } from './util';
+import { arcTextsForWrite } from '../../arctext';
 
 export type DwgWriteVersion = 'AC1015' | 'AC1018' | 'AC1024' | 'AC1027' | 'AC1032';
 
@@ -50,6 +51,9 @@ export function writeDwg(doc: CadDocument, options: DwgWriteOptions = {}): DwgWr
     warnings.push({ code: 'dwg.write_version', message: `${options.version}은 쓸 수 없어 AC1032(R2018)로 썼습니다.`, count: 1 });
     ver = R2018;
   }
+  const arc = arcTextsForWrite(doc, 'dwg', options.version ?? 'AC1032');
+  doc = arc.doc;
+  warnings.push(...arc.warnings);
   const progress = options.onProgress;
   progress?.(0);
   const maint = MAINT[ver] ?? 0;

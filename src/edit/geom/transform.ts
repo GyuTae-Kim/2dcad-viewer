@@ -51,6 +51,7 @@ import { type EditResult, MSG, type TransformOptions } from './types';
 import { xformMText, xformShape, xformText, xformTolerance } from './xtext';
 import { xformHatch } from './xhatch';
 import { xformDimension, xformLeader, xformMLeader, xformTable } from './xannot';
+import { xformArcText } from '../textools/arctext';
 
 export function transformEntity(e: Entity, m: Affine, doc: CadDocument, opts: TransformOptions = {}): EditResult {
   return transformOne(e, m, doc, opts);
@@ -260,6 +261,8 @@ function transformOne(e: Entity, m: Affine, doc: CadDocument, opt: TransformOpti
       if (e.wires) r.wires = e.wires.map((w) => w.map((p) => P3(m, p, opt)));
       return same(e, r);
     }
+    case 'ARCALIGNEDTEXT':
+      return xformArcText(e, m, dz);
     case 'UNKNOWN':
     default:
       return { message: MSG.cannotTransform };

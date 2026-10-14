@@ -1396,6 +1396,11 @@ export class App {
       void import('./tablecmds').then((m) => m.editTableAt(this, h, w));
       return;
     }
+    if (e?.type === 'ARCALIGNEDTEXT') {
+      this.setSelection([h], 'replace');
+      void this.run('ARCTEXT');
+      return;
+    }
     if (e?.type === 'MLINE') {
       this.setSelection([h], 'replace');
       void this.run('MLEDIT');

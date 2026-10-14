@@ -37,6 +37,7 @@ import { type EditResult, MSG, type TransformOptions } from './types';
 import { mapBlockContents } from './xannot';
 import { metrics, mtextDir } from './xtext';
 import { normalizeNurbs } from './nurbs';
+import { explodeArcText } from '../textools/arctext';
 
 export function explodeEntity(e: Entity, doc: CadDocument): EditResult {
   const done = (add: Entity[], extra: Partial<EditResult> = {}): EditResult => (add.length ? { remove: e.handle ? [e.handle] : [], add, ...extra } : { message: MSG.cannotExplode });
@@ -84,6 +85,8 @@ export function explodeEntity(e: Entity, doc: CadDocument): EditResult {
       return done(explodeMLine(e, doc));
     case 'TOLERANCE':
       return done(explodeTolerance(e, doc));
+    case 'ARCALIGNEDTEXT':
+      return explodeArcText(e);
     case 'REGION':
     case '3DSOLID':
     case 'BODY': {

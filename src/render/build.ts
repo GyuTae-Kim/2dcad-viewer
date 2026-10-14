@@ -55,6 +55,7 @@ import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
 import { type ShxFont, ShxRunner } from '../text/shx';
 import { parseProxyGraphics } from './proxy';
+import { arcTextDrawParts, arcTextUseProxy } from './arctext';
 import { codepageToEncoding, decoderFor } from '../core/codepage';
 import { mlineDrawing } from '../edit/mline/draw';
 import { toleranceLayout } from '../edit/annot/tolerance';
@@ -880,6 +881,11 @@ export class SceneBuilder {
       }
       case 'MLINE':
         return this.mline(e, ctx);
+      case 'ARCALIGNEDTEXT':
+        // 원호 정렬 문자: 고치지 않은 원본은 프록시 그림, 아니면 글자 TEXT·밑줄 호로 펼쳐 그린다
+        if (arcTextUseProxy(e) && this.proxy(e as unknown as UnknownEntity, ctx)) return;
+        for (const p of arcTextDrawParts(e)) this.entity(p, ctx);
+        return;
       case 'TOLERANCE': {
         const r = this.resolve(e, ctx);
         const dv = this.dimVars(e.dimStyle, undefined);

@@ -17,6 +17,7 @@ import { transformEntity } from './transform';
 import { keepIdentity } from './trim';
 import { type EditResult, allocBlockName, mergeResults } from './types';
 import { dimMeasure, updateDimNumber } from './xannot';
+import { layoutArcText } from '../../text/arctext';
 
 /** 걸침 영역: 두 점이면 사각형 */
 function polygonOf(crossing: readonly Vec2[]): Vec2[] {
@@ -120,6 +121,8 @@ function keyPoints(e: Entity): Vec2[] {
     case 'OLE2FRAME':
     case 'OLEFRAME':
       return [P(e.upperLeft), P(e.lowerRight)];
+    case 'ARCALIGNEDTEXT':
+      return layoutArcText(e)?.glyphs.map((g) => ({ x: g.x, y: g.y })) ?? [];
     case 'VIEWPORT':
       return [P(e.center)];
     case 'DIMENSION':

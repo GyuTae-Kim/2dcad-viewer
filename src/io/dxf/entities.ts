@@ -51,6 +51,7 @@ import { entityDefaults } from '../../core/model';
 import { rawColorToCad } from '../../core/color';
 import type { DxfRecord, TagValue } from './records';
 import { DEG, Tags, handle, hexToBytes, int, name, num, parseColor, parseDimOverrides, parseXData, str } from './tagutil';
+import { parseArcAlignedText } from './arctext';
 
 export interface EntityContext {
   version: string;
@@ -1708,6 +1709,10 @@ const MODELED_TYPES = new Set([
 export function parseEntity(rec: DxfRecord, ctx: EntityContext): Entity | null {
   const keepRaw = RAW_TYPES.has(rec.type) || ACIS_TYPES.has(rec.type) || !MODELED_TYPES.has(rec.type);
   const c = splitCommon(rec, keepRaw);
+  if (rec.type === 'ARCALIGNEDTEXT') {
+    const a = parseArcAlignedText(c.base, c.tags, c.raw, c.graphics, ctx.version);
+    if (a) return a;
+  }
   switch (rec.type) {
     case 'LINE':
       return line(c);

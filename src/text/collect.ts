@@ -51,6 +51,9 @@ export function collectTextUsage(doc: CadDocument): TextUsage {
         case 'TOLERANCE':
           collectCodePoints(e.text, codes);
           break;
+        case 'ARCALIGNEDTEXT':
+          for (const ch of e.text) codes.add(ch.codePointAt(0)!);
+          break;
         case 'DIMENSION':
           collectCodePoints(e.text, codes);
           break;
