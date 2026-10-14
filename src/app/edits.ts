@@ -5,6 +5,7 @@
  */
 import type { Entity } from '../core/model';
 import { tableKey } from '../core/model';
+import { unitSettings } from '../core/units';
 import { type ChangeSummary, EditSession, type Transaction } from '../edit/session';
 import type { App } from './app';
 import type { DocState } from './docstate';
@@ -65,9 +66,12 @@ export class EditManager {
       this.rebuildOverlay(st, space, [...ch.removed, ...ch.changed.map((e) => e.handle)]);
     }
     if (sum.tablesChanged || sum.layersChanged) this.syncLayers(st);
+    if (tx.ops.some((o) => o.kind === 'header' && /^\$(LUNITS|LUPREC|AUNITS|AUPREC|INSUNITS|ANGBASE|ANGDIR|MEASUREMENT)$/.test(o.name))) st.units = unitSettings(st.doc);
     // 지워진 객체는 선택에서 뺀다
     for (const h of [...st.selection]) if (!st.doc.entityIndex.has(h)) st.selection.delete(h);
-    if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged) this.schedule(st, sum.blocksChanged || sum.tablesChanged, tx.rebuildNow ? 0 : REBUILD_DELAY);
+    // 그림에 영향을 주는 시스템 변수(선종류 축척, 점 모양, 채우기)는 모든 공간을 다시 그린다
+    const drawVars = tx.ops.some((o) => o.kind === 'header' && /^\$(LTSCALE|PSLTSCALE|PDMODE|PDSIZE|FILLMODE|MIRRTEXT|QTEXTMODE|TEXTFILL)$/.test(o.name));
+    if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged || drawVars) this.schedule(st, sum.blocksChanged || sum.tablesChanged || drawVars, tx.rebuildNow || drawVars ? 0 : REBUILD_DELAY);
     app.view.requestRender();
     app.refreshSelectionOverlay();
     app.ui.refreshPalette();

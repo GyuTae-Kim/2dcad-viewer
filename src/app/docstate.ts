@@ -43,7 +43,7 @@ export class DocState {
   readonly prevCameras = new Map<string, Camera[]>();
   space: string = MODEL_SPACE;
   readonly selection = new Set<string>();
-  readonly units: UnitSettings;
+  units: UnitSettings;
   readonly warnings: { code: string; message: string; count?: number }[] = [];
   layerVersion = 0;
   readonly buildPending = new Map<string, Promise<void>>();

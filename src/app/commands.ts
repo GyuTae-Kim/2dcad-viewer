@@ -1,13 +1,13 @@
 /** 1단계 명령: 보기·조회·도면층·파일 */
 import { tableKey } from '../core/model';
-import { formatAngle, formatLength, unitAbbr, unitName } from '../core/units';
+import { formatAngle, formatLength, unitAbbr } from '../core/units';
 import { ccwSweep } from '../geom/curves';
 import type { App, CommandContext, PointResult } from './app';
 import { CancelError } from './app';
 import { type LayerPatch, patchLayers } from './layers';
 import { entityLength, entityProperties, hatchArea, polyArea, ringArea, ringPerimeter, typeName } from './inquiry';
 import type { Pt } from './view';
-import { dialog, h } from './ui/dom';
+import { h } from './ui/dom';
 
 function pointOf(r: PointResult): Pt | null {
   return 'point' in r ? r.point : null;
@@ -265,25 +265,6 @@ export function registerCommands(app: App): void {
     title: '치수 목록',
     run: () => app.ui.openPalette('dims'),
   });
-  app.register({
-    name: 'UNITS',
-    aliases: ['UN'],
-    title: '도면 단위',
-    run: () => {
-      const u = app.active!.units;
-      const lu = ['', '과학', '십진', '공학', '건축', '분수'][u.lunits] ?? String(u.lunits);
-      const au = ['십진 도수', '도/분/초', '그라디안', '라디안', '측량 단위'][u.aunits] ?? String(u.aunits);
-      dialog(
-        '도면 단위',
-        `<div class="form-row"><span>길이 유형</span><b>${lu}, 정밀도 ${u.luprec}</b></div>
-         <div class="form-row"><span>각도 유형</span><b>${au}, 정밀도 ${u.auprec}</b></div>
-         <div class="form-row"><span>삽입 단위</span><b>${unitName(u.insunits)}</b></div>
-         <div class="form-row"><span>각도 0 방향</span><b>${formatAngle(u.angbase, { aunits: 0, auprec: 2 })}${u.angdir ? ', 시계 방향' : ', 반시계 방향'}</b></div>
-         <div class="form-row"><span>측정 체계</span><b>${u.measurement ? '미터법' : '영국식'}</b></div>`,
-      );
-    },
-  });
-
   // ------------------------------------------------------------- 도면층
   app.register({ name: 'LAYER', aliases: ['LA', 'DDLMODES'], title: '도면층 특성', run: () => app.ui.openPalette('layers') });
   app.register({
