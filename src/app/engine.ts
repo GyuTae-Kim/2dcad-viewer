@@ -91,6 +91,11 @@ export class EngineClient {
     });
   }
 
+  /** 파일이 연결된 래스터 이미지 열쇠를 워커에 알린다 */
+  images(keys: string[]): void {
+    this.post({ type: 'images', keys });
+  }
+
   /** SHX 글꼴을 워커 문자 엔진에도 등록한다 */
   shx(files: { name: string; data: Uint8Array }[], clear = false): void {
     this.post({ type: 'shx', clear, files: files.map((f) => ({ name: f.name, data: f.data.slice().buffer as ArrayBuffer })) });

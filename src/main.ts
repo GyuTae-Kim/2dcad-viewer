@@ -13,6 +13,7 @@ import { registerDimCommands } from './app/dimcmds';
 import { registerHatchCommands } from './app/hatchcmd';
 import { registerLayoutCommands } from './app/layoutcmds';
 import { noteMissingShx, registerShxCommands, restoreShxFonts } from './app/shxfonts';
+import { noteMissingRefs, registerRefCommands } from './app/refs';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -50,7 +51,11 @@ registerDimCommands(app);
 registerHatchCommands(app);
 registerLayoutCommands(app);
 registerShxCommands(app);
-app.onOpened = (st) => noteMissingShx(app, st);
+registerRefCommands(app);
+app.onOpened = (st) => {
+  noteMissingShx(app, st);
+  noteMissingRefs(app, st);
+};
 void restoreShxFonts(app);
 
 app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pickFiles() });

@@ -28,9 +28,12 @@ function post(msg: FromWorker, transfer: Transferable[] = []): void {
   self.postMessage(msg, transfer);
 }
 
+/** 파일이 연결된 래스터 이미지 */
+let imageKeys: ReadonlySet<string> = new Set();
+
 function makeScene(doc: CadDocument, space: string): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text });
+  const s = buildSpace(doc, space, { text, images: imageKeys });
   return {
     list: s.list,
     styles: s.styles.specs,
@@ -49,6 +52,9 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         lib = new OutlineLibrary(msg.fontBase);
         text = new TextEngine(lib);
         text.shx = shx;
+        break;
+      case 'images':
+        imageKeys = new Set(msg.keys);
         break;
       case 'shx':
         if (msg.clear) shx.clear();

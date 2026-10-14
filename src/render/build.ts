@@ -55,6 +55,8 @@ import { codepageToEncoding, decoderFor } from '../core/codepage';
 
 export interface BuildOptions {
   text: TextEngine;
+  /** 파일이 연결된 래스터 이미지 열쇠(imageKey) */
+  images?: ReadonlySet<string>;
   /** 곡선 정밀도(도면 단위). 없으면 도면 범위로 정한다 */
   tolerance?: number;
   /** 해치 무늬 선 상한 */
@@ -1696,9 +1698,30 @@ export class SceneBuilder {
       if (frame === 1) this.out.polyline(w, true, r.style);
       return;
     }
-    this.out.polyline(w, true, r.style);
-    // 이미지 파일은 없으므로 대각선으로 자리를 표시한다
-    if (w.length >= 8) {
+    const key = imageKey(this.doc, e);
+    const have = !!key && !!this.opt.images?.has(key);
+    if (have && e.displayFlags & 1) {
+      // 연결된 파일: 경계를 픽셀 좌표에서 삼각형으로 나눠 위치·UV를 함께 넣는다
+      const px: number[] = [];
+      for (const [x, y] of bnd) px.push(x!, y!);
+      if (px.length >= 6 && px[0] === px[px.length - 2] && px[1] === px[px.length - 1]) px.length -= 2;
+      const tri = triangulateLoops([px]);
+      const out: number[] = [];
+      const sx = e.imageSize.x || 1;
+      const sy = e.imageSize.y || 1;
+      for (let i = 0; i + 1 < tri.length; i += 2) {
+        const x = tri[i]! + 0.5;
+        const y = tri[i + 1]! + 0.5;
+        const q = applyXY(ctx.m, e.insert.x + u.x * x + v.x * y, e.insert.y + u.y * x + v.y * y, e.insert.z + u.z * x + v.z * y);
+        out.push(q.x, q.y, x / sx, 1 - y / sy);
+      }
+      this.out.image(key, out, r.style, { brightness: e.brightness, contrast: e.contrast, fade: e.fade, transparent: (e.displayFlags & 8) !== 0 });
+    }
+    // 테두리: IMAGEFRAME 0이면 파일이 있을 때 숨긴다
+    const frame = this.doc.header.get('$IMAGEFRAME');
+    if (!have || frame !== 0) this.out.polyline(w, true, r.style);
+    // 파일이 없으면 대각선으로 자리를 표시한다
+    if (!have && w.length >= 8) {
       this.out.segment(w[0]!, w[1]!, w[4]!, w[5]!, r.style);
       this.out.segment(w[2]!, w[3]!, w[6]!, w[7]!, r.style);
     }
@@ -1770,6 +1793,13 @@ function lerpRgb(a: number, b: number, t: number): number {
 }
 
 /** 문서의 한 공간을 표시 목록으로 */
+/** 래스터 이미지 파일 열쇠: IMAGEDEF 파일 이름의 마지막 부분(소문자) */
+export function imageKey(doc: CadDocument, e: { imageDef?: string }): string {
+  const d = e.imageDef ? doc.objects.get(e.imageDef) : undefined;
+  const f = d && d.type === 'IMAGEDEF' ? (d as { fileName: string }).fileName : '';
+  return f ? f.replace(/^.*[\\/]/, '').toLowerCase() : '';
+}
+
 /** 공간의 범위 대각선(머리말 $EXTMIN·$EXTMAX, 없으면 1000) */
 export function spaceExtentSize(doc: CadDocument, blockName: string): number {
   const model = tableKey(blockName) === '*MODEL_SPACE';

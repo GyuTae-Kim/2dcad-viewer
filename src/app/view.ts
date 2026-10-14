@@ -331,10 +331,10 @@ export class CadView {
       if (d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3]) {
         // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
         r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
-        r.draw(d.scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis });
+        r.draw(d.scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
       } else {
         r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
-        r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis });
+        r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
       }
       this.drawOverlayScene(s.space, this.viewXf(), 3.78 * this.dpr, dark, bg);
       return;

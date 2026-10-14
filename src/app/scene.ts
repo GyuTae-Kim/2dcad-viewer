@@ -81,8 +81,8 @@ export class OverlayScene {
   readonly layerNames: string[];
   readonly entities: EntityBox[];
 
-  constructor(renderer: GLRenderer, doc: CadDocument, list: readonly Entity[], text: TextEngine, space: string, tolerance?: number) {
-    const b = new SceneBuilder(doc, { text, tolerance });
+  constructor(renderer: GLRenderer, doc: CadDocument, list: readonly Entity[], text: TextEngine, space: string, tolerance?: number, images?: ReadonlySet<string>) {
+    const b = new SceneBuilder(doc, { text, tolerance, images });
     b.prepare(space);
     this.source = b.buildEntities(list);
     this.styles = b.styles;

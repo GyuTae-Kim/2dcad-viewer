@@ -3,6 +3,7 @@
  * PDF는 직접 쓴다(선·채움만, 문자는 모양 그대로 그린다).
  */
 import { MODEL_SPACE } from '../core/model';
+import { imageDataUrl, imagePixels } from './refs';
 import type { CtbTable } from '../render/ctb';
 import type { DisplayList } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
@@ -227,6 +228,51 @@ export function exportSvg(app: App): Blob | null {
   return exportPageSvg(page, st.isModel ? 'px' : 'mm');
 }
 
+/** 출력할 래스터 이미지: UV(0~1, v는 위가 0) → 출력 좌표 아핀과 경계 삼각형(출력 좌표) */
+interface PageImage {
+  key: string;
+  /** [a, b, c, d, e, f]: 출력 = (a·u + c·v + e, b·u + d·v + f) */
+  uv: Affine;
+  tris: number[];
+}
+
+function pageImages(L: Page['layers'][number]): PageImage[] {
+  const out: PageImage[] = [];
+  const m = L.m;
+  for (const im of L.scene.source.images ?? []) {
+    if (!(L.styles[im.style * 8 + 5]! > 0) || !imagePixels(im.key)) continue;
+    const v = im.verts;
+    if (v.length < 12) continue;
+    // 첫 삼각형으로 UV → 월드 아핀을 푼다
+    const P = (i: number) => [v[i * 4]! + im.ox, v[i * 4 + 1]! + im.oy, v[i * 4 + 2]!, v[i * 4 + 3]!] as const;
+    const [x0, y0, u0, w0] = P(0);
+    const [x1, y1, u1, w1] = P(1);
+    const [x2, y2, u2, w2] = P(2);
+    const du1 = u1 - u0;
+    const dv1 = w1 - w0;
+    const du2 = u2 - u0;
+    const dv2 = w2 - w0;
+    const det = du1 * dv2 - du2 * dv1;
+    if (Math.abs(det) < 1e-12) continue;
+    const a = ((x1 - x0) * dv2 - (x2 - x0) * dv1) / det;
+    const c = ((x2 - x0) * du1 - (x1 - x0) * du2) / det;
+    const b = ((y1 - y0) * dv2 - (y2 - y0) * dv1) / det;
+    const d = ((y2 - y0) * du1 - (y1 - y0) * du2) / det;
+    const e = x0 - a * u0 - c * w0;
+    const f = y0 - b * u0 - d * w0;
+    // 월드 → 출력(L.m)과 합친다
+    const uv: Affine = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
+    const tris: number[] = [];
+    for (let i = 0; i + 3 < v.length; i += 4) {
+      const x = v[i]! + im.ox;
+      const y = v[i + 1]! + im.oy;
+      tris.push(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]);
+    }
+    out.push({ key: im.key, uv, tris });
+  }
+  return out;
+}
+
 /** 페이지 하나를 SVG로. unit이 px이면 선 굵기를 1로 고정한다 */
 export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
   const out: string[] = [];
@@ -246,6 +292,16 @@ export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
       out.push(`<clipPath id="c${clipId}"><rect x="${x0.toFixed(3)}" y="${y0.toFixed(3)}" width="${(x1 - x0).toFixed(3)}" height="${(y1 - y0).toFixed(3)}"/></clipPath><g clip-path="url(#c${clipId})">`);
       clipId++;
     } else out.push('<g>');
+    // 래스터 이미지(벡터보다 먼저)
+    for (const im of pageImages(L)) {
+      const url = imageDataUrl(im.key);
+      if (!url) continue;
+      let d = '';
+      for (let i = 0; i + 5 < im.tris.length; i += 6) d += `M${im.tris[i]!.toFixed(3)} ${im.tris[i + 1]!.toFixed(3)}L${im.tris[i + 2]!.toFixed(3)} ${im.tris[i + 3]!.toFixed(3)}L${im.tris[i + 4]!.toFixed(3)} ${im.tris[i + 5]!.toFixed(3)}Z`;
+      const t = im.uv.map((x) => x.toFixed(6)).join(' ');
+      out.push(`<clipPath id="c${clipId}"><path d="${d}"/></clipPath><image clip-path="url(#c${clipId})" href="${url}" x="0" y="0" width="1" height="1" preserveAspectRatio="none" transform="matrix(${t})"/>`);
+      clipId++;
+    }
     // 같은 스타일의 선분은 한 경로로 모은다
     let curStyle = -1;
     let path = '';
@@ -301,7 +357,8 @@ export async function exportPdf(app: App): Promise<Blob | null> {
 export const PT_PER_MM = 72 / 25.4;
 
 /** 페이지 하나의 PDF 그리기 명령 */
-export function pdfContent(page: Page): string {
+/** PDF 내용 스트림. images에 쓴 이미지 열쇠를 차례로 모은다(/Im0, /Im1 …) */
+export function pdfContent(page: Page, images: string[] = []): string {
   const ops: string[] = [];
   const H = page.height;
   ops.push('1 1 1 rg', `0 0 ${page.width.toFixed(2)} ${H.toFixed(2)} re f`, '1 J 1 j');
@@ -317,6 +374,21 @@ export function pdfContent(page: Page): string {
     } else if (L.clipPx) {
       const [x0, y0, x1, y1] = L.clipPx;
       ops.push(`${x0.toFixed(2)} ${(H - y1).toFixed(2)} ${(x1 - x0).toFixed(2)} ${(y1 - y0).toFixed(2)} re W n`);
+    }
+    // 래스터 이미지(벡터보다 먼저): 경계 삼각형으로 자르고, 단위 사각형(아래 왼쪽 원점)을 출력 좌표로
+    for (const im of pageImages(L)) {
+      let n = images.indexOf(im.key);
+      if (n < 0) {
+        n = images.length;
+        images.push(im.key);
+      }
+      const clip: string[] = [];
+      const T = im.tris;
+      for (let i = 0; i + 5 < T.length; i += 6) clip.push(`${T[i]!.toFixed(2)} ${(H - T[i + 1]!).toFixed(2)} m ${T[i + 2]!.toFixed(2)} ${(H - T[i + 3]!).toFixed(2)} l ${T[i + 4]!.toFixed(2)} ${(H - T[i + 5]!).toFixed(2)} l h`);
+      // PDF 이미지 좌표 (s, t): t = 1 - v
+      const [a, b, c, d, e, f] = im.uv;
+      const cm = [a, -b, -c, d, c + e, H - (d + f)].map((x) => x.toFixed(6)).join(' ');
+      ops.push('q', ...clip, 'W n', `${cm} cm`, `/Im${n} Do`, 'Q');
     }
     let cur = -1;
     let kind = '';
@@ -362,13 +434,33 @@ export function pdfContent(page: Page): string {
 
 /** 여러 페이지 PDF */
 export async function pdfDocument(pages: Page[], title: string): Promise<Blob> {
-  const out: { w: number; h: number; content: Uint8Array; flate: boolean }[] = [];
+  const out: { w: number; h: number; content: Uint8Array; flate: boolean; images: string[] }[] = [];
+  const keys: string[] = [];
   for (const p of pages) {
-    const raw = new TextEncoder().encode(pdfContent(p));
+    const used: string[] = [];
+    const raw = new TextEncoder().encode(pdfContent(p, used));
     const z = await deflate(raw);
-    out.push({ w: p.width, h: p.height, content: z ?? raw, flate: !!z });
+    for (const k of used) if (!keys.includes(k)) keys.push(k);
+    out.push({ w: p.width, h: p.height, content: z ?? raw, flate: !!z, images: used });
   }
-  return buildPdf(out, title);
+  // 이미지 XObject(RGB, 알파가 있으면 SMask)
+  const xobjs: PdfImage[] = [];
+  for (const k of keys) {
+    const px = imagePixels(k)!;
+    const rgb = await deflate(px.rgb);
+    const alpha = px.alpha ? await deflate(px.alpha) : null;
+    xobjs.push({ key: k, w: px.w, h: px.h, rgb: rgb ?? px.rgb, alpha: px.alpha ? (alpha ?? px.alpha) : null, flate: !!rgb });
+  }
+  return buildPdf(out, title, xobjs);
+}
+
+interface PdfImage {
+  key: string;
+  w: number;
+  h: number;
+  rgb: Uint8Array;
+  alpha: Uint8Array | null;
+  flate: boolean;
 }
 
 async function deflate(data: Uint8Array): Promise<Uint8Array | null> {
@@ -378,7 +470,7 @@ async function deflate(data: Uint8Array): Promise<Uint8Array | null> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-function buildPdf(pages: { w: number; h: number; content: Uint8Array; flate: boolean }[], title: string): Blob {
+function buildPdf(pages: { w: number; h: number; content: Uint8Array; flate: boolean; images: string[] }[], title: string, images: PdfImage[] = []): Blob {
   const enc = new TextEncoder();
   const parts: Uint8Array[] = [];
   const offsets: number[] = [];
@@ -403,15 +495,38 @@ function buildPdf(pages: { w: number; h: number; content: Uint8Array; flate: boo
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
   obj(2, `<< /Type /Pages /Kids [${pages.map((_, i) => `${pageObj(i)} 0 R`).join(' ')}] /Count ${n} >>`);
   obj(3, `<< /Producer (OpenCAD 2D Viewer) /Title (${/^[\x20-\x7e]*$/.test(t) ? t : 'drawing'}) >>`);
+  // 이미지 객체 번호: 페이지 다음부터(이미지마다 본문, 알파가 있으면 SMask 하나 더)
+  const imgObj = new Map<string, number>();
+  let next = 4 + n * 2;
+  for (const im of images) {
+    imgObj.set(im.key, next);
+    next += im.alpha ? 2 : 1;
+  }
   pages.forEach((p, i) => {
-    obj(pageObj(i), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${p.w.toFixed(2)} ${p.h.toFixed(2)}] /Contents ${pageObj(i) + 1} 0 R /Resources << >> >>`);
+    const xo = p.images.map((k, j) => `/Im${j} ${imgObj.get(k)} 0 R`).join(' ');
+    obj(pageObj(i), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${p.w.toFixed(2)} ${p.h.toFixed(2)}] /Contents ${pageObj(i) + 1} 0 R /Resources << ${xo ? `/XObject << ${xo} >>` : ''} >> >>`);
     obj(pageObj(i) + 1, () => {
       add(`<< /Length ${p.content.length}${p.flate ? ' /Filter /FlateDecode' : ''} >>\nstream\n`);
       add(p.content);
       add('\nendstream');
     });
   });
-  const total = 4 + n * 2;
+  for (const im of images) {
+    const no = imgObj.get(im.key)!;
+    const filt = im.flate ? ' /Filter /FlateDecode' : '';
+    obj(no, () => {
+      add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8${filt}${im.alpha ? ` /SMask ${no + 1} 0 R` : ''} /Length ${im.rgb.length} >>\nstream\n`);
+      add(im.rgb);
+      add('\nendstream');
+    });
+    if (im.alpha)
+      obj(no + 1, () => {
+        add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceGray /BitsPerComponent 8${filt} /Length ${im.alpha!.length} >>\nstream\n`);
+        add(im.alpha!);
+        add('\nendstream');
+      });
+  }
+  const total = next;
   const xref = pos;
   add(`xref\n0 ${total}\n0000000000 65535 f \n`);
   for (let i = 1; i < total; i++) add(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);

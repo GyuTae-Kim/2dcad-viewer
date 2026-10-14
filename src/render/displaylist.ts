@@ -111,6 +111,25 @@ export interface DisplayList {
   xlines: number[];
   /** 무한선마다 객체 핸들 */
   xlineHandles: string[];
+  /** 래스터 이미지(파일이 연결됐을 때만 그린다) */
+  images?: ImageDraw[];
+}
+
+/** 래스터 이미지 하나: 자르기 경계를 삼각형으로 나눈 정점 [x - ox, y - oy, u, v, …] */
+export interface ImageDraw {
+  /** 이미지 파일 열쇠(IMAGEDEF 파일 이름, 소문자) */
+  key: string;
+  handle: string;
+  ox: number;
+  oy: number;
+  verts: Float32Array;
+  depth: number;
+  style: number;
+  /** 0~100 */
+  brightness: number;
+  contrast: number;
+  fade: number;
+  transparent: boolean;
 }
 
 class ChunkBuilder {
@@ -349,6 +368,27 @@ export class DisplayListBuilder {
       this.grow(a * x + c * y + e, b * x + d * y + f);
   }
 
+  private images: ImageDraw[] = [];
+
+  /** 래스터 이미지(월드 좌표 [x, y, u, v, …] 삼각형) */
+  image(key: string, tris: number[], style: number, opt: { brightness: number; contrast: number; fade: number; transparent: boolean }): void {
+    if (tris.length < 12) return;
+    const ox = tris[0]!;
+    const oy = tris[1]!;
+    const v = new Float32Array(tris.length);
+    for (let i = 0; i + 3 < tris.length; i += 4) {
+      v[i] = tris[i]! - ox;
+      v[i + 1] = tris[i + 1]! - oy;
+      v[i + 2] = tris[i + 2]!;
+      v[i + 3] = tris[i + 3]!;
+      this.grow(tris[i]!, tris[i + 1]!);
+    }
+    this.images.push({ key, handle: '', ox, oy, verts: v, depth: this.depth, style, ...opt });
+    this.pendingImages.push(this.images[this.images.length - 1]!);
+  }
+
+  private pendingImages: ImageDraw[] = [];
+
   xline(x: number, y: number, dx: number, dy: number, ray: boolean, style: number): void {
     if (this.clips.length) {
       // 자르기 안의 구성선·광선: 경계 범위를 넉넉히 덮는 선분으로 바꿔 자른다
@@ -365,6 +405,8 @@ export class DisplayListBuilder {
 
   /** 지금까지 모은 그림을 한 객체로 마감한다. */
   endEntity(handle: string): void {
+    for (const im of this.pendingImages) im.handle = handle;
+    this.pendingImages = [];
     while (this.xlineHandles.length < this.xlines.length / 7) this.xlineHandles.push(handle);
     for (const p of this.pendingInst) {
       let r = this.inst.get(p.g);
@@ -550,6 +592,7 @@ export class DisplayListBuilder {
       maxY: this.totalMaxY,
       xlines: this.xlines,
       xlineHandles: this.xlineHandles,
+      images: this.images.length ? this.images : undefined,
     };
   }
 }
@@ -559,6 +602,7 @@ export function transferables(dl: DisplayList): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
   for (const c of dl.chunks) out.push(c.segs, c.tris, c.tsegs, c.ttris);
   out.push(dl.glyphs.instances, dl.glyphs.fillVerts.buffer as ArrayBuffer, dl.glyphs.strokeSegs.buffer as ArrayBuffer);
+  for (const im of dl.images ?? []) out.push(im.verts.buffer as ArrayBuffer);
   return out;
 }
 

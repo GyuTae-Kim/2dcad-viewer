@@ -171,6 +171,41 @@ uniform vec4 u_color;
 out vec4 o;
 void main() { o = u_color; }`;
 
+// 래스터 이미지: 정점 = 묶음 기준 위치 + UV
+const IMG_VS = `#version 300 es
+precision highp float;
+precision highp int;
+layout(location=0) in vec2 a_pos;
+layout(location=1) in vec2 a_uv;
+uniform vec2 u_m0; uniform vec2 u_m1; uniform vec2 u_m2;
+uniform vec2 u_size;
+uniform float u_depth;
+uniform uint u_style;
+uniform sampler2D u_styles;
+out vec2 v_uv;
+void main() {
+  int i = int(u_style) * 2 + 1;
+  vec4 x = texelFetch(u_styles, ivec2(i % 2048, i / 2048), 0);
+  vec2 p = u_m0 * a_pos.x + u_m1 * a_pos.y + u_m2;
+  vec2 clip = vec2(p.x / u_size.x * 2.0 - 1.0, 1.0 - p.y / u_size.y * 2.0);
+  gl_Position = x.y > 0.5 ? vec4(clip, u_depth * 2.0 - 1.0, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
+  v_uv = a_uv;
+}`;
+const IMG_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_img;
+uniform vec3 u_bcf;   // 밝기·대비·흐리기(0~100, 기본 50·50·0)
+uniform vec3 u_bg;
+uniform float u_alpha;
+out vec4 o;
+void main() {
+  vec4 c = texture(u_img, v_uv);
+  vec3 rgb = (c.rgb - 0.5) * (u_bcf.y / 50.0) + 0.5 + (u_bcf.x - 50.0) / 100.0;
+  rgb = mix(rgb, u_bg, u_bcf.z / 100.0);
+  o = vec4(clamp(rgb, 0.0, 1.0), u_alpha > 0.5 ? c.a : 1.0);
+}`;
+
 function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const mk = (type: number, src: string) => {
     const s = gl.createShader(type)!;
@@ -222,6 +257,21 @@ export interface GpuScene {
   minY: number;
   maxX: number;
   maxY: number;
+  images: GpuImage[];
+}
+
+interface GpuImage {
+  key: string;
+  handle: string;
+  vao: WebGLVertexArrayObject;
+  count: number;
+  ox: number;
+  oy: number;
+  depth: number;
+  style: number;
+  bcf: [number, number, number];
+  transparent: boolean;
+  hidden: boolean;
 }
 
 type Uniforms = Record<string, WebGLUniformLocation | null>;
@@ -233,6 +283,9 @@ export class GLRenderer {
   private gFillProg!: WebGLProgram;
   private gStrokeProg!: WebGLProgram;
   private screenProg!: WebGLProgram;
+  private imgProg!: WebGLProgram;
+  /** 래스터 이미지 텍스처(열쇠 = 파일 이름) */
+  private readonly textures = new Map<string, WebGLTexture>();
   private readonly u: Map<WebGLProgram, Uniforms> = new Map();
   private cornerBuf!: WebGLBuffer;
   private styleTex!: WebGLTexture;
@@ -260,7 +313,9 @@ export class GLRenderer {
     this.gFillProg = compile(gl, GLYPH_FILL_VS, FS);
     this.gStrokeProg = compile(gl, GLYPH_STROKE_VS, FS);
     this.screenProg = compile(gl, SCREEN_VS, SCREEN_FS);
-    for (const p of [this.segProg, this.triProg, this.gFillProg, this.gStrokeProg, this.screenProg]) {
+    this.imgProg = compile(gl, IMG_VS, IMG_FS);
+    this.textures.clear();
+    for (const p of [this.segProg, this.triProg, this.gFillProg, this.gStrokeProg, this.screenProg, this.imgProg]) {
       const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS) as number;
       const map: Uniforms = {};
       for (let i = 0; i < n; i++) {
@@ -287,6 +342,29 @@ export class GLRenderer {
     gl.bindVertexArray(null);
     this.xlineBuf = gl.createBuffer()!;
     this.xlineVao = this.segVao(this.xlineBuf, 0);
+  }
+
+  /** 래스터 이미지 텍스처 올리기·지우기 */
+  setImage(key: string, src: TexImageSource | null): void {
+    const gl = this.gl;
+    const old = this.textures.get(key);
+    if (old) gl.deleteTexture(old);
+    this.textures.delete(key);
+    if (!src) return;
+    const t = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.textures.set(key, t);
+  }
+
+  hasImage(key: string): boolean {
+    return this.textures.has(key);
   }
 
   resize(cssW: number, cssH: number, dpr: number): void {
@@ -364,6 +442,7 @@ export class GLRenderer {
       minY: dl.minY,
       maxX: dl.maxX,
       maxY: dl.maxY,
+      images: [],
     };
     const mkBuf = (data: ArrayBuffer | ArrayBufferView) => {
       const b = gl.createBuffer()!;
@@ -446,7 +525,65 @@ export class GLRenderer {
         scene.vaos.push(vao);
       }
     }
+    // 래스터 이미지
+    for (const im of dl.images ?? []) {
+      const buf = mkBuf(im.verts);
+      const vao = gl.createVertexArray()!;
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+      gl.bindVertexArray(null);
+      scene.vaos.push(vao);
+      scene.images.push({
+        key: im.key,
+        handle: im.handle,
+        vao,
+        count: im.verts.length / 4,
+        ox: im.ox,
+        oy: im.oy,
+        depth: im.depth,
+        style: im.style,
+        bcf: [im.brightness || 50, im.contrast || 50, im.fade || 0],
+        transparent: im.transparent,
+        hidden: false,
+      });
+    }
     return scene;
+  }
+
+  /** 래스터 이미지 그리기(불투명 또는 투명 이미지만) */
+  private drawImages(scene: GpuScene, view: ViewXf, transparent: boolean, bg: [number, number, number]): void {
+    if (!scene.images.length) return;
+    const gl = this.gl;
+    gl.useProgram(this.imgProg);
+    const u = this.u.get(this.imgProg)!;
+    gl.uniform2f(u.u_size!, this.width, this.height);
+    gl.uniform1i(u.u_styles!, 0);
+    gl.uniform1i(u.u_img!, 1);
+    gl.uniform3f(u.u_bg!, bg[0], bg[1], bg[2]);
+    gl.uniform1f(u.u_alpha!, transparent ? 1 : 0);
+    const A = view.A;
+    for (const im of scene.images) {
+      if (im.hidden || im.transparent !== transparent) continue;
+      const t = this.textures.get(im.key);
+      if (!t) continue;
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.activeTexture(gl.TEXTURE0);
+      const dx = im.ox - view.refX;
+      const dy = im.oy - view.refY;
+      gl.uniform2f(u.u_m0!, A[0], A[1]);
+      gl.uniform2f(u.u_m1!, A[2], A[3]);
+      gl.uniform2f(u.u_m2!, A[0] * dx + A[2] * dy + view.tx, A[1] * dx + A[3] * dy + view.ty);
+      gl.uniform1f(u.u_depth!, im.depth);
+      gl.uniform1ui(u.u_style!, im.style);
+      gl.uniform3f(u.u_bcf!, im.bcf[0], im.bcf[1], im.bcf[2]);
+      gl.bindVertexArray(im.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, im.count);
+    }
   }
 
   private bindInstance(buf: WebGLBuffer, startInstance: number): void {
@@ -470,6 +607,7 @@ export class GLRenderer {
    */
   hideEntity(scene: GpuScene, src: DisplayList, box: EntityBox, hidden: number): void {
     const gl = this.gl;
+    for (const im of scene.images) if (im.handle === box.handle) im.hidden = true;
     for (let i = 0; i < src.xlineHandles.length; i++) if (src.xlineHandles[i] === box.handle) scene.xlines[i * 7 + 6] = hidden;
     if (box.chunk !== undefined) {
       const c = src.chunks[box.chunk];
@@ -579,7 +717,7 @@ export class GLRenderer {
    * 장면 그리기. view: 도면 → 픽셀(장치 픽셀). lwScale: 선가중치 mm → 픽셀
    * visibleRect: 화면에 보이는 도면 범위(묶음 걸러 내기), override: 색 덮어쓰기
    */
-  draw(scene: GpuScene, view: ViewXf, opt: { lwScale: number; visible?: [number, number, number, number]; override?: [number, number, number, number]; minTextPx?: number }): void {
+  draw(scene: GpuScene, view: ViewXf, opt: { lwScale: number; visible?: [number, number, number, number]; override?: [number, number, number, number]; minTextPx?: number; bg?: [number, number, number] }): void {
     const gl = this.gl;
     gl.viewport(0, 0, this.width, this.height);
     gl.enable(gl.DEPTH_TEST);
@@ -614,6 +752,8 @@ export class GLRenderer {
         gl.bindVertexArray(vao);
         gl.drawArrays(gl.TRIANGLES, 0, n * 3);
       }
+      // 래스터 이미지(그리기 순서 깊이)
+      if (!opt.override || opt.override[3] === 0) this.drawImages(scene, view, transparent, opt.bg ?? [1, 1, 1]);
       // 선
       gl.useProgram(this.segProg);
       u = this.u.get(this.segProg)!;
