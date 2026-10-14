@@ -81,6 +81,11 @@ export class EngineClient {
     });
   }
 
+  /** SHX 글꼴을 워커 문자 엔진에도 등록한다 */
+  shx(files: { name: string; data: Uint8Array }[], clear = false): void {
+    this.post({ type: 'shx', clear, files: files.map((f) => ({ name: f.name, data: f.data.slice().buffer as ArrayBuffer })) });
+  }
+
   /** 편집을 워커 문서에도 적용한다 */
   edit(docId: number, ops: EditOp[]): void {
     this.post({ type: 'edit', docId, ops });

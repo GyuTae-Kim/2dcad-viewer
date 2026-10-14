@@ -10,6 +10,7 @@ import { buildSpace } from '../render/build';
 import { transferables } from '../render/displaylist';
 import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
+import { ShxLibrary } from '../text/shx';
 import { collectTextUsage } from '../text/collect';
 import type { FromWorker, SceneMessage, ToWorker } from './protocol';
 import { applyOps } from '../edit/session';
@@ -17,7 +18,9 @@ import { applyOps } from '../edit/session';
 declare const self: DedicatedWorkerGlobalScope;
 
 let lib: OutlineLibrary | null = null;
+const shx = new ShxLibrary();
 let text: TextEngine = new TextEngine(null);
+text.shx = shx;
 const docs = new Map<number, CadDocument>();
 let nextDoc = 1;
 
@@ -45,6 +48,11 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       case 'init':
         lib = new OutlineLibrary(msg.fontBase);
         text = new TextEngine(lib);
+        text.shx = shx;
+        break;
+      case 'shx':
+        if (msg.clear) shx.clear();
+        for (const f of msg.files) shx.add(f.name, new Uint8Array(f.data));
         break;
       case 'open': {
         const t0 = performance.now();

@@ -12,7 +12,9 @@ export type ToWorker =
   | { type: 'edit'; docId: number; ops: EditOp[] }
   | { type: 'close'; docId: number }
   /** 메인에서 만든 문서(새 도면)를 받아 장면을 만든다 */
-  | { type: 'adopt'; id: number; name: string; doc: CadDocument };
+  | { type: 'adopt'; id: number; name: string; doc: CadDocument }
+  /** 사용자가 불러온 SHX 글꼴(문자 그리기에 쓴다). clear면 먼저 모두 지운다 */
+  | { type: 'shx'; files: { name: string; data: ArrayBuffer }[]; clear?: boolean };
 
 export interface SceneMessage {
   list: DisplayList;

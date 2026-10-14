@@ -169,6 +169,11 @@ export class EditManager {
     app.refreshSelectionOverlay();
   }
 
+  /** 모든 공간을 곧바로 다시 그린다(글꼴을 새로 불러왔을 때 등) */
+  rebuildEverything(st: DocState): void {
+    this.schedule(st, true, 0);
+  }
+
   /** 미뤄 둔 다시 그리기를 지금 끝낸다(내보내기·출력 전에) */
   async flush(st: DocState): Promise<void> {
     if (!this.timers.has(st)) return;

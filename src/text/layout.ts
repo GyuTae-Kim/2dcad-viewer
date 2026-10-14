@@ -5,6 +5,7 @@
 import type { CadColor, TextStyle } from '../core/model';
 import type { FontFace, GlyphGeom, OutlineLibrary } from './fonts';
 import { latinFamilyOf, strokeFace } from './fonts';
+import type { ShxLibrary } from './shx';
 import { type Paragraph, type RunStyle, TOGGLE_OVERLINE, TOGGLE_STRIKE, TOGGLE_UNDERLINE, parseMText, parseTextString } from './mtext';
 
 /** 2D 아핀 [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f */
@@ -73,11 +74,20 @@ export function isShxFont(font: string): boolean {
 }
 
 export class TextEngine {
+  /** 사용자가 불러온 SHX 글꼴(있으면 단선 대체 글꼴보다 먼저 쓴다) */
+  shx: ShxLibrary | null = null;
+
   constructor(private readonly lib: OutlineLibrary | null) {}
 
-  private facesFor(font: string, ttfHint: boolean | null): Faces {
+  private facesFor(font: string, ttfHint: boolean | null, bigFont = ''): Faces {
     const shx = ttfHint === null ? isShxFont(font) : !ttfHint;
     const lib = this.lib;
+    const real = shx && this.shx?.size ? this.shx.face(font, bigFont) : null;
+    if (real) {
+      const chain: FontFace[] = [real, strokeFace];
+      if (lib) chain.push(lib.capFace, lib.cjkFace);
+      return { chain, primary: real.font ? real : strokeFace };
+    }
     if (!lib) return { chain: [strokeFace], primary: strokeFace };
     if (shx) return { chain: [strokeFace, lib.capFace, lib.cjkFace], primary: strokeFace };
     const fam = latinFamilyOf(font);
@@ -130,7 +140,7 @@ export class TextEngine {
     style?: TextStyle;
   }): TextLayout {
     const font = this.styleFont(p.style);
-    const faces = this.facesFor(font, null);
+    const faces = this.facesFor(font, null, p.style?.bigFont);
     const codes = parseTextString(p.text);
     type G = { geom: GlyphGeom; kind: 'stroke' | 'outline'; x: number };
     const gl: G[] = [];
@@ -263,7 +273,7 @@ export class TextEngine {
       const key = `${st.font}|${st.ttf}`;
       let f = facesCache.get(key);
       if (!f) {
-        f = st.font ? this.facesFor(st.font, st.ttf) : this.facesFor(styleFont, null);
+        f = st.font ? this.facesFor(st.font, st.ttf) : this.facesFor(styleFont, null, p.style?.bigFont);
         facesCache.set(key, f);
       }
       return f;

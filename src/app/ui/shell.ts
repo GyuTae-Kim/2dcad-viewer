@@ -253,6 +253,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         large: [
           { cmd: 'BACKGROUND', label: '배경색', icon: 'background', noDoc: true, tip: '검정·흰색 배경 전환' },
           { cmd: 'LWDISPLAY', label: '선가중치', icon: 'lineweight', noDoc: true, tip: '선가중치 표시 켜기·끄기' },
+          { cmd: 'SHXFONTS', label: 'SHX 글꼴', icon: 'text', noDoc: true, tip: '이 컴퓨터의 SHX 글꼴을 불러와 도면 문자를 원래 글꼴로 그리기' },
           { cmd: 'FULLSCREEN', label: '전체 화면', icon: 'fullscreen', noDoc: true },
         ],
       },

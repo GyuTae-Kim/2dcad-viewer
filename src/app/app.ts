@@ -382,6 +382,8 @@ export class App {
 
   /** 마지막으로 만든 객체(L 옵션) */
   lastCreated: string[] = [];
+  /** 파일을 연 뒤(빠진 글꼴 안내 등) */
+  onOpened: ((st: DocState) => void) | null = null;
 
   private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }> {
     return new Promise((resolve, reject) => {
@@ -503,6 +505,7 @@ export class App {
       const w = st.warnings.filter((x) => x.code !== 'entity.not_drawn' || (x.count ?? 0) > 0);
       this.cmd.print(`${name}: ${res.doc.format.toUpperCase()} ${res.doc.version}, 객체 ${res.doc.entityIndex.size.toLocaleString()}개, 읽기 ${Math.round(res.readMs)}ms, 그리기 ${Math.round(res.model.ms)}ms`);
       for (const x of w.slice(0, 6)) this.cmd.print(`참고: ${x.message}${x.count ? ` (${x.count})` : ''}`);
+      this.onOpened?.(st);
       this.loadFonts(st);
       return st;
     } catch (e) {
