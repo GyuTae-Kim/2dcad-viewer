@@ -411,6 +411,64 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
     ],
   },
   {
+    tab: '파라메트릭',
+    panels: [
+      {
+        title: '기하학적',
+        large: [{ cmd: 'AUTOCONSTRAIN', label: '자동 구속', icon: 'lock', tip: '선택한 객체에 기하 구속 자동 적용' }],
+        cols: [
+          [
+            { cmd: 'GCCOINCIDENT', label: '일치', icon: 'point' },
+            { cmd: 'GCCOLLINEAR', label: '동일선상', icon: 'line' },
+            { cmd: 'GCCONCENTRIC', label: '동심', icon: 'circle' },
+          ],
+          [
+            { cmd: 'GCFIX', label: '고정', icon: 'lock' },
+            { cmd: 'GCPARALLEL', label: '평행', icon: 'xline' },
+            { cmd: 'GCPERPENDICULAR', label: '직교', icon: 'ortho' },
+          ],
+          [
+            { cmd: 'GCHORIZONTAL', label: '수평', icon: 'dimLinear' },
+            { cmd: 'GCVERTICAL', label: '수직', icon: 'dimLinear' },
+            { cmd: 'GCTANGENT', label: '접선', icon: 'arc' },
+          ],
+          [
+            { cmd: 'GCSMOOTH', label: '부드럽게', icon: 'spline' },
+            { cmd: 'GCSYMMETRIC', label: '대칭', icon: 'mirror' },
+            { cmd: 'GCEQUAL', label: '동일', icon: 'ruler' },
+          ],
+          [{ cmd: 'CONSTRAINTBAR', label: '구속 막대', icon: 'eye', tip: '구속 막대 표시·숨기기 (CBAR)' }],
+        ],
+      },
+      {
+        title: '치수',
+        large: [{ cmd: 'DCLINEAR', label: '선형', icon: 'dimLinear', tip: '선형 치수 구속' }],
+        cols: [
+          [
+            { cmd: 'DCALIGNED', label: '정렬', icon: 'dimAligned' },
+            { cmd: 'DCANGULAR', label: '각도', icon: 'dimAngular' },
+            { cmd: 'DCRADIUS', label: '반지름', icon: 'dimRadius' },
+          ],
+          [
+            { cmd: 'DCDIAMETER', label: '지름', icon: 'dimDiameter' },
+            { cmd: 'DCHORIZONTAL', label: '수평', icon: 'dimLinear' },
+            { cmd: 'DCVERTICAL', label: '수직', icon: 'dimLinear' },
+          ],
+          [{ cmd: 'DCDISPLAY', label: '표시', icon: 'eye', tip: '동적 치수 구속 표시·숨기기' }],
+        ],
+      },
+      {
+        title: '관리',
+        cols: [
+          [
+            { cmd: 'DELCONSTRAINT', label: '구속 삭제', icon: 'erase', tip: '선택한 객체의 구속 모두 지우기' },
+            { cmd: 'PARAMETERS', label: '매개변수 관리자', icon: 'list', tip: '치수 구속·사용자 매개변수 (PAR)' },
+          ],
+        ],
+      },
+    ],
+  },
+  {
     tab: '뷰',
     panels: [
       {

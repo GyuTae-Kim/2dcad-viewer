@@ -578,6 +578,8 @@ export class CadView {
   modelStyleOverride: ((s: DocState) => ((data: Float32Array) => Float32Array) | null) | null = null;
   /** 모형 공간 위에 덧그릴 장면들(도면 비교의 "비교 도면에서만" 객체 등) */
   modelExtras: ((s: DocState) => { gpu: GpuScene; styles: (dark: boolean, bg: number, lwDisplay: boolean) => Float32Array }[]) | null = null;
+  /** 선택·그립 위에 덧그릴 화면 표식(파라메트릭 구속 막대·치수 구속 등) */
+  extraOverlay: ((g: CanvasRenderingContext2D, W: (x: number, y: number) => Pt, dark: boolean) => void) | null = null;
 
   /** 배치(용지, 뷰포트, 종이 공간 객체). MSPACE여도 배치를 그린다 */
   private renderLayout(s: DocState): void {
@@ -923,6 +925,7 @@ export class CadView {
     }
     g.restore();
     if (vpRect) g.restore();
+    this.extraOverlay?.(g, W, dark);
     // 블록 편집기: 블록 기준점
     const be = s?.blockEdit ? s.doc.blocks.get(s.blockEdit.key) : null;
     if (be) {

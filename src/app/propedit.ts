@@ -10,6 +10,7 @@ import { cloneEntity } from '../edit/session';
 import type { App } from './app';
 import { colorText, lineweightText } from './inquiry';
 import { followOps } from './dimassoc';
+import { afterEditSolve } from './constraints-hook';
 
 export type FieldKind = 'length' | 'angle' | 'number' | 'text' | 'multiline' | 'select' | 'color' | 'bool';
 
@@ -423,6 +424,13 @@ export function applyField(app: App, handles: string[], field: Field, value: unk
   }
   if (skipped) app.cmd.print(`잠긴 도면층의 객체 ${skipped}개는 바꾸지 않았습니다.`);
   if (ops.length) {
+    // 파라메트릭 구속: 이어진 객체가 따라오고, 맞출 수 없으면 바꾸지 않는다(modify 작업의 after는 제자리에서 바뀐다)
+    const cs = afterEditSolve(st, ops, 'PROPERTIES');
+    if (!cs.ok) {
+      app.cmd.print(cs.message!, 'err');
+      return 0;
+    }
+    ops.push(...cs.extra);
     // 형상을 바꾸면 연관 치수가 따라간다
     const f = followOps(st, new Map(ops.flatMap((o) => (o.kind === 'modify' ? [[o.before.handle, o.after] as const] : []))));
     for (const o of ops) if (o.kind === 'modify') o.after = f.patched.get(o.before.handle) ?? o.after;

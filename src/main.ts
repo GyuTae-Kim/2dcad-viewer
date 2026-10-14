@@ -28,6 +28,8 @@ import { registerAnnot2Commands } from './app/annot2';
 import { registerDimAssocCommands } from './app/dimassoc';
 import { registerDimInspectCommands } from './app/diminspect';
 import { registerDynBlockCommands } from './app/dynblock';
+import { noteForeignConstraints, registerConstraintCommands } from './app/constraints';
+import { drawConstraintOverlay } from './app/constraints-draw';
 import { registerTableEditCommands } from './app/tablecmds';
 import { fieldDisplay, onFieldDisplayChange, registerFieldCommands } from './app/fieldcmds';
 import { displayFlags } from './render/styles';
@@ -95,6 +97,8 @@ registerAnnot2Commands(app);
 registerDimAssocCommands(app);
 registerDimInspectCommands(app);
 registerDynBlockCommands(app);
+registerConstraintCommands(app);
+app.view.extraOverlay = (g, W, dark) => drawConstraintOverlay(app, g, W, dark);
 registerTableEditCommands(app);
 registerFieldCommands(app);
 registerMLineCommands(app);
@@ -116,6 +120,7 @@ onFieldDisplayChange((v) => {
 });
 app.onOpened = (st) => {
   noteMissingShx(app, st);
+  noteForeignConstraints(app, st);
   void noteMissingRefs(app, st);
 };
 void restoreShxFonts(app);

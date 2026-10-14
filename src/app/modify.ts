@@ -40,6 +40,7 @@ import type { OverlayGeom, Pt } from './view';
 import { unlockedOnly } from './layers';
 import { form } from './ui/dom';
 import { dynGripEdit } from './dynblock';
+import { constraintEditHook } from './constraints-hook';
 
 // ---------------------------------------------------------------------------
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
@@ -209,6 +210,15 @@ export interface Applied {
 export function commitResults(app: App, ctx: CommandContext, results: EditResult[], label: string, opt: { quiet?: boolean; transform?: Affine } = {}): Applied {
   const st = app.active!;
   const doc = st.doc;
+  // 파라메트릭 구속: 구속으로 이어진 객체를 결과에 더하고, 구속 기록 갱신 작업을 받는다
+  const cons = constraintEditHook(st, results, label);
+  if (!cons.ok) {
+    ctx.print(cons.message ?? '구속조건을 유지하면서 객체를 편집할 수 없습니다.', 'err');
+    return { added: [], changed: [], removed: 0, ops: 0 };
+  }
+  // 따라온 객체는 같은 변환을 받지 않았다
+  if (cons.results !== results) opt = { ...opt, transform: undefined };
+  results = cons.results;
   const ops: EditOp[] = [];
   const out: Applied = { added: [], changed: [], removed: 0, ops: 0 };
   // 블록 정의(치수 블록 등)가 먼저 있어야 참조가 그려진다
@@ -345,6 +355,8 @@ export function commitResults(app: App, ctx: CommandContext, results: EditResult
     const msgs = new Set(results.map((r) => r.message).filter((m): m is string => !!m));
     for (const m of msgs) ctx.print(m);
   }
+  ops.push(...cons.ops);
+  if (cons.message && !opt.quiet) ctx.print(cons.message);
   if (ops.length) st.session.commit({ label, ops, group: ctx.group });
   out.ops = ops.length;
   return out;

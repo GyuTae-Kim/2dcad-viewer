@@ -12,6 +12,7 @@ import type { Pt } from './view';
 import { dialog, h } from './ui/dom';
 import { unlockedOnly } from './layers';
 import { followOps } from './dimassoc';
+import { afterEditSolve } from './constraints-hook';
 
 // ---------------------------------------------------------------------------
 // 공통
@@ -1017,8 +1018,10 @@ export function registerDrawCommands(app: App): void {
       st.selection.clear();
       // 지운 형상에 연관된 치수는 연관만 끊는다
       const f = followOps(st, new Map<string, Entity | null>(ops.map((o) => [o.entity.handle, null])));
-      st.session.commit({ label: 'ERASE', ops: [...ops, ...f.ops], group: ctx.group });
+      const cs = afterEditSolve(st, ops, 'ERASE');
+      st.session.commit({ label: 'ERASE', ops: [...ops, ...f.ops, ...cs.extra], group: ctx.group });
       ctx.print(`${ops.length}개를 지웠습니다.`);
+      if (cs.message) ctx.print(cs.message);
     },
   });
   app.register({
