@@ -660,6 +660,11 @@ export class App {
     return true;
   }
 
+  /** 객체 위 풍선말(하이퍼링크 등). 없으면 null */
+  hoverTip: ((handle: string) => string | null) | null = null;
+  /** Ctrl+클릭한 객체를 처리했으면 true(하이퍼링크 열기) */
+  linkClick: ((handle: string) => boolean) | null = null;
+
   /** 문서를 닫은 뒤(자동 저장본 지우기 등) */
   onClosed: ((st: DocState) => void) | null = null;
 
@@ -1151,6 +1156,7 @@ export class App {
     if (h === this.hoverHandle) return;
     this.hoverHandle = h;
     this.view.overlay.hover = h && !this.active?.selection.has(h) ? pk.geometry(h) : null;
+    this.view.el.title = h && this.hoverTip && !this.request ? (this.hoverTip(h) ?? '') : '';
     this.view.requestOverlay();
   }
 
@@ -1244,6 +1250,8 @@ export class App {
       }
     }
     const h = pk.pick(w.x, w.y, tol);
+    // Ctrl+클릭: 하이퍼링크를 따라간다
+    if (h && (ev.ctrlKey || ev.metaKey) && !r && this.linkClick?.(h)) return;
     if (h) {
       const hs = this.expandPick([h]);
       if (ev.shiftKey) this.setSelection(hs, st.selection.has(h) ? 'remove' : 'add');

@@ -37,7 +37,7 @@ function save(app: App, ctx: CommandContext | null, name: string, r: Rect): void
   st.session.commit({ label: 'VIEW', ops: [{ kind: 'view', key, before: st.doc.views.get(key) ?? null, after }], group: ctx?.group });
 }
 
-async function restore(app: App, v: ViewRecord): Promise<void> {
+export async function restore(app: App, v: ViewRecord): Promise<void> {
   const st = app.active!;
   const paper = (v.flags & 1) !== 0;
   if (paper && !st.onLayout) {
