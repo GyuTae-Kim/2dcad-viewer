@@ -30,10 +30,11 @@ function post(msg: FromWorker, transfer: Transferable[] = []): void {
 
 /** 파일이 연결된 래스터 이미지 */
 let imageKeys: ReadonlySet<string> = new Set();
+let pdfPages: ReadonlyMap<string, readonly [number, number]> = new Map();
 
 function makeScene(doc: CadDocument, space: string, ltFactor?: number): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys, ltFactor });
+  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor });
   return {
     list: s.list,
     styles: s.styles.specs,
@@ -55,6 +56,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         break;
       case 'images':
         imageKeys = new Set(msg.keys);
+        pdfPages = new Map((msg.pdfPages ?? []).map(([k, w, h]) => [k, [w, h] as const]));
         break;
       case 'shx':
         if (msg.clear) shx.clear();

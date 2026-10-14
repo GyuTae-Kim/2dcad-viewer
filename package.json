@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "earcut": "^3.2.4",
-    "opentype.js": "^2.0.0"
+    "opentype.js": "^2.0.0",
+    "pdfjs-dist": "6.3.289"
   }
 }

@@ -122,7 +122,7 @@ export class EditManager {
       .map((h) => st.doc.entityIndex.get(h))
       .filter((e): e is Entity => !!e && order.has(e.handle))
       .sort((a, b) => order.get(a.handle)! - order.get(b.handle)!);
-    if (list.length) ed.overlay = new OverlayScene(app.view.renderer, st.doc, list, app.text, space, undefined, app.imageKeys);
+    if (list.length) ed.overlay = new OverlayScene(app.view.renderer, st.doc, list, app.text, space, undefined, app.imageKeys, app.pdfPages);
     app.updatePicker(st, space, changed);
   }
 

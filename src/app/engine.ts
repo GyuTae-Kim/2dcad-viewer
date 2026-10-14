@@ -92,8 +92,8 @@ export class EngineClient {
   }
 
   /** 파일이 연결된 래스터 이미지 열쇠를 워커에 알린다 */
-  images(keys: string[]): void {
-    this.post({ type: 'images', keys });
+  images(keys: string[], pdfPages?: ReadonlyMap<string, readonly [number, number]>): void {
+    this.post({ type: 'images', keys, pdfPages: pdfPages ? [...pdfPages].map(([k, [w, h]]) => [k, w, h] as [string, number, number]) : undefined });
   }
 
   /** SHX 글꼴을 워커 문자 엔진에도 등록한다 */

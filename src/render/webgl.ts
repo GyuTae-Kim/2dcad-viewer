@@ -198,10 +198,14 @@ uniform sampler2D u_img;
 uniform vec3 u_bcf;   // 밝기·대비·흐리기(0~100, 기본 50·50·0)
 uniform vec3 u_bg;
 uniform float u_alpha;
+uniform float u_mono;
+uniform float u_adjust;
 out vec4 o;
 void main() {
   vec4 c = texture(u_img, v_uv);
   vec3 rgb = (c.rgb - 0.5) * (u_bcf.y / 50.0) + 0.5 + (u_bcf.x - 50.0) / 100.0;
+  if (u_mono > 0.5) rgb = vec3(dot(rgb, vec3(0.299, 0.587, 0.114)));
+  if (u_adjust > 0.5 && dot(u_bg, vec3(0.299, 0.587, 0.114)) < 0.5 && max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b)) < 0.15) rgb = vec3(1.0) - rgb;
   rgb = mix(rgb, u_bg, u_bcf.z / 100.0);
   o = vec4(clamp(rgb, 0.0, 1.0), u_alpha > 0.5 ? c.a : 1.0);
 }`;
@@ -271,6 +275,8 @@ interface GpuImage {
   style: number;
   bcf: [number, number, number];
   transparent: boolean;
+  mono: boolean;
+  adjust: boolean;
   hidden: boolean;
 }
 
@@ -548,6 +554,8 @@ export class GLRenderer {
         style: im.style,
         bcf: [im.brightness || 50, im.contrast || 50, im.fade || 0],
         transparent: im.transparent,
+        mono: !!im.mono,
+        adjust: !!im.adjust,
         hidden: false,
       });
     }
@@ -581,6 +589,8 @@ export class GLRenderer {
       gl.uniform1f(u.u_depth!, im.depth);
       gl.uniform1ui(u.u_style!, im.style);
       gl.uniform3f(u.u_bcf!, im.bcf[0], im.bcf[1], im.bcf[2]);
+      gl.uniform1f(u.u_mono!, im.mono ? 1 : 0);
+      gl.uniform1f(u.u_adjust!, im.adjust ? 1 : 0);
       gl.bindVertexArray(im.vao);
       gl.drawArrays(gl.TRIANGLES, 0, im.count);
     }

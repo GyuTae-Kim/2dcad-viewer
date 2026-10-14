@@ -147,6 +147,10 @@ export interface ImageDraw {
   contrast: number;
   fade: number;
   transparent: boolean;
+  /** 회색조로(PDF 언더레이 단색) */
+  mono?: boolean;
+  /** 어두운 배경이면 무채색을 뒤집는다(PDF 언더레이 배경에 맞춤) */
+  adjust?: boolean;
 }
 
 class ChunkBuilder {
@@ -390,7 +394,7 @@ export class DisplayListBuilder {
   dashed = false;
 
   /** 래스터 이미지(월드 좌표 [x, y, u, v, …] 삼각형) */
-  image(key: string, tris: number[], style: number, opt: { brightness: number; contrast: number; fade: number; transparent: boolean }): void {
+  image(key: string, tris: number[], style: number, opt: { brightness: number; contrast: number; fade: number; transparent: boolean; mono?: boolean; adjust?: boolean }): void {
     if (tris.length < 12) return;
     const ox = tris[0]!;
     const oy = tris[1]!;
@@ -719,7 +723,7 @@ function segmentPolygonParams(x0: number, y0: number, x1: number, y1: number, po
 }
 
 /** 볼록(반시계) 다각형으로 다각형 자르기(Sutherland–Hodgman) */
-function clipConvex(subject: number[], clip: number[]): number[] {
+export function clipConvex(subject: number[], clip: number[]): number[] {
   let out = subject;
   const n = clip.length / 2;
   for (let i = 0; i < n && out.length >= 6; i++) {

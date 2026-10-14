@@ -4,6 +4,7 @@
  * 파일은 서버로 보내지 않는다.
  */
 import type { CadDocument, ImageDefObject, UnderlayDefObject } from '../core/model';
+import { pdfPageNumber } from '../render/build';
 import type { LayerState } from '../render/styles';
 import { SpaceScene } from './scene';
 import type { App } from './app';
@@ -22,8 +23,12 @@ export interface RefItem {
 
 const baseKey = (p: string) => p.replace(/^.*[\\/]/, '').toLowerCase();
 
-/** 연결한 이미지 원본(그래픽 문맥을 되찾을 때 다시 올린다) */
+/** 연결한 이미지 원본(그래픽 문맥을 되찾을 때 다시 올린다). PDF 페이지는 'pdf:파일#쪽' 열쇠 */
 const bitmaps = new Map<string, ImageBitmap>();
+/** 연결한 PDF 파일(파일 이름 소문자 → 바이트). 나중에 연 도면이 다른 페이지를 쓰면 그때 그린다 */
+const pdfData = new Map<string, Uint8Array>();
+
+const pdfKeyOf = (u: UnderlayDefObject) => `pdf:${baseKey(u.fileName)}#${pdfPageNumber(u.name)}`;
 
 /** 연결한 외부 참조 파일(열쇠 = 파일 이름 소문자): 워커 문서와 모형 장면 */
 interface XrefFile {
@@ -127,7 +132,10 @@ export function docRefs(app: App, doc: CadDocument): RefItem[] {
       if (key && !out.some((r) => r.kind === 'image' && r.key === key)) out.push({ kind: 'image', name: key, path: f, key, found: app.imageKeys.has(key) });
     } else if (o.type === 'PDFDEFINITION') {
       const u = o as UnderlayDefObject;
-      out.push({ kind: 'pdf', name: u.name || baseKey(u.fileName), path: u.fileName, key: baseKey(u.fileName), found: false });
+      const key = baseKey(u.fileName);
+      const page = pdfPageNumber(u.name);
+      const name = `${key}${page > 1 ? ` (${page}쪽)` : ''}`;
+      if (key && !out.some((r) => r.kind === 'pdf' && r.name === name)) out.push({ kind: 'pdf', name, path: u.fileName, key, found: app.pdfPages.has(pdfKeyOf(u)) });
     }
   }
   for (const b of doc.blocks.values())
@@ -171,10 +179,86 @@ export async function linkImageFiles(app: App, files: File[]): Promise<{ linked:
     }
   }
   if (linked.length) {
-    app.engine.images([...app.imageKeys]);
+    app.engine.images([...app.imageKeys], app.pdfPages);
     for (const st of app.docs) app.edits.rebuildEverything(st);
   }
   return { linked, unsupported };
+}
+
+/** 고른 파일 중 PDF를 연결하고, 열린 도면들이 쓰는 페이지를 그린다 */
+export async function linkPdfFiles(app: App, files: File[]): Promise<{ linked: string[]; failed: string[] }> {
+  const linked: string[] = [];
+  const failed: string[] = [];
+  for (const f of files) {
+    if (!/\.pdf$/i.test(f.name)) continue;
+    const key = f.name.toLowerCase();
+    pdfData.set(key, new Uint8Array(await f.arrayBuffer()));
+    // 같은 이름을 다시 고르면 페이지를 새로 그린다
+    for (const k of [...app.pdfPages.keys()]) if (k.startsWith(`pdf:${key}#`)) app.pdfPages.delete(k);
+    linked.push(f.name);
+  }
+  if (linked.length) failed.push(...(await renderPdfPages(app)).failed);
+  return { linked: linked.filter((n) => !failed.includes(n)), failed };
+}
+
+/** 열린 도면들이 쓰는 PDF 페이지 중 파일이 있고 아직 그리지 않은 것을 그린다 */
+export async function renderPdfPages(app: App): Promise<{ rendered: number; failed: string[] }> {
+  const want = new Map<string, Set<number>>();
+  for (const st of app.docs)
+    for (const o of st.doc.objects.values()) {
+      if (o.type !== 'PDFDEFINITION') continue;
+      const u = o as UnderlayDefObject;
+      const fk = baseKey(u.fileName);
+      if (!pdfData.has(fk) || app.pdfPages.has(pdfKeyOf(u))) continue;
+      let set = want.get(fk);
+      if (!set) want.set(fk, (set = new Set()));
+      set.add(pdfPageNumber(u.name));
+    }
+  if (!want.size) return { rendered: 0, failed: [] };
+  const failed: string[] = [];
+  let rendered = 0;
+  app.ui.setBusy('PDF 페이지 그리는 중…', 0.5);
+  try {
+    const r = await import('./pdfraster');
+    const gl = app.view.renderer.gl;
+    const max = Math.min(4096, (gl.getParameter(gl.MAX_TEXTURE_SIZE) as number) || 4096);
+    for (const [fk, pages] of want) {
+      let opened;
+      try {
+        opened = await r.openPdf(pdfData.get(fk)!);
+      } catch {
+        failed.push(fk);
+        pdfData.delete(fk);
+        continue;
+      }
+      try {
+        for (const n of pages) {
+          const key = `pdf:${fk}#${n}`;
+          const page = await r.rasterPage(opened.pdf, n, max).catch(() => null);
+          if (!page) continue;
+          bitmaps.get(key)?.close();
+          bitmaps.set(key, page.bitmap);
+          pixelCache.delete(key);
+          urlCache.delete(key);
+          app.view.renderer.setImage(key, page.bitmap);
+          app.imageKeys.add(key);
+          app.pdfPages.set(key, [page.width, page.height]);
+          rendered++;
+        }
+      } finally {
+        void opened.close();
+      }
+    }
+  } catch (e) {
+    app.cmd.print(`PDF를 그리지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, 'err');
+  } finally {
+    app.ui.setBusy(null);
+  }
+  if (rendered) {
+    app.engine.images([...app.imageKeys], app.pdfPages);
+    for (const st of app.docs) app.edits.rebuildEverything(st);
+  }
+  return { rendered, failed };
 }
 
 const pixelCache = new Map<string, { w: number; h: number; rgb: Uint8Array; alpha: Uint8Array | null }>();
@@ -246,8 +330,10 @@ function pickFiles(folder: boolean): Promise<File[]> {
 }
 
 /** 문서를 연 뒤: 찾지 못한 참조 안내 */
-export function noteMissingRefs(app: App, st: DocState): void {
+export async function noteMissingRefs(app: App, st: DocState): Promise<void> {
   expandXrefBounds(app, st);
+  // 이미 연결한 PDF의 다른 페이지를 이 도면이 쓰면 그린다
+  if (pdfData.size) await renderPdfPages(app);
   const miss = docRefs(app, st.doc).filter((r) => !r.found);
   if (!miss.length) return;
   const n = (k: RefItem['kind']) => miss.filter((r) => r.kind === k).length;
@@ -289,7 +375,7 @@ export function registerRefCommands(app: App): void {
                     {},
                     h('td', {}, r.name),
                     h('td', {}, kindName[r.kind]),
-                    h('td', { style: r.found ? '' : 'color:var(--warn, #e0a030)' }, r.found ? '로드됨' : r.kind === 'pdf' ? '아직 지원하지 않음' : '찾을 수 없음'),
+                    h('td', { style: r.found ? '' : 'color:var(--warn, #e0a030)' }, r.found ? '로드됨' : '찾을 수 없음'),
                     h('td', { style: 'color:var(--text-dim);word-break:break-all' }, r.path),
                   ),
                 ),
@@ -305,8 +391,11 @@ export function registerRefCommands(app: App): void {
         const pick = files.filter((f) => want.has(f.name.toLowerCase()));
         const img = await linkImageFiles(app, pick);
         const x = await linkXrefFiles(app, pick);
-        const n = img.linked.length + x.length;
-        ctx.print(n ? `파일 ${n}개를 연결했습니다: ${[...img.linked, ...x].slice(0, 6).join(', ')}${n > 6 ? ' …' : ''}` : '이 도면이 찾는 이름의 파일이 없습니다.', n ? undefined : 'err');
+        const pdf = await linkPdfFiles(app, pick);
+        const names = [...img.linked, ...x, ...pdf.linked];
+        const n = names.length;
+        ctx.print(n ? `파일 ${n}개를 연결했습니다: ${names.slice(0, 6).join(', ')}${n > 6 ? ' …' : ''}` : '이 도면이 찾는 이름의 파일이 없습니다.', n ? undefined : 'err');
+        if (pdf.failed.length) ctx.print(`참고: ${pdf.failed.slice(0, 4).join(', ')}은(는) 읽을 수 없는 PDF입니다(암호가 걸렸거나 손상됨).`, 'err');
         if (img.unsupported.length) ctx.print(`참고: ${img.unsupported.slice(0, 4).join(', ')}은(는) 이 브라우저가 읽을 수 없는 이미지 형식입니다(PNG·JPEG·GIF·BMP·WebP만).`);
         if (n) toast(`외부 파일 ${n}개를 연결했습니다.`, 'info', 3000);
       };

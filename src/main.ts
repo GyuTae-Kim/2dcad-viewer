@@ -54,7 +54,7 @@ registerShxCommands(app);
 registerRefCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
-  noteMissingRefs(app, st);
+  void noteMissingRefs(app, st);
 };
 void restoreShxFonts(app);
 

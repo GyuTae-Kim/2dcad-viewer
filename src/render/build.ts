@@ -21,6 +21,8 @@ import type {
   SpatialFilterObject,
   TextEntity,
   TextStyle,
+  UnderlayDefObject,
+  UnderlayEntity,
   UnknownEntity,
   Vec3,
 } from '../core/model';
@@ -44,7 +46,7 @@ import {
 } from '../geom/matrix';
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
-import { DisplayListBuilder, type DisplayList } from './displaylist';
+import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist';
 import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, layerStates } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
@@ -59,6 +61,8 @@ export interface BuildOptions {
   images?: ReadonlySet<string>;
   /** 선종류 축척에 곱할 값(PSLTSCALE: 배치 뷰포트에서 무늬를 종이 단위로 맞출 때 1 / 뷰포트 축척) */
   ltFactor?: number;
+  /** 파일이 연결된 PDF 페이지(pdfUnderlayKey → 페이지 폭·높이, 인치) */
+  pdfPages?: ReadonlyMap<string, readonly [number, number]>;
   /** 곡선 정밀도(도면 단위). 없으면 도면 범위로 정한다 */
   tolerance?: number;
   /** 해치 무늬 선 상한 */
@@ -851,15 +855,9 @@ export class SceneBuilder {
       }
       case 'PDFUNDERLAY':
       case 'DWFUNDERLAY':
-      case 'DGNUNDERLAY': {
-        if (e.clipBoundary.length < 2) return;
-        const r = this.resolve(e, ctx);
-        let pts = e.clipBoundary.flatMap((p) => [p.x, p.y]);
-        if (pts.length === 4) pts = [pts[0]!, pts[1]!, pts[2]!, pts[1]!, pts[2]!, pts[3]!, pts[0]!, pts[3]!];
-        const m = multiply(this.ocsM(ctx, e.extrusion), multiply(translation(e.insert.x, e.insert.y, e.insert.z), multiply(rotationZ(e.rotation), scaling(e.scale.x, e.scale.y, 1))));
-        this.out.polyline(this.xf(m, pts), true, r.style);
+      case 'DGNUNDERLAY':
+        this.underlay(e, ctx);
         return;
-      }
       case 'SHAPE': {
         // 도형 파일: 스타일 핸들의 글꼴, 없으면 이름으로 불러온 도형 파일에서 찾는다
         const st = e.styleHandle ? this.styleByHandle.get(e.styleHandle) : undefined;
@@ -1733,6 +1731,54 @@ export class SceneBuilder {
     }
   }
 
+  /**
+   * 언더레이: 지역 좌표(삽입점 기준, 축척 전, PDF는 1 = 1인치, 페이지 왼쪽 아래가 원점)를 삽입·회전·축척으로 놓는다.
+   * PDF 파일이 연결됐으면 페이지 그림을 자르기 경계대로 그리고, 아니면 경계만 그린다.
+   */
+  private underlay(e: UnderlayEntity, ctx: Ctx): void {
+    const r = this.resolve(e, ctx);
+    const m = multiply(this.ocsM(ctx, e.extrusion), multiply(translation(e.insert.x, e.insert.y, e.insert.z), multiply(rotationZ(e.rotation), scaling(e.scale.x || 1, e.scale.y || 1, 1))));
+    let clip: number[] | null = null;
+    if (e.clipBoundary.length >= 2) {
+      clip = e.clipBoundary.flatMap((p) => [p.x, p.y]);
+      if (clip.length === 4) clip = [clip[0]!, clip[1]!, clip[2]!, clip[1]!, clip[2]!, clip[3]!, clip[0]!, clip[3]!];
+      if (clip.length >= 6 && clip[0] === clip[clip.length - 2] && clip[1] === clip[clip.length - 1]) clip.length -= 2;
+      if (clip.length < 6) clip = null;
+    }
+    const clipOn = !!clip && (e.flags & 1) !== 0;
+    const key = e.type === 'PDFUNDERLAY' ? pdfUnderlayKey(this.doc, e) : '';
+    const page = key ? this.opt.pdfPages?.get(key) : undefined;
+    if (!page) {
+      if (clip) this.out.polyline(this.xf(m, clip), true, r.style);
+      return;
+    }
+    const [w, h] = page;
+    const rect = [0, 0, w, 0, w, h, 0, h];
+    if (e.flags & 2) {
+      // 그릴 영역: 자르기 안쪽(또는 반전이면 페이지에서 자르기를 뺀 곳)을 페이지 안으로
+      const inverted = clipOn && (e.flags & 16) !== 0;
+      const tris = clipOn ? triangulateLoops(inverted ? [rect, clip!] : [clip!]) : [0, 0, w, 0, w, h, 0, 0, w, h, 0, h];
+      const out: number[] = [];
+      for (let i = 0; i + 5 < tris.length; i += 6) {
+        let poly = tris.slice(i, i + 6);
+        // 반시계로
+        if ((poly[2]! - poly[0]!) * (poly[5]! - poly[1]!) - (poly[3]! - poly[1]!) * (poly[4]! - poly[0]!) < 0) poly = [poly[0]!, poly[1]!, poly[4]!, poly[5]!, poly[2]!, poly[3]!];
+        if (clipOn) poly = clipConvex(poly, rect);
+        for (let k = 2; k * 2 + 1 < poly.length; k++) {
+          for (const j of [0, k - 1, k]) {
+            const x = poly[j * 2]!;
+            const y = poly[j * 2 + 1]!;
+            const q = applyXY(m, x, y, 0);
+            out.push(q.x, q.y, x / w, 1 - y / h);
+          }
+        }
+      }
+      this.out.image(key, out, r.style, { brightness: 50, contrast: 50, fade: Math.max(0, Math.min(80, e.fade || 0)), transparent: true, mono: (e.flags & 4) !== 0, adjust: (e.flags & 8) !== 0 });
+    }
+    // 테두리: $PDFFRAME 0이면 숨긴다(기본 1)
+    if (this.doc.header.get('$PDFFRAME') !== 0) this.out.polyline(this.xf(m, clipOn ? clip! : rect), true, r.style);
+  }
+
   private mline(e: MLineEntity, ctx: Ctx): void {
     const r = this.resolve(e, ctx);
     const st = (e.styleHandle && this.mlineStyles.get(e.styleHandle)) || this.mlineStyles.get('NAME:' + tableKey(e.styleName));
@@ -1804,6 +1850,21 @@ export function imageKey(doc: CadDocument, e: { imageDef?: string }): string {
   const d = e.imageDef ? doc.objects.get(e.imageDef) : undefined;
   const f = d && d.type === 'IMAGEDEF' ? (d as { fileName: string }).fileName : '';
   return f ? f.replace(/^.*[\\/]/, '').toLowerCase() : '';
+}
+
+/** PDF 언더레이 열쇠: 'pdf:' + 정의 파일 이름의 마지막 부분(소문자) + '#' + 페이지 번호 */
+export function pdfUnderlayKey(doc: CadDocument, e: { definition?: string }): string {
+  const d = e.definition ? doc.objects.get(e.definition) : undefined;
+  if (!d || d.type !== 'PDFDEFINITION') return '';
+  const def = d as UnderlayDefObject;
+  const f = def.fileName.replace(/^.*[\\/]/, '').toLowerCase();
+  return f ? `pdf:${f}#${pdfPageNumber(def.name)}` : '';
+}
+
+/** 정의 이름(페이지 번호 문자열) → 1부터 세는 페이지 번호 */
+export function pdfPageNumber(name: string): number {
+  const n = Number.parseInt(name, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
 /** 공간의 범위 대각선(머리말 $EXTMIN·$EXTMAX, 없으면 1000) */

@@ -400,6 +400,8 @@ export class App {
   lastCreated: string[] = [];
   /** 파일이 연결된 래스터 이미지(열쇠 = 파일 이름 소문자) */
   readonly imageKeys = new Set<string>();
+  /** 파일이 연결된 PDF 언더레이 페이지(열쇠 → 폭·높이, 인치) */
+  readonly pdfPages = new Map<string, readonly [number, number]>();
   /** 선택한 객체의 그립(화면에 보이는 것) */
   gripList: { handle: string; id: string; point: Pt }[] = [];
   /** 누른 그립(GRIPEDIT 명령이 쓴다) */
@@ -717,7 +719,7 @@ export class App {
     if (!block) return;
     const want = new Set(handles);
     const list = block.entities.filter((e) => want.has(e.handle));
-    const scene = new OverlayScene(this.view.renderer, st.doc, list, this.text, st.space, 0.3 / cam.scale, this.imageKeys);
+    const scene = new OverlayScene(this.view.renderer, st.doc, list, this.text, st.space, 0.3 / cam.scale, this.imageKeys, this.pdfPages);
     this.dropDetail();
     this.view.detail = { docId: st.docId, space: st.space, gen: st.gen, region, scale: cam.scale, scene };
     this.view.requestRender();
