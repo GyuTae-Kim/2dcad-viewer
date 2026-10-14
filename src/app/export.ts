@@ -223,13 +223,13 @@ function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
   const v = app.view;
   const opt: PageOptions = { lineweights: app.view.lwDisplay };
   if (!st.onLayout) {
-    const a = v.screenToWorld(0, v.height);
-    const b = v.screenToWorld(v.width, 0);
-    const ww = b.x - a.x;
-    const wh = b.y - a.y;
-    const W = fitWidth ?? v.width;
+    // 타일 뷰포트면 활성 타일의 화면
+    const [x0, y0, x1, y1] = v.visibleWorld();
+    const ww = x1 - x0;
+    const wh = y1 - y0;
+    const W = fitWidth ?? ww * v.camera().scale;
     const k = W / ww;
-    return modelPage(st, [a.x, a.y, b.x, b.y], W, wh * k, k, unitsPerMm, opt, false);
+    return modelPage(st, [x0, y0, x1, y1], W, wh * k, k, unitsPerMm, opt, false);
   }
   return layoutPage(st, st.displaySpace, unitsPerMm, opt);
 }

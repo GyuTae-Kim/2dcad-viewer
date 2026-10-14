@@ -433,6 +433,13 @@ export class App {
   hotGrip: { point: Pt; items: { handle: string; id: string }[] } | null = null;
   /** 파일을 연 뒤(빠진 글꼴 안내 등) */
   onOpened: ((st: DocState) => void) | null = null;
+  /** 뷰포트 표(타일 뷰포트 구성)가 편집으로 바뀌었을 때(VPORTS가 연결한다) */
+  onVportsChanged: ((st: DocState) => void) | null = null;
+
+  /** 명령행에 글을 넣은 것처럼(투명 명령의 결과를 멈춘 프롬프트에 넣을 때 등) */
+  submitInput(text: string): void {
+    this.onInput(text);
+  }
 
   private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }> {
     return new Promise((resolve, reject) => {
@@ -599,6 +606,11 @@ export class App {
 
   /** 저장된 *Active 뷰가 범위와 겹치고 충분히 크면 그 화면, 아니면 전체 보기 */
   private initialView(st: DocState): void {
+    // *Active가 여럿이면 타일 뷰포트로 연다
+    if (st.doc.vports.filter((v) => v.name.toUpperCase() === '*ACTIVE').length > 1 && this.onVportsChanged) {
+      this.onVportsChanged(st);
+      if (st.tiles) return;
+    }
     const vp = st.doc.vports.find((v) => v.name.toUpperCase() === '*ACTIVE');
     const b = st.scenes.get(MODEL_SPACE)?.bounds;
     if (vp && b && vp.height > 0 && Number.isFinite(vp.center.x)) {
@@ -809,9 +821,7 @@ export class App {
     const cam = this.view.camera();
     // 기본 장면의 현-곡선 오차가 0.6픽셀을 넘을 때만
     if (spaceTolerance(st.doc, st.space) * cam.scale < 0.6) return this.dropDetail();
-    const a = this.view.screenToWorld(0, this.view.height);
-    const b = this.view.screenToWorld(this.view.width, 0);
-    const vis: [number, number, number, number] = [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
+    const vis = this.view.visibleWorld();
     const d = this.view.detail;
     if (
       d &&

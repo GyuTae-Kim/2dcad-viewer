@@ -3,6 +3,7 @@
  * 파일은 이 컴퓨터에서 만든다(서버 없음). 브라우저가 파일 시스템 접근을 허락하면 고른 파일에 바로 쓰고,
  * 아니면 내려받기로 저장한다.
  */
+import { syncActiveVports } from './vports';
 import { createNewDocument } from '../core/newdoc';
 import type { SaveFormat } from '../worker/protocol';
 import type { App, CommandContext } from './app';
@@ -63,6 +64,8 @@ function fileName(st: DocState, t: SaveTarget): string {
 /** 실제로 쓰기 */
 async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget, name: string): Promise<boolean> {
   await app.edits.flush(st);
+  // 다시 열 때 같은 화면·타일 뷰포트로 열리게 *Active 뷰를 지금 화면으로
+  syncActiveVports(app, st);
   ctx.print(`${name} 저장하는 중…`);
   app.ui.setBusy('저장하는 중…', 0.5);
   let res;

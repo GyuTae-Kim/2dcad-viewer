@@ -7,7 +7,7 @@ import type { ViewportModel } from './psltscale';
 import { MODEL_SPACE, type ViewportEntity, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
-import type { Camera, DocState } from './docstate';
+import type { Camera, DocState, Tile } from './docstate';
 import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 import type { DisplayList } from '../render/displaylist';
 
@@ -297,12 +297,73 @@ export class CadView {
 
   screenToWorld(x: number, y: number): Pt {
     const c = this.camera();
-    return { x: c.cx + (x - this.w / 2) / c.scale, y: c.cy - (y - this.h / 2) / c.scale };
+    const a = this.area();
+    return { x: c.cx + (x - a.x - a.w / 2) / c.scale, y: c.cy - (y - a.y - a.h / 2) / c.scale };
   }
 
   worldToScreen(x: number, y: number): Pt {
     const c = this.camera();
-    return { x: (x - c.cx) * c.scale + this.w / 2, y: -(y - c.cy) * c.scale + this.h / 2 };
+    const a = this.area();
+    return { x: (x - c.cx) * c.scale + a.x + a.w / 2, y: -(y - c.cy) * c.scale + a.y + a.h / 2 };
+  }
+
+  // -------------------------------------------------------------------------
+  // 모형 타일 뷰포트(VPORTS)
+  // -------------------------------------------------------------------------
+
+  /** 타일 뷰포트를 쓰는 중(모형, 배치·블록 편집기 아님) */
+  private tiled(): DocState['tiles'] {
+    const s = this.state;
+    return s?.tiles && s.space === MODEL_SPACE && !s.msVp && !s.blockEdit && !this.paperCam ? s.tiles : null;
+  }
+
+  /** 타일의 화면 사각형(CSS 픽셀, 왼쪽 위 원점) */
+  tileRect(t: Tile): { x: number; y: number; w: number; h: number } {
+    return { x: t.ll.x * this.w, y: (1 - t.ur.y) * this.h, w: Math.max(1, (t.ur.x - t.ll.x) * this.w), h: Math.max(1, (t.ur.y - t.ll.y) * this.h) };
+  }
+
+  /** 지금 카메라가 그리는 화면 영역(타일이면 활성 타일) */
+  private area(): { x: number; y: number; w: number; h: number } {
+    const t = this.tiled();
+    return t ? this.tileRect(t.list[t.active]!) : { x: 0, y: 0, w: this.w, h: this.h };
+  }
+
+  /** 화면 점이 든 타일 번호(타일이 없으면 -1) */
+  tileAt(p: Pt): number {
+    const t = this.tiled();
+    if (!t) return -1;
+    return t.list.findIndex((tl) => {
+      const r = this.tileRect(tl);
+      return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+    });
+  }
+
+  /** 타일 고르기(-VPORTS 결합): 있으면 타일을 눌러도 활성으로 바꾸지 않고 번호를 넘긴다 */
+  tilePick: ((index: number) => void) | null = null;
+
+  /** 지금 카메라가 보는 도면 범위(타일이면 활성 타일) [x0, y0, x1, y1] */
+  visibleWorld(): [number, number, number, number] {
+    return this.visibleRect();
+  }
+
+  /** 다른 타일을 활성으로(카메라를 바꿔 낀다) */
+  activateTile(i: number): void {
+    const s = this.state;
+    const t = this.tiled();
+    if (!s || !t || i === t.active || !t.list[i]) return;
+    const cur = t.list[t.active]!;
+    cur.cam = { ...this.camera() };
+    cur.prev = s.prevCameras.get(MODEL_SPACE) ?? [];
+    t.active = i;
+    const next = t.list[i]!;
+    s.prevCameras.set(MODEL_SPACE, next.prev);
+    if (next.cam) s.cameras.set(MODEL_SPACE, { ...next.cam });
+    else {
+      s.cameras.set(MODEL_SPACE, { ...cur.cam });
+      this.zoomExtents(false);
+    }
+    this.requestRender();
+    this.events?.viewChanged();
   }
 
   /** CSS 픽셀 1개의 도면 길이 */
@@ -342,8 +403,9 @@ export class CadView {
     const h = Math.max(Math.abs(y1 - y0), 1e-9);
     // MSPACE: 뷰포트 크기에 맞춘다
     const m = this.state?.msVp && !this.paperCam ? this.msInfo(this.state) : null;
-    const W = m ? m.vp.width * m.paper.scale : this.w;
-    const H = m ? m.vp.height * m.paper.scale : this.h;
+    const ar = this.area();
+    const W = m ? m.vp.width * m.paper.scale : ar.w;
+    const H = m ? m.vp.height * m.paper.scale : ar.h;
     const sx = (W * (1 - margin * 2)) / w;
     const sy = (H * (1 - margin * 2)) / h;
     let scale = Math.min(sx, sy);
@@ -368,13 +430,15 @@ export class CadView {
     const c = this.camera();
     const w = this.screenToWorld(sx, sy);
     const scale = clampScale(c.scale * f);
-    const cx = w.x - (sx - this.w / 2) / scale;
-    const cy = w.y + (sy - this.h / 2) / scale;
+    const a = this.area();
+    const cx = w.x - (sx - a.x - a.w / 2) / scale;
+    const cy = w.y + (sy - a.y - a.h / 2) / scale;
     this.setCamera({ cx, cy, scale }, remember);
   }
 
   zoomCenter(f: number): void {
-    this.zoomAt(this.w / 2, this.h / 2, f, true);
+    const a = this.area();
+    this.zoomAt(a.x + a.w / 2, a.y + a.h / 2, f, true);
   }
 
   panBy(dx: number, dy: number): void {
@@ -385,7 +449,8 @@ export class CadView {
   centerOn(x: number, y: number, size?: number): void {
     const c = this.camera();
     let scale = c.scale;
-    if (size && size > 0) scale = clampScale(Math.min(this.w, this.h) / (size * 4));
+    const a = this.area();
+    if (size && size > 0) scale = clampScale(Math.min(a.w, a.h) / (size * 4));
     this.setCamera({ cx: x, cy: y, scale }, true);
   }
 
@@ -419,16 +484,15 @@ export class CadView {
       });
   }
 
-  private viewXf(): ViewXf {
-    const c = this.camera();
+  private viewXf(c: Camera = this.camera(), a = this.area()): ViewXf {
     const s = c.scale * this.dpr;
-    return { A: [s, 0, 0, -s], refX: c.cx, refY: c.cy, tx: (this.w * this.dpr) / 2, ty: (this.h * this.dpr) / 2 };
+    return { A: [s, 0, 0, -s], refX: c.cx, refY: c.cy, tx: (a.x + a.w / 2) * this.dpr, ty: (a.y + a.h / 2) * this.dpr };
   }
 
-  private visibleRect(): [number, number, number, number] {
-    const a = this.screenToWorld(0, this.h);
-    const b = this.screenToWorld(this.w, 0);
-    return [a.x, a.y, b.x, b.y];
+  private visibleRect(c: Camera = this.camera(), a = this.area()): [number, number, number, number] {
+    const hw = a.w / 2 / c.scale;
+    const hh = a.h / 2 / c.scale;
+    return [c.cx - hw, c.cy - hh, c.cx + hw, c.cy + hh];
   }
 
   /** 지금 장면을 그린다(내보내기에서도 쓴다) */
@@ -453,30 +517,47 @@ export class CadView {
   private renderModel(s: DocState): void {
     const r = this.renderer;
     const scene = s.scenes.get(s.space);
-    {
-      const bg = this.modelBg;
-      const dark = isDark(bg);
-      r.clear(rgbF(bg));
-      if (!scene) return;
-      const vis = this.visibleRect();
-      const d = this.detail;
-      const useDetail = !!d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3];
-      // 외부 참조(밑그림)
-      const toScreenM = (x: number, y: number): [number, number] => {
-        const q = this.worldToScreen(x, y);
-        return [q.x * this.dpr, q.y * this.dpr];
-      };
-      this.drawXrefs(useDetail ? d!.scene.source : scene.source, this.viewXf(), 3.78 * this.dpr, dark, bg, scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay), toScreenM);
-      if (useDetail && d) {
-        // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
-        r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
-        r.draw(d.scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
-      } else {
-        r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
-        r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
-      }
-      this.drawOverlayScene(s.space, this.viewXf(), 3.78 * this.dpr, dark, bg);
+    r.clear(rgbF(this.modelBg));
+    if (!scene) return;
+    const t = this.tiled();
+    if (!t) {
+      this.drawModelArea(s, this.camera(), this.area(), true);
+      return;
     }
+    // 타일 뷰포트: 타일마다 잘라 그 카메라로
+    const activeCam = this.camera();
+    t.list.forEach((tl, i) => {
+      const a = this.tileRect(tl);
+      const cam = i === t.active ? activeCam : (tl.cam ?? activeCam);
+      r.scissor([a.x * this.dpr, a.y * this.dpr, a.w * this.dpr, a.h * this.dpr]);
+      r.clearDepth();
+      this.drawModelArea(s, cam, a, i === t.active);
+    });
+    r.scissor(null);
+  }
+
+  /** 모형 장면을 화면 영역 a에 카메라 cam으로(외부 참조·세부 장면·편집 덧그림 포함) */
+  private drawModelArea(s: DocState, cam: Camera, a: { x: number; y: number; w: number; h: number }, active: boolean): void {
+    const r = this.renderer;
+    const scene = s.scenes.get(s.space)!;
+    const bg = this.modelBg;
+    const dark = isDark(bg);
+    const xf = this.viewXf(cam, a);
+    const vis = this.visibleRect(cam, a);
+    const d = this.detail;
+    const useDetail = active && !!d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3];
+    // 외부 참조(밑그림)
+    const toScreenM = (x: number, y: number): [number, number] => [((x - cam.cx) * cam.scale + a.x + a.w / 2) * this.dpr, (-(y - cam.cy) * cam.scale + a.y + a.h / 2) * this.dpr];
+    this.drawXrefs(useDetail ? d!.scene.source : scene.source, xf, 3.78 * this.dpr, dark, bg, scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay), toScreenM);
+    if (useDetail && d) {
+      // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
+      r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
+      r.draw(d.scene.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
+    } else {
+      r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
+      r.draw(scene.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
+    }
+    this.drawOverlayScene(s.space, xf, 3.78 * this.dpr, dark, bg, undefined, vis);
   }
 
   /** 배치(용지, 뷰포트, 종이 공간 객체). MSPACE여도 배치를 그린다 */
@@ -595,7 +676,8 @@ export class CadView {
   private drawGrid(g: CanvasRenderingContext2D, grid: GridInfo, dark: boolean): void {
     // 보이는 영역(과 한계)을 UCS 좌표로 바꿔 그 범위의 격자선을 긋는다
     const u = grid.ucs;
-    const corners = [this.screenToWorld(0, 0), this.screenToWorld(this.w, 0), this.screenToWorld(this.w, this.h), this.screenToWorld(0, this.h)].map((p) => toUcs(u, p));
+    const ar = this.area();
+    const corners = [this.screenToWorld(ar.x, ar.y), this.screenToWorld(ar.x + ar.w, ar.y), this.screenToWorld(ar.x + ar.w, ar.y + ar.h), this.screenToWorld(ar.x, ar.y + ar.h)].map((p) => toUcs(u, p));
     let x0 = Math.min(...corners.map((p) => p.x));
     let x1 = Math.max(...corners.map((p) => p.x));
     let y0 = Math.min(...corners.map((p) => p.y));
@@ -666,7 +748,8 @@ export class CadView {
     const u = currentUcs(s);
     let o = this.worldToScreen(u.ox, u.oy);
     const pad = 36;
-    if (!this.ucsIcon.origin || o.x < pad || o.y < pad || o.x > this.w - pad || o.y > this.h - pad) o = { x: 28, y: this.h - 28 };
+    const ar = this.area();
+    if (!this.ucsIcon.origin || o.x < ar.x + pad || o.y < ar.y + pad || o.x > ar.x + ar.w - pad || o.y > ar.y + ar.h - pad) o = { x: ar.x + 28, y: ar.y + ar.h - 28 };
     const c = Math.cos(u.angle);
     const sn = Math.sin(u.angle);
     const L = 30;
@@ -770,6 +853,27 @@ export class CadView {
       g.stroke();
       g.restore();
     };
+    // 타일 뷰포트: 테두리(활성은 굵게)와, 이후 그림은 활성 타일 안만
+    const tiles = this.tiled();
+    if (tiles) {
+      g.save();
+      tiles.list.forEach((t, i) => {
+        if (i === tiles.active) return;
+        const r = this.tileRect(t);
+        g.strokeStyle = dark ? 'rgba(160,170,185,0.55)' : 'rgba(90,90,90,0.55)';
+        g.lineWidth = 1;
+        g.strokeRect(Math.round(r.x) + 0.5, Math.round(r.y) + 0.5, Math.round(r.w) - 1, Math.round(r.h) - 1);
+      });
+      const ar = this.area();
+      g.strokeStyle = 'rgba(40,120,220,0.95)';
+      g.lineWidth = 2;
+      g.strokeRect(ar.x + 1, ar.y + 1, ar.w - 2, ar.h - 2);
+      g.restore();
+      g.save();
+      g.beginPath();
+      g.rect(ar.x, ar.y, ar.w, ar.h);
+      g.clip();
+    }
     // 격자
     const gi = s && !s.msVp ? this.gridInfo?.() : null;
     if (gi) this.drawGrid(g, gi, dark);
@@ -955,6 +1059,7 @@ export class CadView {
       }
       g.restore();
     }
+    if (tiles) g.restore();
   }
 
   // -------------------------------------------------------------------------
@@ -984,6 +1089,9 @@ export class CadView {
         else if (ev.deltaMode === 2) dy *= 300;
         // 트랙패드 핀치(ctrlKey)는 세밀하게, 마우스 휠은 한 칸에 1.25배
         const f = ev.ctrlKey ? Math.exp(-dy * 0.01) : Math.exp(-dy * 0.0022);
+        // 타일 뷰포트: 커서 아래 타일을 활성으로
+        const ti = this.tileAt(p);
+        if (ti >= 0) this.activateTile(ti);
         this.zoomAt(p.x, p.y, f);
       },
       { passive: false },
@@ -1001,6 +1109,18 @@ export class CadView {
           this.leftDown = { x: p.x, y: p.y, dragging: false };
         }
         return;
+      }
+      // 타일 뷰포트: 다른 타일을 누르면 그 타일을 활성으로만(왼쪽 클릭은 고르기 없이 끝)
+      const ti = this.tileAt(p);
+      const tl = this.tiled();
+      if (tl && this.tilePick && ev.button === 0) {
+        this.tilePick(ti);
+        return;
+      }
+      if (tl && ti >= 0 && ti !== tl.active) {
+        this.activateTile(ti);
+        this.el.classList.add('cursor-none');
+        if (ev.button === 0 && !ev.altKey && !this.spaceHeld) return;
       }
       if (ev.button === 1 || (ev.button === 0 && ev.altKey) || (ev.button === 0 && this.spaceHeld)) {
         ev.preventDefault();
@@ -1046,6 +1166,9 @@ export class CadView {
         this.setCamera({ cx: c.cx - (p.x - this.panning.x) / c.scale, cy: c.cy + (p.y - this.panning.y) / c.scale, scale: c.scale }, false);
         return;
       }
+      // 타일 뷰포트: 활성이 아닌 타일 위에서는 보통 화살표 커서
+      const tl = this.tiled();
+      if (tl) this.el.classList.toggle('cursor-none', this.tileAt(p) === tl.active);
       const world = this.screenToWorld(p.x, p.y);
       if (this.leftDown && ev.pointerType !== 'touch') {
         const dx = p.x - this.leftDown.x;
@@ -1092,6 +1215,8 @@ export class CadView {
     el.addEventListener('pointercancel', up);
     el.addEventListener('dblclick', (ev) => {
       const p = this.local(ev);
+      const tl = this.tiled();
+      if (tl && this.tileAt(p) !== tl.active) return;
       this.events?.dblclick(this.screenToWorld(p.x, p.y), p, ev);
     });
     el.addEventListener('pointerleave', () => {
@@ -1125,8 +1250,9 @@ export class CadView {
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
     const scale = clampScale(pz.cam.scale * (d / pz.d));
-    const cx = pz.world.x - (mid.x - this.w / 2) / scale;
-    const cy = pz.world.y + (mid.y - this.h / 2) / scale;
+    const ar = this.area();
+    const cx = pz.world.x - (mid.x - ar.x - ar.w / 2) / scale;
+    const cy = pz.world.y + (mid.y - ar.y - ar.h / 2) / scale;
     this.setCamera({ cx, cy, scale }, false);
   }
 }

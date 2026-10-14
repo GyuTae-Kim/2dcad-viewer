@@ -331,10 +331,9 @@ export function registerUtil2MiscCommands(app: App): void {
         out(`${padWide(`${spaceName} 사용`, 16)} X:${L(b.minX)}  Y:${L(b.minY)}${over ? '  **한계 초과' : ''}`);
         out(`${padWide('', 16)} X:${L(b.maxX)}  Y:${L(b.maxY)}`);
       } else out(`${padWide(`${spaceName} 사용`, 16)} *없음*`);
-      const a = app.view.screenToWorld(0, app.view.height);
-      const c = app.view.screenToWorld(app.view.width, 0);
-      out(`${padWide('화면 표시', 16)} X:${L(a.x)}  Y:${L(a.y)}`);
-      out(`${padWide('', 16)} X:${L(c.x)}  Y:${L(c.y)}`);
+      const [ax, ay, cx, cy] = app.view.visibleWorld();
+      out(`${padWide('화면 표시', 16)} X:${L(ax)}  Y:${L(ay)}`);
+      out(`${padWide('', 16)} X:${L(cx)}  Y:${L(cy)}`);
       const ib = d.header.get(isModel ? '$INSBASE' : '$PINSBASE');
       const ibv = ib && typeof ib === 'object' ? (ib as { x: number; y: number; z?: number }) : { x: 0, y: 0, z: 0 };
       out(`${padWide('삽입 기준점은', 16)} X:${L(ibv.x)}  Y:${L(ibv.y)}  Z:${L(ibv.z ?? 0)}`);

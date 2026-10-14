@@ -70,6 +70,8 @@ export class EditManager {
       this.rebuildOverlay(st, space, [...ch.removed, ...ch.changed.map((e) => e.handle)]);
     }
     if (sum.tablesChanged || sum.layersChanged) this.syncLayers(st);
+    // 타일 뷰포트 구성(VPORTS, 명령 취소 포함)
+    if (tx.ops.some((o) => o.kind === 'vports')) app.onVportsChanged?.(st);
     if (sum.layoutsChanged) {
       // 보고 있던 배치가 없어졌으면 모형으로
       if (!st.blockEdit && !st.isModel && !st.layoutFor(st.space)) st.space = tableKey('*Model_Space');

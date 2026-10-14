@@ -100,8 +100,10 @@ export function registerCommands(app: App): void {
       ctx.print('가운데 버튼으로 끌거나, 두 점을 찍어 이동합니다.');
       const a = await needPoint(ctx, '기준점 지정:');
       const b = await needPoint(ctx, '두 번째 점 지정:', a);
-      const c = app.view.camera();
-      app.view.zoomRect(c.cx - (b.x - a.x) - app.view.width / 2 / c.scale, c.cy - (b.y - a.y) - app.view.height / 2 / c.scale, c.cx - (b.x - a.x) + app.view.width / 2 / c.scale, c.cy - (b.y - a.y) + app.view.height / 2 / c.scale, true, 0);
+      const [x0, y0, x1, y1] = app.view.visibleWorld();
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      app.view.zoomRect(x0 - dx, y0 - dy, x1 - dx, y1 - dy, true, 0);
     },
   });
   app.register({

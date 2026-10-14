@@ -648,12 +648,13 @@ export class WriteContext {
       this.tableHeads.set(t, h);
       this.live.add(h);
     }
-    const plan = <T extends TableRecordBase>(list: T[], map?: Map<string, string>): PlannedRecord<T>[] => {
+    // 뷰포트 표는 같은 이름의 레코드가 여럿일 수 있다(타일 뷰포트의 *Active, 이름 있는 구성)
+    const plan = <T extends TableRecordBase>(list: T[], map?: Map<string, string>, dupNames = false): PlannedRecord<T>[] => {
       const out: PlannedRecord<T>[] = [];
       const seenNames = new Set<string>();
       for (const rec of list) {
         const key = rec.name ? tableKey(rec.name) : `*${rec.handle}`;
-        if (rec.name && seenNames.has(key)) continue;
+        if (rec.name && !dupNames && seenNames.has(key)) continue;
         seenNames.add(key);
         const h = this.claim(rec, rec.handle);
         this.live.add(h);
@@ -662,7 +663,7 @@ export class WriteContext {
       }
       return out;
     };
-    this.vports = plan(vports);
+    this.vports = plan(vports, undefined, true);
     this.ltypes = plan(ltList, this.ltypeH);
     this.layers = plan(layerList, this.layerH);
     this.styles = plan(styles, this.styleH);

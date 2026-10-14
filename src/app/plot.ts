@@ -69,9 +69,7 @@ function modelPlotPage(app: App, st: DocState, s: PlotSettings, unitsPerMm: numb
     if (!b) return null;
     rect = [b.minX, b.minY, b.maxX, b.maxY];
   } else {
-    const a = v.screenToWorld(0, v.height);
-    const b = v.screenToWorld(v.width, 0);
-    rect = [a.x, a.y, b.x, b.y];
+    rect = v.visibleWorld();
   }
   const paper = PAPERS.find((p) => p.key === s.paper) ?? PAPERS[1]!;
   const pw = s.landscape ? paper.h : paper.w;

@@ -445,6 +445,27 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         ],
       },
       {
+        title: '모형 뷰포트',
+        large: [
+          {
+            cmd: 'VPORTS',
+            label: '뷰포트 구성',
+            icon: 'viewport',
+            tip: '모형 화면을 여러 타일 뷰포트로 나누기 (VPORTS)',
+            menu: [
+              { label: '하나', cmd: '-VPORTS SI', icon: 'viewport' },
+              { label: '둘: 수직', cmd: '-VPORTS 2 V', icon: 'viewport' },
+              { label: '둘: 수평', cmd: '-VPORTS 2 H', icon: 'viewport' },
+              { label: '셋: 오른쪽', cmd: '-VPORTS 3 R', icon: 'viewport' },
+              { label: '셋: 왼쪽', cmd: '-VPORTS 3 L', icon: 'viewport' },
+              { label: '넷: 동일', cmd: '-VPORTS 4', icon: 'viewport' },
+              { label: '결합', cmd: '-VPORTS J', icon: 'viewport' },
+              { label: '뷰포트 대화상자…', cmd: 'VPORTS', icon: 'settings' },
+            ],
+          },
+        ],
+      },
+      {
         title: '배치 뷰포트',
         cols: [
           [

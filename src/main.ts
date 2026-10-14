@@ -28,6 +28,7 @@ import { registerAnnot2Commands } from './app/annot2';
 import { registerTableEditCommands } from './app/tablecmds';
 import { registerFieldCommands } from './app/fieldcmds';
 import { registerMLineCommands } from './app/mlinecmds';
+import { registerVportCommands } from './app/vports';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -81,6 +82,7 @@ registerAnnot2Commands(app);
 registerTableEditCommands(app);
 registerFieldCommands(app);
 registerMLineCommands(app);
+registerVportCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);

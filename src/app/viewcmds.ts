@@ -27,10 +27,7 @@ function viewOf(st: DocState, name: string, r: Rect, paper: boolean): ViewRecord
 
 /** 지금 화면(도면 좌표) */
 function screenRect(app: App): Rect {
-  const v = app.view;
-  const a = v.screenToWorld(0, v.height);
-  const b = v.screenToWorld(v.width, 0);
-  return [a.x, a.y, b.x, b.y];
+  return app.view.visibleWorld();
 }
 
 function save(app: App, ctx: CommandContext | null, name: string, r: Rect): void {

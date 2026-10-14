@@ -16,6 +16,21 @@ export interface Camera {
   scale: number;
 }
 
+/** 모형 타일 뷰포트 하나: 화면 비율 좌표(0~1, 왼쪽 아래 원점)와 그 카메라 */
+export interface Tile {
+  ll: { x: number; y: number };
+  ur: { x: number; y: number };
+  /** 활성 타일이 아니면 이 카메라로 그린다(활성 타일의 카메라는 cameras에 있다) */
+  cam: Camera | null;
+  prev: Camera[];
+}
+
+/** 모형 공간을 나눈 타일 뷰포트(VPORTS). 하나뿐이면 null */
+export interface TileSet {
+  list: Tile[];
+  active: number;
+}
+
 /** 공간 하나의 편집 상태(기본 장면을 다시 만들기 전까지) */
 export interface SpaceEdits {
   /** 기본 장면에서 숨긴 객체 */
@@ -50,6 +65,8 @@ export class DocState {
   private readonly sceneLayerNames = new Map<string, string[]>();
   readonly cameras = new Map<string, Camera>();
   readonly prevCameras = new Map<string, Camera[]>();
+  /** 모형 타일 뷰포트(VPORTS) */
+  tiles: TileSet | null = null;
   space: string = MODEL_SPACE;
   readonly selection = new Set<string>();
   units: UnitSettings;
