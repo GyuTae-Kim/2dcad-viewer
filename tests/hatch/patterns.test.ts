@@ -6,6 +6,8 @@ import { PATTERNS, findPattern, patternLines, userPatternLines } from '../../src
 import { patternSegments, userPattern } from '../../src/render/hatch';
 import { readCadFile } from '../../src/io/index';
 import { deg } from './helpers';
+import { join } from 'node:path';
+import { ROOT } from '../dxf/writer.helpers';
 
 const close = (a: number, b: number, tol = 1e-9) => expect(Math.abs(a - b), `${a} ≈ ${b}`).toBeLessThan(tol);
 
@@ -159,7 +161,7 @@ describe('무늬 줄 계산(DXF 규약)', () => {
 });
 
 // 예제 도면의 단순 평행선 무늬(ANSI31·사용자 정의)와 비교
-const ORACLE = '/Users/sean/code/2dcad-viewer/.runtime/oracle-dxf';
+const ORACLE = join(ROOT, '.runtime/oracle-dxf');
 const SAMPLES = ['sample_AC1032.dxf', 'sample_AC1018.dxf', 'Structural_-_Imperial.dxf', 'Structural_-_Metric.dxf'].map((f) => `${ORACLE}/${f}`);
 const haveSamples = SAMPLES.every((f) => existsSync(f));
 

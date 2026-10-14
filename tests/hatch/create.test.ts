@@ -19,6 +19,8 @@ import { hatchLoops, patternSegments, triangulateLoops } from '../../src/render/
 import { TextEngine } from '../../src/text/layout';
 import { readCadFile } from '../../src/io/index';
 import { add, arc, circle, deg, insideHatch, line, newDoc, rect, spline } from './helpers';
+import { join } from 'node:path';
+import { ROOT } from '../dxf/writer.helpers';
 
 const near = (a: number, b: number, tol = 1e-6) => expect(Math.abs(a - b), `${a} ≈ ${b}`).toBeLessThan(tol);
 
@@ -174,7 +176,7 @@ describe('연관 해치 반응자', () => {
 });
 
 // 예제 도면: 점 선택으로 만든 해치(파생 경로 + 씨앗점)를 씨앗점으로 다시 찾으면 같은 넓이
-const ORACLE = '/Users/sean/code/2dcad-viewer/.runtime/oracle-dxf/sample_AC1032.dxf';
+const ORACLE = join(ROOT, '.runtime/oracle-dxf/sample_AC1032.dxf');
 
 describe('예제 도면 재현', () => {
   it.skipIf(!existsSync(ORACLE))('씨앗점으로 찾은 경계 넓이·경계 객체가 AutoCAD 해치와 같다', () => {
