@@ -183,3 +183,19 @@ export function renameLayer(app: App, key: string, name: string): boolean {
   st.session.commit({ label: 'RENAME', ops });
   return true;
 }
+
+/** 잠긴 도면층의 객체를 빼고 돌려준다(뺀 것이 있으면 알린다) */
+export function unlockedOnly(app: App, handles: string[]): string[] {
+  const st = app.active;
+  if (!st) return [];
+  const out: string[] = [];
+  let locked = 0;
+  for (const h of handles) {
+    const e = st.doc.entityIndex.get(h);
+    if (!e) continue;
+    if (st.doc.layers.get(tableKey(e.layer))?.locked) locked++;
+    else out.push(h);
+  }
+  if (locked) app.cmd.print(`잠긴 도면층의 객체 ${locked}개는 뺐습니다.`);
+  return out;
+}

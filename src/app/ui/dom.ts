@@ -175,3 +175,85 @@ export function ask<T extends string>(title: string, text: string, buttons: { la
     obs.observe(document.body, { childList: true });
   });
 }
+
+export type FormField =
+  | { key: string; label: string; type: 'text' | 'number'; value: string | number; placeholder?: string; wide?: boolean }
+  | { key: string; label: string; type: 'select'; value: string; options: { value: string; label: string }[] }
+  | { key: string; label: string; type: 'check'; value: boolean }
+  | { key: string; label: string; type: 'textarea'; value: string };
+
+/** 입력 칸 여러 개를 받는 대화상자(취소하면 null). check는 boolean, number는 숫자로 돌려준다 */
+export function form(title: string, fields: FormField[], opt: { ok?: string; note?: string; validate?: (v: Record<string, string | number | boolean>) => string | null } = {}): Promise<Record<string, string | number | boolean> | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const inputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+    const err = h('div', { class: 'form-error', role: 'alert' });
+    const rows = fields.map((f) => {
+      let el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+      if (f.type === 'select') {
+        el = h('select', { 'aria-label': f.label }, ...f.options.map((o) => h('option', { value: o.value }, o.label)));
+        el.value = f.value;
+      } else if (f.type === 'check') {
+        el = h('input', { type: 'checkbox', 'aria-label': f.label });
+        (el as HTMLInputElement).checked = f.value;
+      } else if (f.type === 'textarea') {
+        el = h('textarea', { 'aria-label': f.label, rows: 4 });
+        el.value = f.value;
+      } else {
+        el = h('input', { type: f.type === 'number' ? 'text' : 'text', inputmode: f.type === 'number' ? 'decimal' : undefined, 'aria-label': f.label, placeholder: f.placeholder ?? '' });
+        el.value = String(f.value);
+      }
+      inputs.set(f.key, el);
+      el.addEventListener('keydown', (ev) => {
+        const k = ev as KeyboardEvent;
+        k.stopPropagation();
+        if (k.key === 'Enter' && f.type !== 'textarea') submit();
+      });
+      return h('label', { class: `form-row ${f.type === 'check' ? 'check' : ''}` }, h('span', {}, f.label), el);
+    });
+    const read = () => {
+      const out: Record<string, string | number | boolean> = {};
+      for (const f of fields) {
+        const el = inputs.get(f.key)!;
+        if (f.type === 'check') out[f.key] = (el as HTMLInputElement).checked;
+        else if (f.type === 'number') out[f.key] = Number(el.value.trim());
+        else out[f.key] = el.value;
+      }
+      return out;
+    };
+    const submit = () => {
+      const v = read();
+      for (const f of fields) {
+        if (f.type === 'number' && !Number.isFinite(v[f.key] as number)) {
+          err.textContent = `${f.label}: 숫자를 입력하십시오.`;
+          return;
+        }
+      }
+      const e = opt.validate?.(v) ?? null;
+      if (e) {
+        err.textContent = e;
+        return;
+      }
+      done = true;
+      back.remove();
+      resolve(v);
+    };
+    const body = h('div', { class: 'form' }, ...rows, opt.note ? h('div', { class: 'form-note' }, opt.note) : null, err);
+    const back = dialog(title, body, [
+      { label: '취소', run: () => undefined },
+      { label: opt.ok ?? '확인', primary: true, run: () => (submit(), true) },
+    ]);
+    const obs = new MutationObserver(() => {
+      if (!back.isConnected) {
+        obs.disconnect();
+        if (!done) resolve(null);
+      }
+    });
+    obs.observe(document.body, { childList: true });
+    setTimeout(() => {
+      const first = inputs.values().next().value as HTMLElement | undefined;
+      first?.focus();
+      if (first instanceof HTMLInputElement) first.select();
+    });
+  });
+}

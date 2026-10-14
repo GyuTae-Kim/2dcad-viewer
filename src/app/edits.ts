@@ -67,7 +67,7 @@ export class EditManager {
     if (sum.tablesChanged || sum.layersChanged) this.syncLayers(st);
     // 지워진 객체는 선택에서 뺀다
     for (const h of [...st.selection]) if (!st.doc.entityIndex.has(h)) st.selection.delete(h);
-    if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged) this.schedule(st, sum.blocksChanged || sum.tablesChanged);
+    if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged) this.schedule(st, sum.blocksChanged || sum.tablesChanged, tx.rebuildNow ? 0 : REBUILD_DELAY);
     app.view.requestRender();
     app.refreshSelectionOverlay();
     app.ui.refreshPalette();
@@ -113,7 +113,7 @@ export class EditManager {
   }
 
   /** 편집이 멈추면 바뀐 공간을 다시 그린다 */
-  private schedule(st: DocState, all: boolean): void {
+  private schedule(st: DocState, all: boolean, delay = REBUILD_DELAY): void {
     clearTimeout(this.timers.get(st));
     if (all) this.rebuildAll.add(st);
     this.timers.set(
@@ -123,7 +123,7 @@ export class EditManager {
         const everything = this.rebuildAll.delete(st);
         const spaces = everything ? [...st.scenes.keys()] : [...st.edits.entries()].filter(([, e]) => e.live.size || e.hidden.size).map(([k]) => k);
         for (const sp of spaces) void this.rebuild(st, sp);
-      }, REBUILD_DELAY),
+      }, delay),
     );
   }
 

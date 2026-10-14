@@ -2,6 +2,8 @@ import './styles.css';
 import { App } from './app/app';
 import { registerCommands } from './app/commands';
 import { registerDrawCommands } from './app/draw';
+import { registerBlockCommands } from './app/blocks';
+import { registerEditCommands } from './app/editcmds';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPdf, exportPng, exportSvg } from './app/export';
@@ -28,6 +30,8 @@ app.ui = shell;
 shell.attach(app);
 registerCommands(app);
 registerDrawCommands(app);
+registerBlockCommands(app);
+registerEditCommands(app);
 
 app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pickFiles() });
 app.register({

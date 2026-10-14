@@ -857,10 +857,16 @@ export class App {
     if (!st || this.request) return;
     const pk = this.picker();
     const h = pk?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
-    if (h) {
+    if (!h) return;
+    const e = st.doc.entityIndex.get(h);
+    // 문자·치수·속성 블록은 두 번 누르면 바로 고친다(AutoCAD와 같다)
+    if (e && (e.type === 'TEXT' || e.type === 'MTEXT' || e.type === 'ATTDEF' || e.type === 'DIMENSION' || (e.type === 'INSERT' && e.attribs.some((a) => !(a.attFlags & 2))))) {
       this.setSelection([h], 'replace');
-      this.ui.openPalette('props');
+      void import('./editcmds').then((m) => m.editText(this, h));
+      return;
     }
+    this.setSelection([h], 'replace');
+    this.ui.openPalette('props');
   }
 
   private onContext(w: Pt, _s: Pt, ev: MouseEvent): void {

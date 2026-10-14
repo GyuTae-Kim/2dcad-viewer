@@ -10,6 +10,7 @@ import type { App, CommandContext, PointResult } from './app';
 import { CancelError } from './app';
 import type { Pt } from './view';
 import { dialog, h } from './ui/dom';
+import { unlockedOnly } from './layers';
 
 // ---------------------------------------------------------------------------
 // 공통
@@ -1002,7 +1003,7 @@ export function registerDrawCommands(app: App): void {
     title: '지우기',
     async run(ctx) {
       const st = app.active!;
-      const hs = await ctx.getSelection();
+      const hs = unlockedOnly(app, await ctx.getSelection());
       if (!hs.length) return;
       const ops = [];
       for (const hd of hs) {

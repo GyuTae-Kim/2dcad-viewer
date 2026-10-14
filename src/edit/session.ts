@@ -4,7 +4,7 @@
  *
  * 변경 = 작업(op) 목록. 각 작업은 앞뒤 상태를 모두 담아 되돌리기가 그대로 반대 작업이다.
  */
-import type { BlockDef, CadDocument, Entity, HeaderValue, Layer, Linetype, TextStyle, DimStyle } from '../core/model';
+import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Linetype, TextStyle, DimStyle } from '../core/model';
 import { tableKey, normalizeHandle } from '../core/model';
 
 export type EditOp =
@@ -19,6 +19,9 @@ export type EditOp =
   | { kind: 'textStyle'; key: string; before: TextStyle | null; after: TextStyle | null }
   | { kind: 'dimStyle'; key: string; before: DimStyle | null; after: DimStyle | null }
   | { kind: 'blockDef'; key: string; before: BlockDef | null; after: BlockDef | null }
+  | { kind: 'blockRecord'; key: string; before: BlockRecord | null; after: BlockRecord | null }
+  /** 객체(사전·배치·이미지 정의 등). key = 핸들 */
+  | { kind: 'object'; key: string; before: CadObject | null; after: CadObject | null }
   | { kind: 'header'; name: string; before: HeaderValue | undefined; after: HeaderValue | undefined };
 
 export interface Transaction {
@@ -27,6 +30,8 @@ export interface Transaction {
   ops: EditOp[];
   /** 같은 묶음 번호의 연속 트랜잭션은 명령 취소 때 하나로 되돌린다(명령 하나 안의 여러 단계) */
   group?: number;
+  /** 그리기 순서처럼 덧그림으로 바로 보일 수 없는 변경: 곧바로 다시 그린다 */
+  rebuildNow?: boolean;
 }
 
 /** 변경이 화면에 미치는 범위 */
@@ -57,7 +62,7 @@ function invert(op: EditOp): EditOp {
 }
 
 export function inverseTransaction(tx: Transaction): Transaction {
-  return { label: tx.label, ops: tx.ops.map(invert).reverse() };
+  return { label: tx.label, ops: tx.ops.map(invert).reverse(), rebuildNow: tx.rebuildNow };
 }
 
 function indexEntity(doc: CadDocument, e: Entity, on: boolean): void {
@@ -154,6 +159,14 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
         if (summary) summary.blocksChanged = true;
         break;
       }
+      case 'blockRecord':
+        if (op.after) doc.blockRecords.set(op.key, op.after);
+        else doc.blockRecords.delete(op.key);
+        break;
+      case 'object':
+        if (op.after) doc.objects.set(op.key, op.after);
+        else doc.objects.delete(op.key);
+        break;
       case 'header':
         if (op.after === undefined) doc.header.delete(op.name);
         else doc.header.set(op.name, op.after);

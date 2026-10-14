@@ -1300,3 +1300,47 @@ button.aci.on {
   background: var(--bg-ribbon);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
+
+/* 입력 대화상자 */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 300px;
+}
+.form .form-row input,
+.form .form-row select,
+.form .form-row textarea {
+  min-width: 0;
+  width: 190px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+}
+.form .form-row textarea {
+  height: auto;
+  padding: 4px 6px;
+}
+.form .form-row.check input {
+  width: 16px;
+  height: 16px;
+}
+.form .form-row input:focus,
+.form .form-row select:focus,
+.form .form-row textarea:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+.form-note {
+  margin-top: 6px;
+  color: var(--text-dim);
+}
+.form-error {
+  min-height: 16px;
+  margin-top: 4px;
+  color: #ff8a80;
+}
