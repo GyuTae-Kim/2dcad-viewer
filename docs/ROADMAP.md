@@ -70,11 +70,15 @@
 - [x] 동적 블록 참조 편집(DYNPROPS·RESETBLOCK·동적 그립, DXF에서 연 도면)
 - [ ] 동적 블록: DWG의 동적 블록 노드 해독·쓰기, 구속 기반 정의
 - [ ] AutoCAD 파라메트릭 구속(ACAD_ASSOCNETWORK) 읽기·편집
-- [ ] 주석 축척
+- [x] 주석 축척(CANNOSCALE·SCALELISTEDIT·OBJECTSCALE·ANNOALLVISIBLE·ANNOAUTOSCALE, 뷰포트마다 주석 축척으로 그림)
+- [ ] 주석 축척: 치수·해치·다중 지시선의 AutoCAD 축척 레코드 쓰기, DWG의 MTEXT·블록 참조 레코드
+- [x] 도면 비교(COMPARE: 색·구름형 리비전·가져오기·스냅샷 내보내기)
+- [ ] 외부 참조 비교(XCOMPARE)
 - [x] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬·셀 서식, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(R2000~R2018)
 - [x] 필드 회색 배경 표시(FIELDDISPLAY)
 - [x] AutoCAD FIELD 객체 읽기·쓰기(DXF·DWG)
 - [x] PDF 가져오기(PDFIMPORT: 벡터 형상·솔리드 채우기·트루타입 문자)
+- [x] 나선(HELIX: 기준·상단 반지름, 회전 수, 비틀기)
 - [x] 해치 편집(HATCHEDIT), 블록 자르기(XCLIP), 하이퍼링크(HYPERLINK), 데이터 추출(DATAEXTRACTION, 표·CSV)
 - [x] 자동 저장과 도면 복구(SAVETIME·DRAWINGRECOVERY·RECOVER, 이 브라우저에만)
 - [x] 배치를 모형으로 내보내기(EXPORTLAYOUT)
