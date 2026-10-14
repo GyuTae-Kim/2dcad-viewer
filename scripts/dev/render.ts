@@ -27,7 +27,7 @@ async function main() {
     return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
   });
   const usage = collectTextUsage(doc);
-  if (usage.needsOutline) await lib.require(usage.codes);
+  if (usage.needsOutline) await Promise.all([lib.require(usage.codes), lib.requireLatin(usage.latin)]);
   const t0 = performance.now();
   const scene = buildSpace(doc, space ?? '*Model_Space', { text: new TextEngine(lib) });
   const ms = performance.now() - t0;

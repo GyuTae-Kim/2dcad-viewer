@@ -4,7 +4,7 @@
  */
 import type { CadColor, TextStyle } from '../core/model';
 import type { FontFace, GlyphGeom, OutlineLibrary } from './fonts';
-import { strokeFace } from './fonts';
+import { latinFamilyOf, strokeFace } from './fonts';
 import { type Paragraph, type RunStyle, TOGGLE_OVERLINE, TOGGLE_STRIKE, TOGGLE_UNDERLINE, parseMText, parseTextString } from './mtext';
 
 /** 2D 아핀 [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f */
@@ -54,9 +54,10 @@ export interface TextLayout {
   frame?: boolean;
 }
 
+/** 글자를 찾을 글꼴 순서 */
 interface Faces {
+  chain: FontFace[];
   primary: FontFace;
-  fallback: FontFace;
 }
 
 const SHX_FONT = /\.shx$/i;
@@ -77,8 +78,12 @@ export class TextEngine {
   private facesFor(font: string, ttfHint: boolean | null): Faces {
     const shx = ttfHint === null ? isShxFont(font) : !ttfHint;
     const lib = this.lib;
-    if (shx) return { primary: strokeFace, fallback: lib ? lib.cjkFace : strokeFace };
-    return { primary: lib ? lib.capFace : strokeFace, fallback: lib ? lib.cjkFace : strokeFace };
+    if (!lib) return { chain: [strokeFace], primary: strokeFace };
+    if (shx) return { chain: [strokeFace, lib.capFace, lib.cjkFace], primary: strokeFace };
+    const fam = latinFamilyOf(font);
+    const latin = fam ? lib.latinFace(fam) : null;
+    const chain = latin ? [latin, lib.capFace, lib.cjkFace] : [lib.capFace, lib.cjkFace];
+    return { chain, primary: chain[0]! };
   }
 
   styleFont(style: TextStyle | undefined): string {
@@ -89,16 +94,18 @@ export class TextEngine {
 
   private pick(code: number, f: Faces): { geom: GlyphGeom; kind: 'stroke' | 'outline' } {
     if (code === 0xa0 || code === 9) code = 32;
-    let g = f.primary.glyph(code);
-    if (g) return { geom: g, kind: f.primary.kind };
-    g = f.fallback.glyph(code);
-    if (g) return { geom: g, kind: f.fallback.kind };
+    const cjk = code >= 0x1100;
+    for (const face of f.chain) {
+      // 한글·한자는 큰 글꼴 크기(cjk)로, 라틴 보충 글자는 대문자 높이 크기(cap)로 찾는다
+      if (this.lib && ((cjk && face === this.lib.capFace) || (!cjk && face === this.lib.cjkFace && f.chain.includes(this.lib.capFace)))) continue;
+      const g = face.glyph(code);
+      if (g) return { geom: g, kind: face.kind };
+    }
     if (code === 0x2205 || code === 0x2300) {
-      g = strokeFace.glyph(0xd8) ?? null;
+      const g = strokeFace.glyph(0xd8);
       if (g) return { geom: g, kind: 'stroke' };
     }
-    g = strokeFace.glyph(code) ?? strokeFace.glyph(63)!;
-    return { geom: g, kind: 'stroke' };
+    return { geom: strokeFace.glyph(code) ?? strokeFace.glyph(63)!, kind: 'stroke' };
   }
 
   /** 단선 글꼴의 기준선 아래 깊이 */

@@ -235,33 +235,50 @@ export function triangulateContours(contours: number[][]): number[] {
 
 export type OutlineMode = 'cap' | 'cjk';
 
+/** 라틴 트루타입 계열: Arial·Times·Courier와 글자 폭이 같은 Liberation 글꼴로 그린다 */
+export type LatinFamily = 'sans' | 'serif' | 'mono';
+
+export function latinFamilyOf(font: string): LatinFamily | null {
+  const f = font.trim().toLowerCase();
+  if (!f || /\.shx$/.test(f)) return null;
+  if (/arial|helvet|swiss|arimo|liberation ?sans|tahoma|verdana|calibri|segoe|franklin|century gothic|isocpeur|isocteur/.test(f)) return 'sans';
+  if (/times|tinos|liberation ?serif|georgia|garamond|book antiqua|cambria|bookman|palatino/.test(f)) return 'serif';
+  if (/courier|cousine|consolas|liberation ?mono|lucida console|monospace/.test(f)) return 'mono';
+  return null;
+}
+
+/** AutoCAD가 문자 높이로 쓰는 원래 글꼴의 대문자 높이(em 비율). 폭을 원래 글꼴과 같게 맞춘다 */
+const LATIN_FILES: Record<LatinFamily, { file: string; cap: number }> = {
+  sans: { file: 'LiberationSans-Regular.ttf', cap: 1467 / 2048 },
+  serif: { file: 'LiberationSerif-Regular.ttf', cap: 1356 / 2048 },
+  mono: { file: 'LiberationMono-Regular.ttf', cap: 1170 / 2048 },
+};
+
 class OutlineFace implements FontFace {
   readonly kind = 'outline' as const;
-  readonly descent: number;
   private readonly cache = new Map<number, GlyphGeom | null>();
 
   constructor(
-    private readonly lib: OutlineLibrary,
-    readonly mode: OutlineMode,
-  ) {
-    // 'g'의 아래 끝이 기준선 아래 250/1000 em, 대문자 높이는 733
-    this.descent = 0.34;
-  }
+    private readonly lookup: (code: number) => Font | null,
+    private readonly scaleOf: (font: Font) => number,
+    readonly descent: number,
+  ) {}
 
   has(code: number): boolean {
-    return this.lib.fontFor(code) !== null;
+    const f = this.lookup(code);
+    return !!f && f.charToGlyphIndex(String.fromCodePoint(code)) > 0;
   }
 
   glyph(code: number): GlyphGeom | null {
     if (this.cache.has(code)) return this.cache.get(code)!;
-    const font = this.lib.fontFor(code);
+    const font = this.lookup(code);
     if (!font) return null;
     const g = font.charToGlyph(String.fromCodePoint(code));
     if (!g || g.index === 0) {
       this.cache.set(code, null);
       return null;
     }
-    const scale = this.mode === 'cap' ? this.lib.capScale : this.lib.cjkScale;
+    const scale = this.scaleOf(font);
     const path = typeof g.path === 'function' ? g.path() : g.path;
     const contours = flattenPath(path.commands, scale);
     const tris = triangulateContours(contours);
@@ -276,7 +293,7 @@ class OutlineFace implements FontFace {
         if (c[i + 1]! < minY) minY = c[i + 1]!;
         if (c[i + 1]! > maxY) maxY = c[i + 1]!;
       }
-    const advance = (g.advanceWidth ?? this.lib.unitsPerEm) * scale;
+    const advance = (g.advanceWidth ?? font.unitsPerEm) * scale;
     if (!contours.length) {
       minX = 0;
       maxX = advance;
@@ -297,6 +314,12 @@ class OutlineFace implements FontFace {
   }
 }
 
+/** 글꼴 폴더 옆 폴더(URL이든 파일 경로든) */
+function siblingDir(base: string, name: string): string {
+  if (/^[a-z]+:/i.test(base)) return new URL(`../${name}/`, base).href;
+  return base.replace(/[^/]+\/?$/, '') + name + '/';
+}
+
 /** Noto Sans KR 조각 모음 */
 export class OutlineLibrary {
   private manifest: Manifest | null = null;
@@ -310,13 +333,50 @@ export class OutlineLibrary {
   readonly capFace: FontFace;
   readonly cjkFace: FontFace;
   private parse: ((b: ArrayBuffer) => Font) | null = null;
+  private readonly latin = new Map<LatinFamily, Font>();
+  private readonly latinFaces = new Map<LatinFamily, FontFace>();
 
   constructor(
     private readonly baseUrl: string,
     private readonly fetcher: Fetcher = defaultFetcher,
   ) {
-    this.capFace = new OutlineFace(this, 'cap');
-    this.cjkFace = new OutlineFace(this, 'cjk');
+    // 'g'의 아래 끝이 기준선 아래 250/1000 em, 대문자 높이는 733
+    this.capFace = new OutlineFace((c) => this.fontFor(c), () => this.capScale, 0.34);
+    this.cjkFace = new OutlineFace((c) => this.fontFor(c), () => this.cjkScale, 0.34);
+  }
+
+  /** Liberation 라틴 글꼴 면(받아 둔 경우만, 아니면 null) */
+  latinFace(fam: LatinFamily): FontFace | null {
+    if (!this.latin.has(fam)) return null;
+    let f = this.latinFaces.get(fam);
+    if (!f) {
+      const info = LATIN_FILES[fam];
+      f = new OutlineFace(() => this.latin.get(fam) ?? null, (font) => 1 / (info.cap * font.unitsPerEm), 0.3);
+      this.latinFaces.set(fam, f);
+    }
+    return f;
+  }
+
+  /** 라틴 글꼴을 받아 둔다 */
+  async requireLatin(fams: Iterable<LatinFamily>): Promise<void> {
+    if (!this.parse) {
+      const mod = await import('opentype.js');
+      this.parse = mod.parse;
+    }
+    await Promise.all(
+      [...new Set(fams)].map(async (fam) => {
+        if (this.latin.has(fam)) return;
+        const key = 'latin:' + fam;
+        let p = this.loading.get(key);
+        if (!p) {
+          p = this.fetcher(siblingDir(this.baseUrl, 'liberation') + LATIN_FILES[fam].file).then((buf) => {
+            this.latin.set(fam, this.parse!(buf));
+          });
+          this.loading.set(key, p);
+        }
+        await p;
+      }),
+    );
   }
 
   private async loadManifest(): Promise<Manifest> {
