@@ -3,7 +3,7 @@
  * ARRAYRECT, ARRAYPOLAR, COPYCLIP, CUTCLIP, COPYBASE, PASTECLIP
  * 프롬프트와 옵션은 AutoCAD 2026 한국어판을 따른다. 기하 계산은 src/edit/geom.
  */
-import type { BlockDef, BlockRecord, CadDocument, Entity } from '../core/model';
+import type { BlockDef, BlockRecord, CadDocument, Entity, HatchEntity } from '../core/model';
 import { tableKey } from '../core/model';
 import { formatLength } from '../core/units';
 import type { EditOp } from '../edit/session';
@@ -30,6 +30,7 @@ import {
   trimEntity,
 } from '../edit/geom';
 import { entityPath } from '../edit/geom/path';
+import { associatedHatches, boundaryEntitiesOf, dissociate, reactorUnlinks, rebuildAssociative } from '../edit/hatch';
 import { pathLength } from '../edit/geom/curve';
 import { dimensionBlockOps } from './dimcmds';
 import type { App, CommandContext, Keyword } from './app';
@@ -247,6 +248,37 @@ export function commitResults(app: App, ctx: CommandContext, results: EditResult
       ops.push(op);
       out.changed.push(e.handle);
     }
+  // 연관 해치: 경계 객체가 바뀌면 해치 영역을 다시 만들고, 영역이 깨지면 연관을 끊는다
+  const touched = new Set(mod.keys());
+  for (const r of results) for (const h of r.remove ?? []) touched.add(h);
+  for (const op of [...mod.values()]) {
+    for (const hatch of associatedHatches(doc, op.before)) {
+      if (touched.has(hatch.handle)) continue;
+      touched.add(hatch.handle);
+      const owner = st.session.ownerOf(hatch.handle);
+      if (!owner) continue;
+      const bnd = boundaryEntitiesOf(doc, hatch).map((e) => mod.get(e.handle)?.after ?? e);
+      let nh: HatchEntity | null = null;
+      try {
+        nh = rebuildAssociative(doc, hatch, bnd);
+      } catch {
+        nh = null;
+      }
+      if (nh) {
+        ops.push({ kind: 'modify', block: owner, before: hatch, after: { ...nh, handle: hatch.handle } });
+        continue;
+      }
+      ops.push({ kind: 'modify', block: owner, before: hatch, after: dissociate(hatch) });
+      for (const l of reactorUnlinks(doc, hatch)) {
+        const m = mod.get(l.before.handle);
+        if (m) m.after = { ...m.after, reactors: l.after.reactors } as Entity;
+        else {
+          const ob = st.session.ownerOf(l.before.handle);
+          if (ob) ops.push({ kind: 'modify', block: ob, before: l.before, after: l.after });
+        }
+      }
+    }
+  }
   // 지우기(블록마다 뒤에서부터: 되돌릴 때 같은 자리로)
   const rem: { block: string; entity: Entity; index: number }[] = [];
   const gone = new Set<string>();

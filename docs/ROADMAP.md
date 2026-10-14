@@ -29,7 +29,7 @@
 ## 3단계: 주석·블록·출력
 
 - [x] 치수 작성(DIMLINEAR·DIMALIGNED·DIMANGULAR·DIMRADIUS·DIMDIAMETER·DIMORDINATE·DIMARC) — 치수 스타일대로 치수 블록 생성
-- [ ] 해치 작성(무늬 정의, 경계 찾기)
+- [x] 해치 작성(무늬 66개, 경계 찾기, 섬, 틈 허용, 연관 해치)
 - [x] 다중 지시선 작성(MLEADER)
 - [x] 블록 삽입·정의, 속성 편집, 블록 편집기(BEDIT)
 - [x] 페이지 설정, 배치 만들기·복사·이름 바꾸기·삭제, 흑백·회색조 플롯, 여러 배치를 한 PDF로
