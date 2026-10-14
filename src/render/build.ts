@@ -126,6 +126,8 @@ export class SceneBuilder {
   private readonly blockByRecord = new Map<string, BlockDef>();
   private pdmode = 0;
   private pdsize = 0;
+  /** ATTDISP: 0 모두 숨김, 1 보통(숨김 속성은 숨김), 2 모두 보임 */
+  private attmode = 1;
   private fill = true;
   private extentSize = 100;
 
@@ -155,6 +157,7 @@ export class SceneBuilder {
     };
     this.ltscale = (num('$LTSCALE', 1) || 1) * (opt.ltFactor && opt.ltFactor > 0 ? opt.ltFactor : 1);
     this.pdmode = num('$PDMODE', 0);
+    this.attmode = num('$ATTMODE', 1);
     this.pdsize = num('$PDSIZE', 0);
     this.fill = num('$FILLMODE', 1) !== 0;
   }
@@ -1108,7 +1111,7 @@ export class SceneBuilder {
 
   private text(e: TextEntity, ctx: Ctx): void {
     if (e.type === 'ATTDEF' && ctx.inBlock && !((e as { attFlags?: number }).attFlags! & 2)) return;
-    if (e.type === 'ATTRIB' && (e as { attFlags?: number }).attFlags! & 1) return;
+    if (e.type === 'ATTRIB' && (this.attmode === 0 || ((e as { attFlags?: number }).attFlags! & 1 && this.attmode !== 2))) return;
     const mt = (e as { mtext?: Extract<Entity, { type: 'MTEXT' }> }).mtext;
     if (mt && (e.type === 'ATTRIB' || e.type === 'ATTDEF')) {
       this.mtext({ ...mt, layer: e.layer, color: e.color, linetype: e.linetype, lineweight: e.lineweight, transparency: e.transparency, handle: e.handle }, ctx);
