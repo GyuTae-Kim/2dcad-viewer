@@ -4,7 +4,7 @@
  *
  * 변경 = 작업(op) 목록. 각 작업은 앞뒤 상태를 모두 담아 되돌리기가 그대로 반대 작업이다.
  */
-import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Layout, LayoutObject, Linetype, TextStyle, DimStyle } from '../core/model';
+import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Layout, LayoutObject, Linetype, TextStyle, DimStyle, ViewRecord } from '../core/model';
 import { tableKey, normalizeHandle } from '../core/model';
 
 export type EditOp =
@@ -18,6 +18,8 @@ export type EditOp =
   | { kind: 'linetype'; key: string; before: Linetype | null; after: Linetype | null }
   | { kind: 'textStyle'; key: string; before: TextStyle | null; after: TextStyle | null }
   | { kind: 'dimStyle'; key: string; before: DimStyle | null; after: DimStyle | null }
+  /** 명명된 뷰(VIEW 표). key = 이름(대문자) */
+  | { kind: 'view'; key: string; before: ViewRecord | null; after: ViewRecord | null }
   | { kind: 'blockDef'; key: string; before: BlockDef | null; after: BlockDef | null }
   | { kind: 'blockRecord'; key: string; before: BlockRecord | null; after: BlockRecord | null }
   /** 객체(사전·배치·이미지 정의 등). key = 핸들 */
@@ -150,6 +152,10 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
         if (op.after) doc.dimStyles.set(op.key, op.after);
         else doc.dimStyles.delete(op.key);
         if (summary) summary.tablesChanged = true;
+        break;
+      case 'view':
+        if (op.after) doc.views.set(op.key, op.after);
+        else doc.views.delete(op.key);
         break;
       case 'blockDef': {
         if (op.before) for (const e of op.before.entities) indexEntity(doc, e, false);

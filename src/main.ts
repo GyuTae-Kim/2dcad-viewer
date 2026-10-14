@@ -16,6 +16,7 @@ import { noteMissingShx, registerShxCommands, restoreShxFonts } from './app/shxf
 import { noteMissingRefs, registerRefCommands } from './app/refs';
 import { registerIsolateCommands } from './app/isolate';
 import { registerViewportCommands } from './app/vpcmds';
+import { registerViewCommands } from './app/viewcmds';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -56,6 +57,7 @@ registerShxCommands(app);
 registerRefCommands(app);
 registerIsolateCommands(app);
 registerViewportCommands(app);
+registerViewCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);

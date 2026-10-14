@@ -202,7 +202,11 @@ export class App {
   }
 
   findCommand(name: string): Command | undefined {
-    const n = name.trim().toUpperCase().replace(/^[_.'-]+/, '');
+    // 명령행판(-VIEW 등)이 따로 있으면 그것, 없으면 앞의 -를 떼고 찾는다
+    const raw = name.trim().toUpperCase().replace(/^[_.']+/, '');
+    const dash = this.commands.get(raw) ?? this.commands.get(this.aliases.get(raw) ?? '');
+    if (dash) return dash;
+    const n = raw.replace(/^-+/, '');
     return this.commands.get(n) ?? this.commands.get(this.aliases.get(n) ?? '');
   }
 
