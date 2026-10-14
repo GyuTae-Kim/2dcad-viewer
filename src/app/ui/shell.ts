@@ -249,6 +249,36 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         ],
       },
       {
+        title: '뷰·좌표',
+        cols: [
+          [
+            { cmd: 'VIEW', label: '뷰 관리자', icon: 'views', tip: '지금 화면을 이름 붙여 저장하고 다시 불러오기' },
+            { cmd: 'UCS', label: 'UCS', icon: 'ucs', tip: '사용자 좌표계의 원점·방향 바꾸기' },
+            { cmd: 'UCSMAN', label: 'UCS 관리자', icon: 'coord' },
+          ],
+          [
+            { cmd: 'DSETTINGS', label: '제도 설정', icon: 'settings', tip: '스냅·격자, 극좌표 추적, 객체 스냅 설정' },
+            { cmd: 'ISOLATEOBJECTS', label: '객체 격리', icon: 'isolate', tip: '고른 객체만 보이기(UNISOLATEOBJECTS로 끝)' },
+            { cmd: 'UNISOLATEOBJECTS', label: '격리 끝', icon: 'eye' },
+          ],
+        ],
+      },
+      {
+        title: '배치 뷰포트',
+        cols: [
+          [
+            { cmd: 'MVIEW', label: '뷰포트 만들기', icon: 'viewport', tip: '배치에 뷰포트를 만들거나 켜기·끄기·잠그기' },
+            { cmd: 'VPCLIP', label: '뷰포트 자르기', icon: 'polygon' },
+            { cmd: 'VPLAYER', label: '뷰포트 도면층', icon: 'layers' },
+          ],
+          [
+            { cmd: 'MSPACE', label: '모형 공간', icon: 'model', tip: '뷰포트 안으로 들어가 모형을 다루기(뷰포트 안을 두 번 눌러도 됨)' },
+            { cmd: 'PSPACE', label: '종이 공간', icon: 'paper', tip: '뷰포트에서 나오기(뷰포트 밖을 두 번 눌러도 됨)' },
+            { cmd: 'CHSPACE', label: '공간 변경', icon: 'move' },
+          ],
+        ],
+      },
+      {
         title: '표시',
         large: [
           { cmd: 'BACKGROUND', label: '배경색', icon: 'background', noDoc: true, tip: '검정·흰색 배경 전환' },
