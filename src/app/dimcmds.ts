@@ -333,6 +333,99 @@ export function registerDimCommands(app: App): void {
   app.register({ name: 'DIMDIAMETER', aliases: ['DDI', 'DIMDIA'], title: '지름 치수', run: radial('diameter') });
   app.register({ name: 'DIMARC', aliases: ['DAR'], title: '호 길이 치수', run: radial('arc') });
 
+  // ------------------------------------------------------------- DIMCONTINUE·DIMBASELINE
+  /** 직전에 만든(또는 고른) 선형·정렬·세로좌표 치수 */
+  const lastDim = (): DimensionEntity | null => {
+    const st = app.active!;
+    for (let i = app.lastCreated.length - 1; i >= 0; i--) {
+      const e = st.doc.entityIndex.get(app.lastCreated[i]!);
+      if (e?.type === 'DIMENSION' && [0, 1, 6].includes(e.dimType & 7) && !e.subtype) return e;
+    }
+    return null;
+  };
+  const chain = (baseline: boolean) => async (ctx: CommandContext) => {
+    const st = app.active!;
+    const doc = st.doc;
+    let base = lastDim();
+    const pickBase = async (): Promise<DimensionEntity | null> => {
+      const r = await ctx.getEntity(baseline ? '기준 치수 선택:' : '연속된 치수 선택:');
+      if (!('handle' in r)) return null;
+      const e = doc.entityIndex.get(r.handle);
+      if (e?.type !== 'DIMENSION' || ![0, 1, 6].includes(e.dimType & 7) || e.subtype) {
+        ctx.print('선형·정렬·세로좌표 치수를 선택하십시오.', 'err');
+        return null;
+      }
+      return e;
+    };
+    if (!base) base = await pickBase();
+    if (!base) return;
+    // 기준선: 치수선 사이 간격 = DIMDLI × DIMSCALE
+    const raw = rawDimVars(doc, base) as Record<string, number | string>;
+    const scale = Number(raw.DIMSCALE) > 0 ? Number(raw.DIMSCALE) : 1;
+    const step = (Number(raw.DIMDLI) || 0) * scale;
+    let prev = base;
+    let origin = baseline ? base.defPoint2 : base.defPoint3;
+    const steps: number[] = [];
+    for (;;) {
+      const make = (p: Pt): DimensionEntity => {
+        const t = prev.dimType & 7;
+        if (t === 6) {
+          // 세로좌표: 같은 축, 지시선 끝은 앞 치수와 같은 높이·폭
+          const xAxis = (prev.dimType & 64) !== 0;
+          const end = xAxis ? { x: p.x, y: prev.defPoint3.y, z: 0 } : { x: prev.defPoint3.x, y: p.y, z: 0 };
+          return createOrdinateDimension(doc, v3(p), end, { xAxis, style: prev.dimStyle });
+        }
+        const rot = t === 1 ? Math.atan2(prev.defPoint3.y - prev.defPoint2.y, prev.defPoint3.x - prev.defPoint2.x) : prev.rotation;
+        let line = prev.defPoint;
+        if (baseline) {
+          // 앞 치수선에서 원점 반대쪽으로 한 칸
+          const ux = Math.cos(rot);
+          const uy = Math.sin(rot);
+          const nx = -uy;
+          const ny = ux;
+          const side = Math.sign((prev.defPoint.x - prev.defPoint2.x) * nx + (prev.defPoint.y - prev.defPoint2.y) * ny) || 1;
+          line = { x: prev.defPoint.x + nx * side * step, y: prev.defPoint.y + ny * side * step, z: 0 };
+        }
+        return createLinearDimension(doc, origin, v3(p), line, { rotation: rot, style: prev.dimStyle });
+      };
+      const r = await ctx.getPoint('두 번째 치수보조선 원점 지정 또는 [선택(S)/명령 취소(U)] <선택>:', {
+        keywords: [{ key: 'S', label: '선택' }, { key: 'U', label: '명령 취소' }],
+        ghost: preview(app, make),
+      });
+      if ('point' in r) {
+        const d = make(r.point);
+        const blockOps = dimensionBlockOps(st, d, false);
+        const space = st.doc.blocks.get(st.space);
+        d.handle = st.session.newHandle();
+        if (space?.recordHandle) d.owner = space.recordHandle;
+        d.paperSpace = /^\*PAPER_SPACE/i.test(st.space) ? true : undefined;
+        const ops = [...blockOps, { kind: 'add' as const, block: st.space, entity: d }];
+        st.session.commit({ label: baseline ? 'DIMBASELINE' : 'DIMCONTINUE', ops, group: ctx.group });
+        steps.push(ops.length);
+        prev = d;
+        if (!baseline) origin = d.defPoint3;
+        continue;
+      }
+      if ('keyword' in r && r.keyword === 'U') {
+        const n = steps.pop();
+        if (n) st.session.undoLastStep(ctx.group, n);
+        continue;
+      }
+      if ('enter' in r || ('keyword' in r && r.keyword === 'S')) {
+        if ('enter' in r && steps.length) return;
+        const b = await pickBase();
+        if (!b) return;
+        base = b;
+        prev = b;
+        origin = baseline ? b.defPoint2 : b.defPoint3;
+        continue;
+      }
+      return;
+    }
+  };
+  app.register({ name: 'DIMCONTINUE', aliases: ['DCO', 'DIMCONT'], title: '연속 치수', run: chain(false) });
+  app.register({ name: 'DIMBASELINE', aliases: ['DBA', 'DIMBASE'], title: '기준선 치수', run: chain(true) });
+
   // ------------------------------------------------------------- DIMORDINATE
   app.register({
     name: 'DIMORDINATE',
