@@ -1351,6 +1351,11 @@ export class App {
       void this.run('MLEDIT');
       return;
     }
+    if (e?.type === 'HATCH') {
+      this.setSelection([h], 'replace');
+      void this.run('HATCHEDIT');
+      return;
+    }
     // 문자·치수·속성 블록은 두 번 누르면 바로 고친다(AutoCAD와 같다)
     if (e && (e.type === 'TEXT' || e.type === 'MTEXT' || e.type === 'ATTDEF' || e.type === 'DIMENSION' || (e.type === 'INSERT' && e.attribs.some((a) => !(a.attFlags & 2))))) {
       this.setSelection([h], 'replace');
