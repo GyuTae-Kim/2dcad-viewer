@@ -414,7 +414,8 @@ function textCommon(c: Common, type: TextEntity['type']): TextEntity {
     widthFactor: t.num(41, 1) || 1,
     oblique: t.num(51) * DEG,
     style: name(t.str(7, 'Standard')),
-    generation: t.int(71),
+    // ATTRIB·ATTDEF의 AcDbAttribute에도 71이 있어 AcDbText 부분에서만 읽는다
+    generation: t.int(71, 0, t.subs.includes('AcDbText') ? 'AcDbText' : undefined),
     halign,
     valign,
   } as TextEntity;

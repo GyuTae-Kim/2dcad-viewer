@@ -6,8 +6,9 @@ export const ACI_RGB: Uint32Array = (() => {
   const t = new Uint32Array(256);
   const base = [0x000000, 0xff0000, 0xffff00, 0x00ff00, 0x00ffff, 0x0000ff, 0xff00ff, 0xffffff, 0x808080, 0xc0c0c0];
   for (let i = 0; i < 10; i++) t[i] = base[i]!;
-  // 10~249: 색상환 24단계(15°) × 명도 5단계(255·165·127·76·38), 홀수 번호는 명도 쪽으로 절반 섞은 옅은 색
-  const levels = [255, 165, 127, 76, 38];
+  // 10~249: 색상환 24단계(15°) × 명도 5단계(255·204·153·127·76), 홀수 번호는 명도 쪽으로 절반 섞은 옅은 색
+  // (예: 12 = CC0000, 13 = CC6666, 19 = 4C2626 — AutoCAD가 저장한 트루컬러의 ACI 번호와 맞다)
+  const levels = [255, 204, 153, 127, 76];
   for (let i = 10; i < 250; i++) {
     const h = Math.floor((i - 10) / 10);
     const k = (i - 10) % 10;
