@@ -25,6 +25,9 @@
 - [x] DXF 저장(R12~R2018, ASCII·이진, 모델이 해석하지 않는 자료는 원본 태그로), 새 도면(acadiso·acad)
 - [x] 극좌표 추적, 객체 스냅 추적
 - [x] 동적 입력(F12, 커서 옆 프롬프트·거리·입력 중인 값)
+- [x] 수정 보강: ALIGN, BLEND, COPYM, EXTRIM, OVERKILL, REVERSE, DIVIDE, MEASURE, PEDIT, SPLINEDIT, BOUNDARY, REVCLOUD, WIPEOUT, SCALETEXT, JUSTIFYTEXT
+- [x] 블록·그룹·선택: BATTMAN, ATTSYNC, BCOUNT, BURST, BLOCKREPLACE, MINSERT, WBLOCK, GROUP·UNGROUP(PICKSTYLE 그룹 선택), SELECT, QSELECT, SELECTSIMILAR, FILTER
+- [x] 유틸리티: OOPS, RENAME, AUDIT, STATUS, QUICKCALC·CAL, LIMITS(한계 밖 점 거부), MULTIPLE, REDRAW
 
 ## 3단계: 주석·블록·출력
 
@@ -38,6 +41,9 @@
 - [x] 플롯 미리보기(PREVIEW, 플롯 대화상자의 미리보기)
 - [x] 치수 스타일 관리자(DIMSTYLE: 선·기호·문자·맞춤·단위·공차, 고치면 그 스타일의 치수를 다시 만듦)
 - [x] 이름 있는 플롯 스타일 표(STB): 객체·도면층의 플롯 스타일 이름으로 펜을 고름
+- [x] 치수·지시선 편집: DIMEDIT, DIMTEDIT, DIMSPACE, DIMBREAK, DIMJOGLINE, DIMJOGGED, DIMOVERRIDE, QDIM, QLEADER, MLEADEREDIT·ALIGN·COLLECT·STYLE
+- [x] 기하 공차(TOLERANCE, 프레임·GDT 기호를 선으로), 중심 표식·중심선(CENTERMARK·CENTERLINE)
+- [x] 표(TABLE·TABLEDIT·TABLECELL·TABLESTYLE), 필드(FIELD·UPDATEFIELD), 여러 줄(MLINE·MLSTYLE·MLEDIT)
 
 ## 3.5단계: 배치·뷰·제도 보조
 
@@ -58,7 +64,9 @@
 - [x] 외부 참조(DWG·DXF): 고른 로컬 파일을 별도 문서로 열어 인스턴스 변환·XCLIP대로 그림(화면·뷰포트·출력, 저장 파일에는 섞지 않음)
 - [x] PDF 언더레이: 고른 PDF의 페이지를 pdf.js로 그려 붙임(자르기·반전, 단색, 흐리기, 배경 맞춤, 화면·PDF·SVG)
 - [x] 중첩 외부 참조(덮어씌우기 제외, 순환 차단), 외부 참조 도면층 재지정(`참조|도면층`, VISRETAIN, 뷰포트 동결)
-- [ ] 표 편집, 필드, 연관 치수, 기하 구속, 동적 블록, 주석 축척
+- [ ] 연관 치수, 기하 구속, 동적 블록, 주석 축척
+- [ ] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬 그룹 코드, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(지금은 DWG에서 블록 참조로 저장)
+- [ ] 필드 회색 배경 표시(FIELDDISPLAY), AutoCAD FIELD 객체 읽기
 
 ## 품질 과제
 
@@ -69,6 +77,7 @@
 - [x] 프록시 그림(사용자 객체, ODA 명세 29장의 선·원·호·다각형·메시·셸·문자·색·변환)
 - [x] 아주 깊이 확대했을 때 곡선 다시 나누기(보이는 영역 세부 장면)
 - [x] PSLTSCALE(뷰포트마다 점선 무늬를 종이 길이로 맞춤, 화면·PDF·SVG·플롯)
+- [x] 이미지·가리기 자르기 경계 방향, 맞춤 폴리선의 호, 폭 0 세그먼트, IMAGEFRAME·WIPEOUTFRAME(변수 객체에 저장)
 - [ ] 아주 큰 도면(수백만 객체) 읽기·메모리 최적화
 
 ## 다른 형식
