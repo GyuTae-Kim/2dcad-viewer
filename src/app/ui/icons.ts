@@ -35,6 +35,8 @@ export const ICONS: Record<string, string> = {
   lineweight: S('<path d="M4 6h16" stroke-width="1"/><path d="M4 12h16" stroke-width="2.4"/><path d="M4 18h16" stroke-width="4"/>'),
   grid: S('<path d="M4 4h16v16H4zM4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16" stroke-width="1"/>'),
   osnap: S('<rect x="7" y="7" width="10" height="10"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>'),
+  polarTrack: S('<path d="M4 20h16" /><path d="M4 20L18 6" stroke-dasharray="2 2.5"/><path d="M10 20a6 6 0 0 0-1.8-4.2"/>'),
+  otrack: S('<path d="M3 12h18M12 3v18" stroke-dasharray="2 2.5"/><rect x="9.5" y="9.5" width="5" height="5"/>'),
   ortho: S('<path d="M5 19V5M5 19h14"/><path d="M5 9h4v10" stroke-dasharray="2 2"/>'),
   polar: S('<path d="M4 20h16M4 20L18 6"/><path d="M4 20l8-14" stroke-dasharray="2 2"/>'),
   model: S('<path d="M3 20L12 4l9 16z"/>'),

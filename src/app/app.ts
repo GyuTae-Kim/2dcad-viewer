@@ -15,6 +15,7 @@ import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, entitySnaps, findSnap } from './snap';
+import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack } from './tracking';
 import { identity } from '../geom/matrix';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
@@ -114,6 +115,13 @@ export class App {
   osnapOn = true;
   readonly snapModes = new Set<SnapKind>(DEFAULT_SNAPS);
   orthoOn = false;
+  /** 극좌표 추적(F10)과 증분 각도 */
+  polarOn = false;
+  polarInc = Math.PI / 2;
+  /** 객체 스냅 추적(F11)과 획득점 */
+  otrackOn = false;
+  private acquired: Acquired[] = [];
+  private acqCandidate: { p: Pt; timer: number } | null = null;
   private request: Request | null = null;
   private running: { name: string; ctrl: AbortController } | null = null;
   private lastCommand: string | null = null;
@@ -249,6 +257,7 @@ export class App {
         this.view.overlay.rubber = [];
         this.view.overlay.ghost = [];
         this.view.overlay.marks = [];
+        this.clearTracking();
         this.view.overlay.tip = null;
         this.view.requestOverlay();
       }
@@ -726,8 +735,8 @@ export class App {
   // 화면 입력
   // -------------------------------------------------------------------------
 
-  /** 스냅·직교를 적용한 점 */
-  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind } | null } {
+  /** 스냅·추적·직교를 적용한 점 */
+  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind } | null; track?: TrackResult } {
     const r = this.request;
     if (r?.kind === 'point' || !r) {
       const pk = this.picker();
@@ -735,6 +744,21 @@ export class App {
         const aperture = 10 * this.view.pixelSize();
         const s = findSnap(this.active!.doc, pk, w, aperture, this.snapModes, r.base);
         if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind } };
+      }
+      if (r?.kind === 'point') {
+        const tol = 8 * this.view.pixelSize();
+        const st = this.active!;
+        const fmt = (v: number) => formatLength(v, st.units);
+        const pa = this.polarOn ? polarAngles(this.polarInc) : null;
+        if (this.otrackOn && this.acquired.length) {
+          // 획득점에서는 수평·수직(극좌표가 켜져 있으면 그 각도들도)
+          const t = objectTrack(this.acquired, w, pa ?? polarAngles(Math.PI / 2), tol, r.base, pa, fmt);
+          if (t) return { p: t.p, snap: null, track: t };
+        }
+        if (r.base && pa && !this.orthoOn) {
+          const t = polarTrack(r.base, w, pa, tol, fmt);
+          if (t) return { p: t.p, snap: null, track: t };
+        }
       }
       if (r?.kind === 'point' && r.base && this.orthoOn) {
         const dx = w.x - r.base.x;
@@ -745,6 +769,41 @@ export class App {
     return { p: w, snap: null };
   }
 
+  /** 스냅점 위에 잠시 머물면 추적용으로 획득(다시 머물면 해제) */
+  private updateAcquire(snap: { p: Pt; kind: SnapKind } | null): void {
+    const c = this.acqCandidate;
+    if (!snap || !this.otrackOn || this.request?.kind !== 'point') {
+      if (c) clearTimeout(c.timer);
+      this.acqCandidate = null;
+      return;
+    }
+    if (c && Math.abs(c.p.x - snap.p.x) < 1e-9 && Math.abs(c.p.y - snap.p.y) < 1e-9) return;
+    if (c) clearTimeout(c.timer);
+    const p = snap.p;
+    const label = SNAP_NAMES[snap.kind] ?? '점';
+    this.acqCandidate = {
+      p,
+      timer: window.setTimeout(() => {
+        const i = this.acquired.findIndex((a) => Math.abs(a.p.x - p.x) < 1e-9 && Math.abs(a.p.y - p.y) < 1e-9);
+        if (i >= 0) this.acquired.splice(i, 1);
+        else {
+          this.acquired.push({ p, label });
+          if (this.acquired.length > 7) this.acquired.shift();
+        }
+        this.view.overlay.acquired = this.acquired.map((a) => a.p);
+        this.view.requestOverlay();
+      }, 450),
+    };
+  }
+
+  private clearTracking(): void {
+    this.acquired = [];
+    if (this.acqCandidate) clearTimeout(this.acqCandidate.timer);
+    this.acqCandidate = null;
+    this.view.overlay.acquired = [];
+    this.view.overlay.tracks = [];
+  }
+
   private onMove(w: Pt, s: Pt, ev: PointerEvent): void {
     const o = this.view.overlay;
     o.cursor = ev.pointerType === 'touch' ? null : s;
@@ -752,12 +811,15 @@ export class App {
     const st = this.active;
     if (!st) return;
     const r = this.request;
-    const { p, snap } = this.resolvePoint(w);
+    const { p, snap, track } = this.resolvePoint(w);
     o.snap = snap;
+    o.tracks = track ? track.lines.map((l) => ({ from: l.from, dir: l.dir })) : [];
+    this.updateAcquire(snap);
     if (r?.kind === 'point') {
       o.rubber = r.rubber ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
       o.ghost = r.ghost ? r.ghost(p) : [];
       if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
+      else if (track) o.tip = track.tip;
       else if (r.base) {
         const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);
         let a = (Math.atan2(p.y - r.base.y, p.x - r.base.x) * 180) / Math.PI;
@@ -971,6 +1033,14 @@ export class App {
         ev.preventDefault();
         this.toggleOrtho();
         return;
+      case 'F10':
+        ev.preventDefault();
+        this.togglePolar();
+        return;
+      case 'F11':
+        ev.preventDefault();
+        this.toggleOtrack();
+        return;
     }
     if (mod && ev.shiftKey && !ev.altKey) {
       const k = ev.key.toLowerCase();
@@ -1086,7 +1156,23 @@ export class App {
 
   toggleOrtho(): void {
     this.orthoOn = !this.orthoOn;
+    // 직교와 극좌표 추적은 함께 켤 수 없다
+    if (this.orthoOn) this.polarOn = false;
     this.cmd.print(`<직교 ${this.orthoOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  togglePolar(): void {
+    this.polarOn = !this.polarOn;
+    if (this.polarOn) this.orthoOn = false;
+    this.cmd.print(`<극좌표 ${this.polarOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  toggleOtrack(): void {
+    this.otrackOn = !this.otrackOn;
+    if (!this.otrackOn) this.clearTracking();
+    this.cmd.print(`<객체 스냅 추적 ${this.otrackOn ? '켜기' : '끄기'}>`);
     this.ui.refreshStatus();
   }
 

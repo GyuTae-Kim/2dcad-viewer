@@ -32,6 +32,10 @@ export interface OverlayState {
   rubber: { pts: number[]; closed?: boolean; fill?: boolean; dashed?: boolean }[];
   /** 끌고 있는 객체 미리보기(이동·복사·회전 등) */
   ghost: OverlayGeom[];
+  /** 추적 정렬선(극좌표·객체 스냅 추적): 시작점과 단위 방향 */
+  tracks: { from: Pt; dir: Pt }[];
+  /** 객체 스냅 추적 획득점 */
+  acquired: Pt[];
   marks: { p: Pt; text?: string }[];
   /** 커서 옆 동적 입력 문구 */
   tip: string | null;
@@ -476,6 +480,34 @@ export class CadView {
       g.strokeRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
     g.restore();
+    // 추적 정렬선과 획득점
+    if (o.tracks.length || o.acquired.length) {
+      g.save();
+      g.strokeStyle = dark ? 'rgba(90,220,140,0.9)' : 'rgba(20,140,70,0.9)';
+      g.lineWidth = 1;
+      g.setLineDash([3, 4]);
+      // 화면 밖까지 이어지게 충분히 먼 점
+      const far = (this.width + this.height) * 2 * this.pixelSize();
+      for (const t of o.tracks) {
+        const a = W(t.from.x, t.from.y);
+        const b = W(t.from.x + t.dir.x * far, t.from.y + t.dir.y * far);
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.stroke();
+      }
+      g.setLineDash([]);
+      for (const p of o.acquired) {
+        const q = W(p.x, p.y);
+        g.beginPath();
+        g.moveTo(q.x - 5, q.y);
+        g.lineTo(q.x + 5, q.y);
+        g.moveTo(q.x, q.y - 5);
+        g.lineTo(q.x, q.y + 5);
+        g.stroke();
+      }
+      g.restore();
+    }
     // 끌고 있는 객체
     for (const gh of o.ghost) drawGeom(gh, dark ? 'rgba(255,209,102,0.85)' : 'rgba(194,124,0,0.85)', 1, null, dark ? 'rgba(255,209,102,0.18)' : 'rgba(194,124,0,0.15)');
     // 고무줄·임시 형상
@@ -763,7 +795,7 @@ function isTyping(ev: KeyboardEvent): boolean {
 }
 
 export function emptyOverlay(): OverlayState {
-  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], marks: [], tip: null };
+  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], marks: [], tip: null };
 }
 
 /** AutoCAD 스냅 표지 모양 */

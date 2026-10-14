@@ -710,6 +710,21 @@ export class Shell implements UiHooks {
       ev.preventDefault();
       this.snapMenu(ev.clientX, ev.clientY);
     });
+    const polar = mk('polar', 'polarTrack', '극좌표 추적 (F10) · 오른쪽 클릭으로 증분 각도 선택', () => app.togglePolar());
+    polar.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      showMenu(ev.clientX, ev.clientY - 220, [
+        { heading: '극좌표 증분 각도' },
+        ...[90, 45, 30, 22.5, 18, 15, 10, 5].map((d) => ({
+          label: `${Math.abs((app.polarInc * 180) / Math.PI - d) < 1e-9 ? '✓ ' : ' '}${d}°`,
+          run: () => {
+            app.polarInc = (d * Math.PI) / 180;
+            if (!app.polarOn) app.togglePolar();
+            this.refreshStatus();
+          },
+        })),
+      ]);
+    });
     const caret = h('button', { class: 'icon-btn', title: '객체 스냅 종류', 'aria-label': '객체 스냅 종류', style: 'width:14px;padding:0', html: '▾' });
     caret.addEventListener('click', (ev) => this.snapMenu(ev.clientX, ev.clientY - 260));
     this.status.append(
@@ -720,6 +735,8 @@ export class Shell implements UiHooks {
       osnap,
       caret,
       mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()),
+      polar,
+      mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()),
       mk('lw', 'lineweight', '선가중치 표시', () => void app.run('LWDISPLAY')),
       mk('bg', 'background', '배경색 전환', () => void app.run('BACKGROUND')),
       h('span', { class: 'status-sep' }),
@@ -756,6 +773,8 @@ export class Shell implements UiHooks {
     const st = app.active;
     this.statusBtns.osnap?.classList.toggle('on', app.osnapOn);
     this.statusBtns.ortho?.classList.toggle('on', app.orthoOn);
+    this.statusBtns.polar?.classList.toggle('on', app.polarOn);
+    this.statusBtns.otrack?.classList.toggle('on', app.otrackOn);
     this.statusBtns.lw?.classList.toggle('on', app.view.lwDisplay);
     this.statusBtns.bg?.classList.toggle('on', app.view.modelBg === 0xffffff);
     this.spaceLabel.textContent = st ? (st.isModel ? '모형' : `배치: ${st.layoutFor(st.space)?.name ?? ''}`) : '';
