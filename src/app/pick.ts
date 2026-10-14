@@ -115,6 +115,10 @@ function segRect(x0: number, y0: number, x1: number, y1: number, r: [number, num
 
 export class Picker {
   private grid = new Map<string, number[]>();
+  /** 편집으로 지우거나 바뀐 기존 객체(고르지 않는다) */
+  readonly exclude = new Set<string>();
+  /** 편집으로 새로 생기거나 바뀐 객체의 범위 */
+  extra: EntityBox[] = [];
   private cell = 1;
   private readonly cache = new Map<string, OverlayGeom>();
   private builder: SceneBuilder;
@@ -167,6 +171,17 @@ export class Picker {
 
   /** 점 근처(tol 안)의 후보 */
   candidates(x: number, y: number, tol: number): EntityBox[] {
+    const base = this.baseCandidates(x, y, tol).filter((b) => !this.exclude.has(b.handle));
+    for (const b of this.extra) if (b.minX - tol <= x && b.maxX + tol >= x && b.minY - tol <= y && b.maxY + tol >= y) base.push(b);
+    return base;
+  }
+
+  /** 편집 결과 반영: 바뀐 핸들의 형상 캐시를 지운다 */
+  invalidate(handles: Iterable<string>): void {
+    for (const h of handles) this.cache.delete(h);
+  }
+
+  private baseCandidates(x: number, y: number, tol: number): EntityBox[] {
     const out = new Set<number>();
     const x0 = Math.floor((x - tol) / this.cell);
     const x1 = Math.floor((x + tol) / this.cell);
@@ -223,7 +238,7 @@ export class Picker {
     for (const b of this.candidates(x, y, tol)) {
       const d = this.distance(b.handle, x, y);
       if (d > tol) continue;
-      const ord = this.order.get(b.handle) ?? 0;
+      const ord = this.extra.includes(b) ? Number.MAX_SAFE_INTEGER : (this.order.get(b.handle) ?? 0);
       if (d < bestD - tol * 0.05 || (Math.abs(d - bestD) <= tol * 0.05 && ord > bestOrder)) {
         best = b.handle;
         bestD = d;
@@ -236,7 +251,7 @@ export class Picker {
   /** 창 선택(window = 완전히 안, 아니면 걸침) */
   select(r: [number, number, number, number], crossing: boolean): string[] {
     const out: string[] = [];
-    for (const b of this.boxes) {
+    for (const b of [...this.boxes.filter((x) => !this.exclude.has(x.handle)), ...this.extra]) {
       if (b.maxX < r[0] || b.minX > r[2] || b.maxY < r[1] || b.minY > r[3]) continue;
       const inside = b.minX >= r[0] && b.maxX <= r[2] && b.minY >= r[1] && b.maxY <= r[3];
       if (inside) {
@@ -267,6 +282,9 @@ export class Picker {
   }
 
   box(handle: string): EntityBox | undefined {
+    const x = this.extra.find((b) => b.handle === handle);
+    if (x) return x;
+    if (this.exclude.has(handle)) return undefined;
     const i = this.order.get(handle);
     return i === undefined ? undefined : this.boxes[i];
   }

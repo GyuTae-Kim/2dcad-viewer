@@ -41,6 +41,13 @@ export interface StyleSpec {
 
 export const STYLE_FLAG_NO_PLOT = 1;
 export const STYLE_FLAG_TEXT = 2;
+/** 숨김 스타일(편집으로 지운·바꾼 객체의 옛 그림). 스타일 표의 0번이다 */
+export const STYLE_FLAG_HIDDEN = 4;
+export const HIDDEN_STYLE = 0;
+
+export function hiddenStyleSpec(): StyleSpec {
+  return { colorKind: ColorKind.Rgb, color: 0, layer: -1, freezeLayers: [], widthKind: WidthKind.Value, width: 0, alpha: 255, flags: STYLE_FLAG_HIDDEN };
+}
 
 export interface LayerState {
   name: string;
@@ -150,6 +157,7 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
     else if (s.widthKind === WidthKind.Layer) lw = layers[s.width]?.lineweight ?? -3;
     else lw = -3;
     if (lw < 0) lw = opt.defaultLineweight;
+    if (s.flags & STYLE_FLAG_HIDDEN) visible = false;
     const alpha = s.alpha < 0 ? (L?.transparency ?? 255) : s.alpha;
     const o = i * 8;
     out[o] = ((rgb >> 16) & 255) / 255;

@@ -5,7 +5,7 @@
  * - 글리프는 모양을 한 번만 올리고 인스턴스(변환)로 그린다.
  * - 깊이 = 그리기 순서.
  */
-import type { DisplayList } from './displaylist';
+import type { DisplayList, EntityBox } from './displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from './displaylist';
 
 /** 화면 변환: px = A · (p − ref) + t  (A는 도면 단위 → 픽셀, y 아래로) */
@@ -203,6 +203,10 @@ interface GpuChunk {
   ttri: WebGLVertexArrayObject | null;
   ttriCount: number;
   buffers: WebGLBuffer[];
+  segBuf: WebGLBuffer | null;
+  triBuf: WebGLBuffer | null;
+  tsegBuf: WebGLBuffer | null;
+  ttriBuf: WebGLBuffer | null;
 }
 
 export interface GpuScene {
@@ -385,11 +389,15 @@ export class GLRenderer {
         ttri: null,
         ttriCount: c.ttriCount,
         buffers: [],
+        segBuf: null,
+        triBuf: null,
+        tsegBuf: null,
+        ttriBuf: null,
       };
-      if (c.segCount) g.seg = this.segVao(mkBuf(c.segs), 0);
-      if (c.triCount) g.tri = this.triVao(mkBuf(c.tris));
-      if (c.tsegCount) g.tseg = this.segVao(mkBuf(c.tsegs), 0);
-      if (c.ttriCount) g.ttri = this.triVao(mkBuf(c.ttris));
+      if (c.segCount) g.seg = this.segVao((g.segBuf = mkBuf(c.segs)), 0);
+      if (c.triCount) g.tri = this.triVao((g.triBuf = mkBuf(c.tris)));
+      if (c.tsegCount) g.tseg = this.segVao((g.tsegBuf = mkBuf(c.tsegs)), 0);
+      if (c.ttriCount) g.ttri = this.triVao((g.ttriBuf = mkBuf(c.ttris)));
       for (const v of [g.seg, g.tri, g.tseg, g.ttri]) if (v) scene.vaos.push(v);
       scene.chunks.push(g);
     }
@@ -455,6 +463,40 @@ export class GLRenderer {
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3, 2, gl.FLOAT, false, stride, base + 32);
     gl.vertexAttribDivisor(3, 1);
+  }
+
+  /**
+   * 객체 하나의 그림을 숨긴다(원본 표시 목록과 GPU 버퍼의 스타일을 숨김 스타일로 바꾼다).
+   */
+  hideEntity(scene: GpuScene, src: DisplayList, box: EntityBox, hidden: number): void {
+    const gl = this.gl;
+    for (let i = 0; i < src.xlineHandles.length; i++) if (src.xlineHandles[i] === box.handle) scene.xlines[i * 7 + 6] = hidden;
+    if (box.chunk !== undefined) {
+      const c = src.chunks[box.chunk];
+      const g = scene.chunks[box.chunk];
+      if (c && g) {
+        const patch = (buf: ArrayBuffer, gbuf: WebGLBuffer | null, range: [number, number] | undefined, stride: number, styleOffset: number, verts: number) => {
+          if (!range || !range[1] || !gbuf) return;
+          const u = new Uint32Array(buf);
+          const [start, n] = range;
+          for (let i = start * verts; i < (start + n) * verts; i++) u[i * stride + styleOffset] = hidden;
+          gl.bindBuffer(gl.ARRAY_BUFFER, gbuf);
+          gl.bufferSubData(gl.ARRAY_BUFFER, start * verts * stride * 4, new Uint8Array(buf, start * verts * stride * 4, n * verts * stride * 4));
+        };
+        patch(c.segs, g.segBuf, box.seg, SEG_STRIDE, 5, 1);
+        patch(c.tsegs, g.tsegBuf, box.tseg, SEG_STRIDE, 5, 1);
+        patch(c.tris, g.triBuf, box.tri, TRI_STRIDE, 3, 3);
+        patch(c.ttris, g.ttriBuf, box.ttri, TRI_STRIDE, 3, 3);
+      }
+    }
+    if (box.glyphs?.length && scene.instBuf) {
+      const f = new Float32Array(src.glyphs.instances);
+      gl.bindBuffer(gl.ARRAY_BUFFER, scene.instBuf);
+      for (const k of box.glyphs) {
+        f[k * GLYPH_STRIDE + 9] = hidden;
+        gl.bufferSubData(gl.ARRAY_BUFFER, (k * GLYPH_STRIDE + 9) * 4, f.subarray(k * GLYPH_STRIDE + 9, k * GLYPH_STRIDE + 10));
+      }
+    }
   }
 
   dispose(scene: GpuScene | null): void {

@@ -17,6 +17,8 @@ import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, entitySnaps, findSnap } from './snap';
 import { identity } from '../geom/matrix';
 import { closeMenu, showMenu, toast } from './ui/dom';
+import { EditManager } from './edits';
+import type { EditOp } from '../edit/session';
 
 export class CancelError extends Error {
   constructor() {
@@ -50,13 +52,26 @@ interface EntityRequest {
   reject: (e: unknown) => void;
 }
 
-type Request = PointRequest | EntityRequest;
+interface SelectRequest {
+  kind: 'select';
+  prompt: string;
+  keywords: Keyword[];
+  remove: boolean;
+  resolve: (r: { handles: string[] } | { keyword: string }) => void;
+  reject: (e: unknown) => void;
+}
+
+type Request = PointRequest | EntityRequest | SelectRequest;
 
 export interface CommandContext {
   app: App;
   print(text: string, cls?: 'err' | 'res'): void;
   getPoint(prompt: string, opt?: { base?: Pt | null; keywords?: Keyword[]; rubber?: PointRequest['rubber']; allowText?: boolean }): Promise<PointResult>;
   getEntity(prompt: string, keywords?: Keyword[]): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }>;
+  /** 객체 고르기(이미 고른 것이 있으면 그것). 빈 배열이면 아무것도 고르지 않음 */
+  getSelection(prompt?: string, opt?: { keywords?: Keyword[]; noPickfirst?: boolean }): Promise<string[]>;
+  /** 명령 안의 여러 단계를 한 번의 명령 취소로 묶는 번호 */
+  group: number;
 }
 
 export interface Command {
@@ -89,6 +104,7 @@ export class App {
   readonly text: TextEngine;
   readonly docs: DocState[] = [];
   active: DocState | null = null;
+  readonly edits: EditManager;
   ui!: UiHooks;
   readonly commands = new Map<string, Command>();
   private readonly aliases = new Map<string, string>();
@@ -98,6 +114,9 @@ export class App {
   private request: Request | null = null;
   private running: { name: string; ctrl: AbortController } | null = null;
   private lastCommand: string | null = null;
+  private groupSerial = 0;
+  /** 직전 선택(P 옵션) */
+  lastSelection: string[] = [];
   lastPoint: Pt | null = null;
   private cursorWorld: Pt | null = null;
   private windowStart: { screen: Pt; world: Pt; viaClick: boolean } | null = null;
@@ -112,6 +131,7 @@ export class App {
     this.fontLib = new OutlineLibrary(fontBase);
     this.text = new TextEngine(this.fontLib);
     this.view = new CadView(drawingParent);
+    this.edits = new EditManager(this);
     this.cmd = new CommandLine(drawingParent, {
       submit: (t) => this.onInput(t),
       cancel: () => this.cancel(),
@@ -202,6 +222,8 @@ export class App {
       print: (t, cls) => this.cmd.print(t, cls),
       getPoint: (prompt, opt) => this.requestPoint(prompt, opt, ctrl.signal),
       getEntity: (prompt, kws) => this.requestEntity(prompt, kws ?? [], ctrl.signal),
+      getSelection: (prompt, opt) => this.requestSelection(prompt ?? '객체 선택:', opt ?? {}, ctrl.signal),
+      group: ++this.groupSerial,
     };
     try {
       await c.run(ctx, arg);
@@ -281,6 +303,69 @@ export class App {
     });
   }
 
+  private async requestSelection(prompt: string, opt: { keywords?: Keyword[]; noPickfirst?: boolean }, signal: AbortSignal): Promise<string[]> {
+    const st = this.active;
+    if (!st) return [];
+    if (st.selection.size && !opt.noPickfirst) {
+      const hs = [...st.selection];
+      this.lastSelection = hs;
+      return hs;
+    }
+    const kws: Keyword[] = [
+      { key: 'ALL', label: '전체' },
+      { key: 'P', label: '이전' },
+      { key: 'L', label: '마지막' },
+      { key: 'R', label: '제거' },
+      { key: 'A', label: '추가' },
+      ...(opt.keywords ?? []),
+    ];
+    for (;;) {
+      const r = await new Promise<{ handles: string[] } | { keyword: string }>((resolve, reject) => {
+        if (signal.aborted) return reject(new CancelError());
+        const req: SelectRequest = {
+          kind: 'select',
+          prompt,
+          keywords: kws,
+          remove: false,
+          resolve: (x) => {
+            this.request = null;
+            resolve(x);
+          },
+          reject,
+        };
+        this.request = req;
+        this.cmd.setPrompt(prompt);
+        this.view.overlay.tip = prompt.replace(/:\s*$/, '');
+        signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+        this.view.requestOverlay();
+      });
+      if ('handles' in r) {
+        this.lastSelection = r.handles;
+        return r.handles;
+      }
+      const k = r.keyword.toUpperCase();
+      if (k === 'ALL') {
+        const scene = st.scenes.get(st.space);
+        const hs = (scene?.entities ?? []).map((b) => b.handle).filter((h) => {
+          const e = st.doc.entityIndex.get(h);
+          const l = e ? st.layers.get(tableKey(e.layer)) : undefined;
+          return !!e && (!l || (l.on && !l.frozen));
+        });
+        const ed = st.edits.get(st.space);
+        for (const b of ed?.overlay?.entities ?? []) if (!hs.includes(b.handle)) hs.push(b.handle);
+        this.setSelection(hs.filter((h) => !ed?.hidden.has(h) || ed.live.has(h)), 'add');
+        this.cmd.print(`${st.selection.size}개를 찾음`);
+      } else if (k === 'P') this.setSelection(this.lastSelection.filter((h) => st.doc.entityIndex.has(h)), 'add');
+      else if (k === 'L') {
+        const last = this.lastCreated.filter((h) => st.doc.entityIndex.has(h)).slice(-1);
+        this.setSelection(last, 'add');
+      } else if (opt.keywords?.some((x) => x.key.toUpperCase() === k)) return Promise.reject(Object.assign(new Error('keyword'), { keyword: k }));
+    }
+  }
+
+  /** 마지막으로 만든 객체(L 옵션) */
+  lastCreated: string[] = [];
+
   private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) return reject(new CancelError());
@@ -312,6 +397,30 @@ export class App {
       return;
     }
     const t = text.trim();
+    if (r.kind === 'select') {
+      if (!t) {
+        r.resolve({ handles: [...(this.active?.selection ?? [])] });
+        return;
+      }
+      const up = t.toUpperCase();
+      if (up === 'R' || up === 'REMOVE') {
+        r.remove = true;
+        this.cmd.setPrompt('객체 제거:');
+        return;
+      }
+      if (up === 'A' || up === 'ADD') {
+        r.remove = false;
+        this.cmd.setPrompt(r.prompt);
+        return;
+      }
+      const kw = r.keywords.find((k) => k.key.toUpperCase() === up || k.label === t);
+      if (kw) {
+        r.resolve({ keyword: kw.key });
+        return;
+      }
+      this.cmd.print('객체를 고르거나 옵션(ALL·P·L·R)을 입력하십시오.', 'err');
+      return;
+    }
     if (!t) {
       r.resolve({ enter: true });
       return;
@@ -365,6 +474,7 @@ export class App {
       });
       const st = new DocState(res.docId, res.doc, name, size, res.readMs);
       st.addScene(this.view.renderer, res.model, MODEL_SPACE);
+      this.edits.attach(st);
       this.docs.push(st);
       this.activate(st);
       this.initialView(st);
@@ -431,6 +541,7 @@ export class App {
     const i = this.docs.indexOf(st);
     if (i < 0) return;
     this.docs.splice(i, 1);
+    this.edits.detach(st);
     st.dispose(this.view.renderer);
     for (const k of [...this.pickers.keys()]) if (k.startsWith(`${st.docId}:`)) this.pickers.delete(k);
     if (this.active === st) this.activate(this.docs[Math.min(i, this.docs.length - 1)] ?? null);
@@ -481,8 +592,35 @@ export class App {
     if (!p) {
       p = new Picker(st.doc, scene.entities, this.text, st.space);
       this.pickers.set(key, p);
+      const ed = st.edits.get(st.space);
+      if (ed) {
+        for (const h of ed.hidden) p.exclude.add(h);
+        p.extra = ed.overlay ? [...ed.overlay.entities] : [];
+      }
     }
     return p;
+  }
+
+  /** 편집 뒤 고르기 상태(제외·추가 객체)를 맞춘다 */
+  updatePicker(st: DocState, space: string, changed: Iterable<string>): void {
+    const p = this.pickers.get(`${st.docId}:${space}`);
+    if (!p) return;
+    const ed = st.spaceEdits(space);
+    p.exclude.clear();
+    for (const h of ed.hidden) p.exclude.add(h);
+    p.extra = ed.overlay ? [...ed.overlay.entities] : [];
+    p.invalidate(changed);
+  }
+
+  resetPicker(st: DocState, space: string): void {
+    this.pickers.delete(`${st.docId}:${space}`);
+  }
+
+  /** 변경을 한 번의 명령으로 적용한다(명령 취소 단위) */
+  commit(label: string, ops: EditOp[]): void {
+    const st = this.active;
+    if (!st || !ops.length) return;
+    st.session.commit({ label, ops });
   }
 
   entity(handle: string): Entity | undefined {
@@ -597,7 +735,7 @@ export class App {
     if (!r && !this.windowStart && ev.pointerType !== 'touch') {
       clearTimeout(this.hoverTimer);
       this.hoverTimer = window.setTimeout(() => this.updateHover(w), 40);
-    } else if (r?.kind === 'entity') {
+    } else if (r?.kind === 'entity' || r?.kind === 'select') {
       clearTimeout(this.hoverTimer);
       this.hoverTimer = window.setTimeout(() => this.updateHover(w), 30);
     }
@@ -633,6 +771,22 @@ export class App {
       if (h) r.resolve({ handle: h, point: w });
       return;
     }
+    if (r?.kind === 'select') {
+      if (this.windowStart?.viaClick) {
+        this.finishWindow(this.windowStart.screen, s, ev, r.remove);
+        return;
+      }
+      const h = pk.pick(w.x, w.y, tol);
+      if (h) {
+        this.setSelection([h], r.remove || ev.shiftKey ? 'remove' : 'add');
+        this.clearHover();
+        return;
+      }
+      this.windowStart = { screen: s, world: w, viaClick: true };
+      this.view.overlay.windowRect = { a: s, b: s };
+      this.view.requestOverlay();
+      return;
+    }
     // 선택
     if (this.windowStart?.viaClick) {
       this.finishWindow(this.windowStart.screen, s, ev);
@@ -656,13 +810,13 @@ export class App {
   }
 
   private onDrag(a: Pt, b: Pt, done: boolean, ev: PointerEvent): void {
-    if (!this.active || this.request) return;
+    if (!this.active || (this.request && this.request.kind !== 'select')) return;
     this.view.overlay.windowRect = { a, b };
     this.view.requestOverlay();
-    if (done) this.finishWindow(a, b, ev);
+    if (done) this.finishWindow(a, b, ev, this.request?.kind === 'select' ? this.request.remove : false);
   }
 
-  private finishWindow(a: Pt, b: Pt, ev: PointerEvent): void {
+  private finishWindow(a: Pt, b: Pt, ev: PointerEvent, remove = false): void {
     this.windowStart = null;
     this.view.overlay.windowRect = null;
     const pk = this.picker();
@@ -672,7 +826,7 @@ export class App {
     const crossing = b.x < a.x;
     const rect: [number, number, number, number] = [Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)];
     const hits = pk.select(rect, crossing);
-    this.setSelection(hits, ev.shiftKey ? 'remove' : 'add');
+    this.setSelection(hits, ev.shiftKey || remove ? 'remove' : 'add');
     this.view.requestOverlay();
   }
 
@@ -692,6 +846,10 @@ export class App {
     void _s;
     void w;
     const r = this.request;
+    if (r?.kind === 'select') {
+      r.resolve({ handles: [...(this.active?.selection ?? [])] });
+      return;
+    }
     if (r) {
       // 명령 중 오른쪽 클릭 = Enter(AutoCAD 기본 설정과 같은 바로가기 메뉴 대신)
       const items = [{ label: 'Enter', run: () => r.resolve({ enter: true } as never) }, { label: '취소', kbd: 'Esc', run: () => this.cancel() }, { separator: true }];
@@ -780,6 +938,21 @@ export class App {
       if (k === '1') {
         ev.preventDefault();
         void this.run('PROPERTIES');
+        return;
+      }
+      if (k === 'z' && !typing) {
+        ev.preventDefault();
+        void this.run('U');
+        return;
+      }
+      if (k === 'y' && !typing) {
+        ev.preventDefault();
+        void this.run('REDO');
+        return;
+      }
+      if (k === 's') {
+        ev.preventDefault();
+        void this.run('QSAVE');
         return;
       }
       if (k === '9') {

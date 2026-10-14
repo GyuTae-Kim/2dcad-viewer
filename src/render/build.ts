@@ -41,7 +41,7 @@ import {
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
 import { DisplayListBuilder, type DisplayList } from './displaylist';
-import { ColorKind, type LayerState, StyleTable, WidthKind, layerStates } from './styles';
+import { ColorKind, type LayerState, StyleTable, WidthKind, hiddenStyleSpec, layerStates } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
@@ -116,6 +116,8 @@ export class SceneBuilder {
     private readonly doc: CadDocument,
     private readonly opt: BuildOptions,
   ) {
+    // 스타일 0번은 숨김(편집할 때 옛 그림을 가리는 데 쓴다)
+    this.styles.intern(hiddenStyleSpec());
     const ls = layerStates(doc);
     this.layers = ls.states;
     this.layerIndex = ls.indexOf;

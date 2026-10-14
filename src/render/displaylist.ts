@@ -67,6 +67,14 @@ export interface EntityBox {
   minY: number;
   maxX: number;
   maxY: number;
+  /** 이 객체의 그림이 든 묶음 번호와 범위([시작, 개수]) — 편집할 때 숨기는 데 쓴다 */
+  chunk?: number;
+  seg?: [number, number];
+  tseg?: [number, number];
+  tri?: [number, number];
+  ttri?: [number, number];
+  /** 글리프 인스턴스 번호 */
+  glyphs?: number[];
 }
 
 /**
@@ -101,9 +109,13 @@ export interface DisplayList {
   maxY: number;
   /** 무한선(XLINE·RAY): 화면마다 잘라 그린다 [x, y, dx, dy, ray(0|1), depth, style] */
   xlines: number[];
+  /** 무한선마다 객체 핸들 */
+  xlineHandles: string[];
 }
 
 class ChunkBuilder {
+  static serial = 0;
+  readonly id = ChunkBuilder.serial++;
   readonly segs = new GrowBuffer(4096);
   readonly tris = new GrowBuffer(4096);
   readonly tsegs = new GrowBuffer(64);
@@ -154,6 +166,7 @@ export class DisplayListBuilder {
   private readonly done: ChunkBuilder[] = [];
   readonly entities: EntityBox[] = [];
   readonly xlines: number[] = [];
+  readonly xlineHandles: string[] = [];
   // 객체 하나의 임시 그림
   private segX: number[] = [];
   private segS: number[] = [];
@@ -166,6 +179,10 @@ export class DisplayListBuilder {
   /** 글리프 번호별 인스턴스 [a,b,c,d,e,f,depth,style] (double) */
   private readonly inst = new Map<number, { o: number[]; t: number[] }>();
   private pendingInst: { g: number; v: number[]; transparent: boolean }[] = [];
+  /** 객체 일련번호(글리프 인스턴스가 어느 객체 것인지) */
+  private serial = 0;
+  private readonly boxBySerial = new Map<number, EntityBox>();
+  private readonly chunkOfBox = new Map<EntityBox, ChunkBuilder>();
   private minX = Infinity;
   private minY = Infinity;
   private maxX = -Infinity;
@@ -231,7 +248,7 @@ export class DisplayListBuilder {
     }
     const [a, b, c, d, e, f] = m as [number, number, number, number, number, number];
     if (!Number.isFinite(a + b + c + d + e + f)) return;
-    this.pendingInst.push({ g, v: [a, b, c, d, e, f, this.depth, style], transparent: this.transparent(style) });
+    this.pendingInst.push({ g, v: [a, b, c, d, e, f, this.depth, style, this.serial], transparent: this.transparent(style) });
     const [x0, y0, x1, y1] = bbox;
     for (const [x, y] of [
       [x0, y0],
@@ -248,6 +265,7 @@ export class DisplayListBuilder {
 
   /** 지금까지 모은 그림을 한 객체로 마감한다. */
   endEntity(handle: string): void {
+    while (this.xlineHandles.length < this.xlines.length / 7) this.xlineHandles.push(handle);
     for (const p of this.pendingInst) {
       let r = this.inst.get(p.g);
       if (!r) {
@@ -261,6 +279,7 @@ export class DisplayListBuilder {
     if (this.segS.length === 0 && this.triS.length === 0) {
       if (hadGlyphs) this.recordEntity(handle);
       this.resetEntity();
+      this.serial++;
       return;
     }
     const w = this.maxX - this.minX;
@@ -281,6 +300,10 @@ export class DisplayListBuilder {
     }
     const ox = ch.ox;
     const oy = ch.oy;
+    const seg0 = ch.segs.length / SEG_STRIDE;
+    const tseg0 = ch.tsegs.length / SEG_STRIDE;
+    const tri0 = ch.tris.length / TRI_STRIDE / 3;
+    const ttri0 = ch.ttris.length / TRI_STRIDE / 3;
     // 선분
     const sx = this.segX;
     const ss = this.segS;
@@ -318,17 +341,29 @@ export class DisplayListBuilder {
     if (this.minY < ch.minY) ch.minY = this.minY;
     if (this.maxX > ch.maxX) ch.maxX = this.maxX;
     if (this.maxY > ch.maxY) ch.maxY = this.maxY;
-    this.recordEntity(handle);
+    const box = this.recordEntity(handle);
+    if (box) {
+      box.seg = [seg0, ch.segs.length / SEG_STRIDE - seg0];
+      box.tseg = [tseg0, ch.tsegs.length / SEG_STRIDE - tseg0];
+      box.tri = [tri0, ch.tris.length / TRI_STRIDE / 3 - tri0];
+      box.ttri = [ttri0, ch.ttris.length / TRI_STRIDE / 3 - ttri0];
+      this.chunkOfBox.set(box, ch);
+    }
     this.resetEntity();
+    this.serial++;
   }
 
-  private recordEntity(handle: string): void {
-    if (!(this.minX <= this.maxX)) return;
+  private recordEntity(handle: string): EntityBox | null {
+    if (!(this.minX <= this.maxX)) return null;
     if (this.minX < this.totalMinX) this.totalMinX = this.minX;
     if (this.minY < this.totalMinY) this.totalMinY = this.minY;
     if (this.maxX > this.totalMaxX) this.totalMaxX = this.maxX;
     if (this.maxY > this.totalMaxY) this.totalMaxY = this.maxY;
-    if (handle) this.entities.push({ handle, minX: this.minX, minY: this.minY, maxX: this.maxX, maxY: this.maxY });
+    if (!handle) return null;
+    const box: EntityBox = { handle, minX: this.minX, minY: this.minY, maxX: this.maxX, maxY: this.maxY };
+    this.entities.push(box);
+    this.boxBySerial.set(this.serial, box);
+    return box;
   }
 
   private finishGlyphs(): GlyphSet {
@@ -355,7 +390,7 @@ export class DisplayListBuilder {
       }
     }
     let total = 0;
-    for (const r of this.inst.values()) total += (r.o.length + r.t.length) / 8;
+    for (const r of this.inst.values()) total += (r.o.length + r.t.length) / 9;
     const buf = new ArrayBuffer(total * GLYPH_STRIDE * 4);
     const f = new Float32Array(buf);
     const runs: GlyphSet['runs'] = [];
@@ -363,7 +398,7 @@ export class DisplayListBuilder {
     const put = (g: number, list: number[], transparent: boolean) => {
       if (!list.length) return;
       const start = k;
-      for (let i = 0; i < list.length; i += 8) {
+        for (let i = 0; i < list.length; i += 9) {
         const o = k * GLYPH_STRIDE;
         f[o] = list[i]!;
         f[o + 1] = list[i + 1]!;
@@ -379,6 +414,8 @@ export class DisplayListBuilder {
         f[o + 7] = ff - fh;
         f[o + 8] = list[i + 6]!;
         f[o + 9] = list[i + 7]!;
+        const box = this.boxBySerial.get(list[i + 8]!);
+        if (box) (box.glyphs ??= []).push(k);
         k++;
       }
       runs.push({ glyph: g, start, count: k - start, transparent });
@@ -401,6 +438,8 @@ export class DisplayListBuilder {
 
   finish(): DisplayList {
     const all = [...this.done, ...this.chunks.values()];
+    const idx = new Map(all.map((c, i) => [c, i]));
+    for (const [box, ch] of this.chunkOfBox) box.chunk = idx.get(ch);
     return {
       chunks: all.map((c) => c.data()),
       glyphs: this.finishGlyphs(),
@@ -410,6 +449,7 @@ export class DisplayListBuilder {
       maxX: this.totalMaxX,
       maxY: this.totalMaxY,
       xlines: this.xlines,
+      xlineHandles: this.xlineHandles,
     };
   }
 }

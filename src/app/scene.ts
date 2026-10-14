@@ -2,8 +2,10 @@
 import type { CadDocument, Entity, Layout, ViewportEntity } from '../core/model';
 import { tableKey } from '../core/model';
 import type { DisplayList, EntityBox } from '../render/displaylist';
+import { SceneBuilder } from '../render/build';
+import type { TextEngine } from '../text/layout';
 import type { LayerState, StyleSpec } from '../render/styles';
-import { StyleTable, resolveStyles } from '../render/styles';
+import { HIDDEN_STYLE, StyleTable, resolveStyles } from '../render/styles';
 import type { GLRenderer, GpuScene } from '../render/webgl';
 import type { SceneMessage } from '../worker/protocol';
 
@@ -45,9 +47,52 @@ export class SpaceScene {
     this.styleCache.clear();
   }
 
+  private boxMap: Map<string, EntityBox> | null = null;
+
+  boxOf(handle: string): EntityBox | undefined {
+    if (!this.boxMap) this.boxMap = new Map(this.entities.map((b) => [b.handle, b]));
+    return this.boxMap.get(handle);
+  }
+
+  /** 편집으로 지우거나 바꾼 객체의 옛 그림을 숨긴다 */
+  hide(renderer: GLRenderer, handle: string): void {
+    renderer.hideEntity(this.gpu, this.source, this.boxOf(handle) ?? { handle, minX: 0, minY: 0, maxX: 0, maxY: 0 }, HIDDEN_STYLE);
+  }
+
   /** 그래픽 문맥을 되찾은 뒤 다시 올린다 */
   reupload(renderer: GLRenderer): void {
     this.gpu = renderer.upload(this.source);
+  }
+
+  dispose(renderer: GLRenderer): void {
+    renderer.dispose(this.gpu);
+  }
+}
+
+/**
+ * 편집 덧그림: 기본 장면을 다시 만들기 전까지 바뀐 객체만 따로 그린다(기본 장면 위에).
+ */
+export class OverlayScene {
+  readonly gpu: GpuScene;
+  readonly source: DisplayList;
+  readonly styles: StyleTable;
+  readonly layerNames: string[];
+  readonly entities: EntityBox[];
+
+  constructor(renderer: GLRenderer, doc: CadDocument, list: readonly Entity[], text: TextEngine, space: string) {
+    const b = new SceneBuilder(doc, { text });
+    b.prepare(space);
+    this.source = b.buildEntities(list);
+    this.styles = b.styles;
+    this.layerNames = b.layers.map((l) => tableKey(l.name));
+    this.entities = this.source.entities;
+    this.gpu = renderer.upload(this.source);
+  }
+
+  styleData(layerOf: (key: string) => LayerState | undefined, dark: boolean, bg: number, lwDisplay: boolean, vpFrozen?: Set<string>): Float32Array {
+    const layers = this.layerNames.map((n) => layerOf(n) ?? { name: n, rgb: 0, aci: 7, hasRgb: false, on: true, frozen: false, lineweight: -3, transparency: 255, plot: true });
+    const frozen = vpFrozen ? new Set(this.layerNames.map((n, i) => (vpFrozen.has(n) ? i : -1)).filter((i) => i >= 0)) : undefined;
+    return resolveStyles(this.styles, layers, { darkBackground: dark, backgroundRgb: bg, showLineweight: lwDisplay, defaultLineweight: 25, viewportFrozen: frozen });
   }
 
   dispose(renderer: GLRenderer): void {

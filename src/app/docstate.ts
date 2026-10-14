@@ -4,7 +4,8 @@ import { MODEL_SPACE, tableKey } from '../core/model';
 import { type UnitSettings, unitSettings } from '../core/units';
 import type { LayerState } from '../render/styles';
 import type { SceneMessage } from '../worker/protocol';
-import { SpaceScene } from './scene';
+import { type OverlayScene, SpaceScene } from './scene';
+import { EditSession } from '../edit/session';
 import type { GLRenderer } from '../render/webgl';
 
 export interface Camera {
@@ -14,7 +15,25 @@ export interface Camera {
   scale: number;
 }
 
+/** 공간 하나의 편집 상태(기본 장면을 다시 만들기 전까지) */
+export interface SpaceEdits {
+  /** 기본 장면에서 숨긴 객체 */
+  hidden: Set<string>;
+  /** 덧그림에 있는 객체 → 마지막으로 바뀐 세대 */
+  live: Map<string, number>;
+  overlay: OverlayScene | null;
+  /** 기본 장면을 만든 세대 */
+  baseGen: number;
+}
+
 export class DocState {
+  /** 편집 세션(앱이 문서를 열 때 만든다) */
+  session!: EditSession;
+  /** 편집 세대(트랜잭션마다 1씩) */
+  gen = 0;
+  readonly edits = new Map<string, SpaceEdits>();
+  /** 저장할 때 쓸 파일 이름(바뀔 수 있다) */
+  saveName: string;
   /** 도면층 이름(대문자) → 상태(모든 공간이 함께 쓴다) */
   readonly layers = new Map<string, LayerState>();
   readonly scenes = new Map<string, SpaceScene>();
@@ -38,6 +57,17 @@ export class DocState {
   ) {
     this.units = unitSettings(doc);
     for (const w of doc.warnings) this.warnings.push(w);
+    this.saveName = name;
+  }
+
+  spaceEdits(space: string): SpaceEdits {
+    const key = tableKey(space);
+    let e = this.edits.get(key);
+    if (!e) {
+      e = { hidden: new Set(), live: new Map(), overlay: null, baseGen: this.gen };
+      this.edits.set(key, e);
+    }
+    return e;
   }
 
   get layouts(): Layout[] {
@@ -88,7 +118,9 @@ export class DocState {
 
   dispose(renderer: GLRenderer): void {
     for (const s of this.scenes.values()) s.dispose(renderer);
+    for (const e of this.edits.values()) e.overlay?.dispose(renderer);
     this.scenes.clear();
+    this.edits.clear();
   }
 }
 

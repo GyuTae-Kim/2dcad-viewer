@@ -1,0 +1,313 @@
+/**
+ * 편집 세션: 문서에 변경을 적용하고 되돌린다(U·REDO).
+ * 메인 스레드와 엔진 워커가 같은 변경을 같은 순서로 적용해 두 문서를 맞춘다.
+ *
+ * 변경 = 작업(op) 목록. 각 작업은 앞뒤 상태를 모두 담아 되돌리기가 그대로 반대 작업이다.
+ */
+import type { BlockDef, CadDocument, Entity, HeaderValue, Layer, Linetype, TextStyle, DimStyle } from '../core/model';
+import { tableKey, normalizeHandle } from '../core/model';
+
+export type EditOp =
+  /** 블록(공간) block의 index 자리에 객체를 넣는다(index 없으면 끝) */
+  | { kind: 'add'; block: string; entity: Entity; index?: number }
+  /** 블록에서 객체를 뺀다(되돌릴 때 같은 자리에 넣는다) */
+  | { kind: 'remove'; block: string; entity: Entity; index: number }
+  /** 같은 핸들의 객체를 바꾼다 */
+  | { kind: 'modify'; block: string; before: Entity; after: Entity }
+  | { kind: 'layer'; key: string; before: Layer | null; after: Layer | null }
+  | { kind: 'linetype'; key: string; before: Linetype | null; after: Linetype | null }
+  | { kind: 'textStyle'; key: string; before: TextStyle | null; after: TextStyle | null }
+  | { kind: 'dimStyle'; key: string; before: DimStyle | null; after: DimStyle | null }
+  | { kind: 'blockDef'; key: string; before: BlockDef | null; after: BlockDef | null }
+  | { kind: 'header'; name: string; before: HeaderValue | undefined; after: HeaderValue | undefined };
+
+export interface Transaction {
+  /** 명령 이름(명령 취소 메시지용) */
+  label: string;
+  ops: EditOp[];
+  /** 같은 묶음 번호의 연속 트랜잭션은 명령 취소 때 하나로 되돌린다(명령 하나 안의 여러 단계) */
+  group?: number;
+}
+
+/** 변경이 화면에 미치는 범위 */
+export interface ChangeSummary {
+  /** 공간 블록 키(대문자) → 바뀐 핸들(추가·삭제·수정) */
+  spaces: Map<string, { removed: Set<string>; changed: Entity[] }>;
+  /** 블록 정의가 바뀌었으면(블록 참조 다시 그리기 필요) */
+  blocksChanged: boolean;
+  /** 도면층·선종류·스타일이 바뀌었으면 */
+  tablesChanged: boolean;
+}
+
+function invert(op: EditOp): EditOp {
+  switch (op.kind) {
+    case 'add':
+      return { kind: 'remove', block: op.block, entity: op.entity, index: op.index ?? -1 };
+    case 'remove':
+      return { kind: 'add', block: op.block, entity: op.entity, index: op.index };
+    case 'modify':
+      return { kind: 'modify', block: op.block, before: op.after, after: op.before };
+    case 'header':
+      return { kind: 'header', name: op.name, before: op.after, after: op.before };
+    default:
+      return { ...op, before: op.after, after: op.before } as EditOp;
+  }
+}
+
+export function inverseTransaction(tx: Transaction): Transaction {
+  return { label: tx.label, ops: tx.ops.map(invert).reverse() };
+}
+
+function indexEntity(doc: CadDocument, e: Entity, on: boolean): void {
+  if (on) {
+    if (e.handle) doc.entityIndex.set(e.handle, e);
+    if (e.type === 'INSERT') for (const a of e.attribs) if (a.handle) doc.entityIndex.set(a.handle, a);
+  } else {
+    if (e.handle) doc.entityIndex.delete(e.handle);
+    if (e.type === 'INSERT') for (const a of e.attribs) if (a.handle) doc.entityIndex.delete(a.handle);
+  }
+}
+
+/** 변경 하나를 문서에 적용한다(되돌릴 때는 inverse를 적용한다) */
+export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: ChangeSummary): void {
+  const space = (key: string) => {
+    if (!summary) return null;
+    let s = summary.spaces.get(key);
+    if (!s) {
+      s = { removed: new Set(), changed: [] };
+      summary.spaces.set(key, s);
+    }
+    return s;
+  };
+  for (const op of ops) {
+    switch (op.kind) {
+      case 'add': {
+        const b = doc.blocks.get(op.block);
+        if (!b) throw new Error(`블록이 없습니다: ${op.block}`);
+        const i = op.index === undefined || op.index < 0 || op.index > b.entities.length ? b.entities.length : op.index;
+        b.entities.splice(i, 0, op.entity);
+        indexEntity(doc, op.entity, true);
+        space(op.block)?.changed.push(op.entity);
+        break;
+      }
+      case 'remove': {
+        const b = doc.blocks.get(op.block);
+        if (!b) break;
+        let i = op.index >= 0 && b.entities[op.index]?.handle === op.entity.handle ? op.index : b.entities.findIndex((e) => e.handle === op.entity.handle);
+        if (i < 0) i = b.entities.indexOf(op.entity);
+        if (i >= 0) b.entities.splice(i, 1);
+        indexEntity(doc, op.entity, false);
+        space(op.block)?.removed.add(op.entity.handle);
+        break;
+      }
+      case 'modify': {
+        const b = doc.blocks.get(op.block);
+        if (!b) break;
+        const i = b.entities.findIndex((e) => e.handle === op.before.handle);
+        if (i >= 0) b.entities[i] = op.after;
+        indexEntity(doc, op.before, false);
+        indexEntity(doc, op.after, true);
+        const s = space(op.block);
+        if (s) {
+          s.removed.add(op.before.handle);
+          s.changed.push(op.after);
+        }
+        break;
+      }
+      case 'layer':
+        if (op.after) doc.layers.set(op.key, op.after);
+        else doc.layers.delete(op.key);
+        if (summary) summary.tablesChanged = true;
+        break;
+      case 'linetype':
+        if (op.after) doc.linetypes.set(op.key, op.after);
+        else doc.linetypes.delete(op.key);
+        if (summary) summary.tablesChanged = true;
+        break;
+      case 'textStyle':
+        if (op.after) doc.textStyles.set(op.key, op.after);
+        else doc.textStyles.delete(op.key);
+        if (summary) summary.tablesChanged = true;
+        break;
+      case 'dimStyle':
+        if (op.after) doc.dimStyles.set(op.key, op.after);
+        else doc.dimStyles.delete(op.key);
+        if (summary) summary.tablesChanged = true;
+        break;
+      case 'blockDef': {
+        if (op.before) for (const e of op.before.entities) indexEntity(doc, e, false);
+        if (op.after) {
+          doc.blocks.set(op.key, op.after);
+          for (const e of op.after.entities) indexEntity(doc, e, true);
+        } else doc.blocks.delete(op.key);
+        if (summary) summary.blocksChanged = true;
+        break;
+      }
+      case 'header':
+        if (op.after === undefined) doc.header.delete(op.name);
+        else doc.header.set(op.name, op.after);
+        break;
+    }
+  }
+}
+
+export function emptySummary(): ChangeSummary {
+  return { spaces: new Map(), blocksChanged: false, tablesChanged: false };
+}
+
+/** 객체가 들어 있는 블록 키 */
+export function ownerBlockKey(doc: CadDocument, handle: string): string | null {
+  for (const [k, b] of doc.blocks) if (b.entities.some((e) => e.handle === handle)) return k;
+  return null;
+}
+
+/**
+ * 편집 세션: 명령 하나 = 트랜잭션 하나. 되돌리기·다시 하기 목록을 가진다.
+ */
+export class EditSession {
+  private readonly undoStack: Transaction[] = [];
+  private readonly redoStack: Transaction[] = [];
+  /** 저장한 뒤 바뀌었는지 */
+  dirty = false;
+  private savedDepth = 0;
+  private ownerCache: Map<string, string> | null = null;
+
+  constructor(
+    readonly doc: CadDocument,
+    /** 문서에 적용된 변경을 다른 쪽(화면·워커)에 알린다 */
+    private readonly onApply: (tx: Transaction, summary: ChangeSummary) => void,
+  ) {}
+
+  /** 새 핸들($HANDSEED에서 하나씩) */
+  newHandle(): string {
+    const seed = this.doc.header.get('$HANDSEED');
+    let next = 0n;
+    try {
+      next = BigInt('0x' + (typeof seed === 'string' && seed ? seed : '0'));
+    } catch {
+      next = 0n;
+    }
+    // 이미 쓰인 핸들과 겹치지 않게 한다
+    if (next === 0n || this.doc.entityIndex.has(normalizeHandle(next.toString(16))) || this.doc.objects.has(normalizeHandle(next.toString(16)))) {
+      let max = 0n;
+      for (const h of this.doc.entityIndex.keys()) {
+        try {
+          const v = BigInt('0x' + h);
+          if (v > max) max = v;
+        } catch {
+          /* 무시 */
+        }
+      }
+      for (const h of this.doc.objects.keys()) {
+        try {
+          const v = BigInt('0x' + h);
+          if (v > max) max = v;
+        } catch {
+          /* 무시 */
+        }
+      }
+      for (const b of this.doc.blocks.values()) {
+        for (const h of [b.handle, b.recordHandle, b.endHandle ?? '']) {
+          if (!h) continue;
+          try {
+            const v = BigInt('0x' + h);
+            if (v > max) max = v;
+          } catch {
+            /* 무시 */
+          }
+        }
+      }
+      if (next <= max) next = max + 1n;
+    }
+    const h = normalizeHandle(next.toString(16));
+    this.doc.header.set('$HANDSEED', normalizeHandle((next + 1n).toString(16)));
+    return h;
+  }
+
+  /** 블록 키(공간) */
+  ownerOf(handle: string): string | null {
+    if (!this.ownerCache) {
+      this.ownerCache = new Map();
+      for (const [k, b] of this.doc.blocks) for (const e of b.entities) if (e.handle) this.ownerCache.set(e.handle, k);
+    }
+    let k = this.ownerCache.get(handle);
+    if (k && this.doc.blocks.get(k)?.entities.some((e) => e.handle === handle)) return k;
+    k = ownerBlockKey(this.doc, handle) ?? undefined;
+    if (k) this.ownerCache.set(handle, k);
+    return k ?? null;
+  }
+
+  commit(tx: Transaction): void {
+    if (!tx.ops.length) return;
+    const summary = emptySummary();
+    applyOps(this.doc, tx.ops, summary);
+    for (const op of tx.ops) if ((op.kind === 'add' || op.kind === 'modify') && this.ownerCache) this.ownerCache.set(op.kind === 'add' ? op.entity.handle : op.after.handle, op.block);
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (tx.group !== undefined && top && top.group === tx.group) top.ops.push(...tx.ops);
+    else this.undoStack.push({ ...tx, ops: [...tx.ops] });
+    if (this.undoStack.length > 500) this.undoStack.shift();
+    this.redoStack.length = 0;
+    this.dirty = true;
+    this.onApply(tx, summary);
+  }
+
+  /** 명령 안에서 마지막 단계만 되돌린다(LINE의 U 옵션 등). 되돌린 작업 수를 돌려준다 */
+  undoLastStep(group: number, count: number): number {
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (!top || top.group !== group || !count) return 0;
+    const n = Math.min(count, top.ops.length);
+    const ops = top.ops.splice(top.ops.length - n, n);
+    if (!top.ops.length) this.undoStack.pop();
+    const inv = inverseTransaction({ label: top.label, ops });
+    const summary = emptySummary();
+    applyOps(this.doc, inv.ops, summary);
+    this.ownerCache = null;
+    this.onApply(inv, summary);
+    return n;
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  canRedo(): boolean {
+    return this.redoStack.length > 0;
+  }
+
+  undo(): Transaction | null {
+    const tx = this.undoStack.pop();
+    if (!tx) return null;
+    const inv = inverseTransaction(tx);
+    const summary = emptySummary();
+    applyOps(this.doc, inv.ops, summary);
+    this.redoStack.push(tx);
+    this.dirty = this.undoStack.length !== this.savedDepth;
+    this.ownerCache = null;
+    this.onApply(inv, summary);
+    return tx;
+  }
+
+  redo(): Transaction | null {
+    const tx = this.redoStack.pop();
+    if (!tx) return null;
+    const summary = emptySummary();
+    applyOps(this.doc, tx.ops, summary);
+    this.undoStack.push(tx);
+    this.dirty = this.undoStack.length !== this.savedDepth;
+    this.ownerCache = null;
+    this.onApply(tx, summary);
+    return tx;
+  }
+
+  markSaved(): void {
+    this.savedDepth = this.undoStack.length;
+    this.dirty = false;
+  }
+}
+
+/** 객체를 깊이 복사한다(편집 전 상태 보관용) */
+export function cloneEntity<T extends Entity>(e: T): T {
+  return structuredClone(e);
+}
+
+export { tableKey };

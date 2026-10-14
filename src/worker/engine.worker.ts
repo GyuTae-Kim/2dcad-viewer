@@ -12,6 +12,7 @@ import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
 import { collectTextUsage } from '../text/collect';
 import type { FromWorker, SceneMessage, ToWorker } from './protocol';
+import { applyOps } from '../edit/session';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -65,6 +66,31 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         }
         post({ type: 'document', id: msg.id, docId, doc, readMs });
         post({ type: 'progress', id: msg.id, stage: 'build', fraction: 0 });
+        const scene = makeScene(doc, '*Model_Space');
+        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, transferables(scene.list));
+        break;
+      }
+      case 'edit': {
+        const doc = docs.get(msg.docId);
+        if (doc) applyOps(doc, msg.ops);
+        break;
+      }
+      case 'close':
+        docs.delete(msg.docId);
+        break;
+      case 'adopt': {
+        const doc = msg.doc;
+        const docId = nextDoc++;
+        docs.set(docId, doc);
+        const usage = collectTextUsage(doc);
+        if (usage.needsOutline && lib) {
+          try {
+            await Promise.all([lib.require(usage.codes), lib.requireLatin(usage.latin)]);
+          } catch {
+            /* 대체 글꼴로 그린다 */
+          }
+        }
+        post({ type: 'document', id: msg.id, docId, doc, readMs: 0 });
         const scene = makeScene(doc, '*Model_Space');
         post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, transferables(scene.list));
         break;

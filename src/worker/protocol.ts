@@ -2,11 +2,17 @@
 import type { CadDocument } from '../core/model';
 import type { DisplayList } from '../render/displaylist';
 import type { LayerState, StyleSpec } from '../render/styles';
+import type { EditOp } from '../edit/session';
 
 export type ToWorker =
   | { type: 'init'; fontBase: string }
   | { type: 'open'; id: number; name: string; data: ArrayBuffer }
-  | { type: 'build'; id: number; docId: number; space: string };
+  | { type: 'build'; id: number; docId: number; space: string }
+  /** 메인에서 적용한 편집을 워커 문서에도 적용한다(응답 없음) */
+  | { type: 'edit'; docId: number; ops: EditOp[] }
+  | { type: 'close'; docId: number }
+  /** 메인에서 만든 문서(새 도면)를 받아 장면을 만든다 */
+  | { type: 'adopt'; id: number; name: string; doc: CadDocument };
 
 export interface SceneMessage {
   list: DisplayList;

@@ -317,6 +317,7 @@ export class CadView {
       if (!scene) return;
       r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
       r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: this.visibleRect() });
+      this.drawOverlayScene(s.space, this.viewXf(), 3.78 * this.dpr, dark, bg);
       return;
     }
     // 배치
@@ -350,6 +351,18 @@ export class CadView {
       r.setStyles(scene.styleData(s.sceneLayers(s.space), 'paper', false, 0xffffff, this.lwDisplay));
       r.draw(scene.gpu, this.viewXf(), { lwScale, visible: this.visibleRect() });
     }
+    this.drawOverlayScene(s.space, this.viewXf(), lwScale, false, 0xffffff);
+  }
+
+  /** 편집 덧그림(기본 장면 위) */
+  private drawOverlayScene(space: string, xf: ViewXf, lwScale: number, dark: boolean, bg: number, vpFrozen?: Set<string>, visible?: [number, number, number, number]): void {
+    const s = this.state!;
+    const ov = s.edits.get(space)?.overlay;
+    if (!ov || !ov.entities.length) return;
+    const r = this.renderer;
+    r.clearDepth();
+    r.setStyles(ov.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay, vpFrozen));
+    r.draw(ov.gpu, xf, { lwScale, visible: visible ?? undefined });
   }
 
   private drawViewport(vx: ViewportXf, model: NonNullable<ReturnType<DocState['scenes']['get']>>, layerIdx: Map<string, number>, lwScale: number): void {
@@ -383,10 +396,10 @@ export class CadView {
     const center = this.worldToScreen(vp.center.x, vp.center.y);
     // 보이는 모형 범위(대략): 뷰포트 사각형을 모형으로
     const rad = Math.hypot(hw, hh) / vx.k;
-    r.draw(model.gpu, { A, refX: vx.refX, refY: vx.refY, tx: center.x * this.dpr, ty: center.y * this.dpr }, {
-      lwScale,
-      visible: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
-    });
+    const xf: ViewXf = { A, refX: vx.refX, refY: vx.refY, tx: center.x * this.dpr, ty: center.y * this.dpr };
+    const vis: [number, number, number, number] = [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad];
+    r.draw(model.gpu, xf, { lwScale, visible: vis });
+    this.drawOverlayScene(MODEL_SPACE, xf, lwScale, false, 0xffffff, vx.frozen, vis);
   }
 
   private renderOverlay(): void {

@@ -1,6 +1,7 @@
 /** 엔진 워커 클라이언트 */
 import type { CadDocument } from '../core/model';
 import type { FromWorker, SceneMessage, ToWorker } from '../worker/protocol';
+import type { EditOp } from '../edit/session';
 
 export interface OpenResult {
   docId: number;
@@ -69,6 +70,24 @@ export class EngineClient {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress });
       this.post({ type: 'open', id, name, data }, [data]);
     });
+  }
+
+  /** 메인에서 만든 문서를 워커에 넘기고 모형 장면을 받는다(워커가 돌려준 문서 사본을 쓴다) */
+  adopt(name: string, doc: CadDocument): Promise<OpenResult> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.post({ type: 'adopt', id, name, doc });
+    });
+  }
+
+  /** 편집을 워커 문서에도 적용한다 */
+  edit(docId: number, ops: EditOp[]): void {
+    this.post({ type: 'edit', docId, ops });
+  }
+
+  closeDoc(docId: number): void {
+    this.post({ type: 'close', docId });
   }
 
   build(docId: number, space: string): Promise<SceneMessage> {
