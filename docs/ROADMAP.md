@@ -65,10 +65,16 @@
 - [x] 외부 참조(DWG·DXF): 고른 로컬 파일을 별도 문서로 열어 인스턴스 변환·XCLIP대로 그림(화면·뷰포트·출력, 저장 파일에는 섞지 않음)
 - [x] PDF 언더레이: 고른 PDF의 페이지를 pdf.js로 그려 붙임(자르기·반전, 단색, 흐리기, 배경 맞춤, 화면·PDF·SVG)
 - [x] 중첩 외부 참조(덮어씌우기 제외, 순환 차단), 외부 참조 도면층 재지정(`참조|도면층`, VISRETAIN, 뷰포트 동결)
-- [ ] 연관 치수, 기하 구속, 동적 블록, 주석 축척
-- [ ] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬 그룹 코드, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(지금은 DWG에서 블록 참조로 저장)
+- [x] 연관 치수(DIMASSOC·DIMREASSOCIATE·DIMDISASSOCIATE·DIMREGEN), 검사 치수(DIMINSPECT)
+- [x] 파라메트릭 기하·치수 구속(GEOMCONSTRAINT·DIMCONSTRAINT·AUTOCONSTRAIN·PARAMETERS, 이 앱의 구속 기록으로 저장)
+- [x] 동적 블록 참조 편집(DYNPROPS·RESETBLOCK·동적 그립, DXF에서 연 도면)
+- [ ] 동적 블록: DWG의 동적 블록 노드 해독·쓰기, 구속 기반 정의
+- [ ] AutoCAD 파라메트릭 구속(ACAD_ASSOCNETWORK) 읽기·편집
+- [ ] 주석 축척
+- [x] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬·셀 서식, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(R2000~R2018)
 - [x] 필드 회색 배경 표시(FIELDDISPLAY)
-- [ ] AutoCAD FIELD 객체 읽기
+- [x] AutoCAD FIELD 객체 읽기·쓰기(DXF·DWG)
+- [x] PDF 가져오기(PDFIMPORT: 벡터 형상·솔리드 채우기·트루타입 문자)
 - [x] 해치 편집(HATCHEDIT), 블록 자르기(XCLIP), 하이퍼링크(HYPERLINK), 데이터 추출(DATAEXTRACTION, 표·CSV)
 - [x] 자동 저장과 도면 복구(SAVETIME·DRAWINGRECOVERY·RECOVER, 이 브라우저에만)
 - [x] 배치를 모형으로 내보내기(EXPORTLAYOUT)
