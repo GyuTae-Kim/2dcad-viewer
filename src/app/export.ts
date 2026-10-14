@@ -3,7 +3,7 @@
  * PDF는 직접 쓴다(선·채움만, 문자는 모양 그대로 그린다).
  */
 import { MODEL_SPACE } from '../core/model';
-import { imageDataUrl, imagePixels } from './refs';
+import { imageDataUrl, imagePixels, xrefOfDoc } from './refs';
 import type { CtbTable } from '../render/ctb';
 import type { DisplayList } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
@@ -132,6 +132,24 @@ export interface PageOptions {
 }
 
 /** 모형의 사각형(도면 좌표)을 용지에 놓는다. k = 출력 단위 / 도면 단위, 원점 = 용지 위 왼쪽 기준 출력 좌표 */
+/** 장면의 외부 참조 인스턴스를 출력 레이어로(호스트 레이어 L 아래에 그린다) */
+function xrefLayers(st: DocState, L: Page['layers'][number], opt: PageOptions): Page['layers'] {
+  const out: Page['layers'] = [];
+  for (const x of L.scene.source.xrefs ?? []) {
+    if (!(L.styles[x.style * 8 + 5]! > 0)) continue;
+    const e = xrefOfDoc(st.doc, x.key);
+    if (!e) continue;
+    const [a, b, c, d, ex, fy] = x.m;
+    const m = L.m;
+    const mm: Affine = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * ex + m[2] * fy + m[4], m[1] * ex + m[3] * fy + m[5]];
+    const styles = e.scene.styleData(e.layers, opt.plotStyle || opt.ctb ? 'xref-plot' : 'xref', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb);
+    const layer: Page['layers'][number] = { scene: e.scene, m: mm, styles, clipPx: L.clipPx, clipPoly: L.clipPoly };
+    if (x.clip && !x.clipInverted) layer.clipPoly = x.clip.map((v, i) => (i & 1 ? m[1] * x.clip![i - 1]! + m[3] * v + m[5] : m[0] * v + m[2] * x.clip![i + 1]! + m[4]));
+    out.push(layer);
+  }
+  return out;
+}
+
 export function modelPage(st: DocState, rect: [number, number, number, number], width: number, height: number, k: number, unitsPerMm: number, opt: PageOptions, clip = true): Page | null {
   const scene = st.scenes.get(MODEL_SPACE);
   if (!scene) return null;
@@ -143,7 +161,7 @@ export function modelPage(st: DocState, rect: [number, number, number, number], 
   const page: Page = { width, height, background: 0xffffff, lwScale: unitsPerMm, layers: [] };
   const L: Page['layers'][number] = { scene, m, styles, clipWorld: [x0, y0, x1, y1] };
   if (clip) L.clipPx = [width / 2 - (cx - x0) * k, height / 2 - (y1 - cy) * k, width / 2 + (x1 - cx) * k, height / 2 + (cy - y0) * k];
-  page.layers.push(L);
+  page.layers.push(...xrefLayers(st, L, opt), L);
   return page;
 }
 
@@ -179,7 +197,7 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
       const hw = vp.width / 2;
       const hh = vp.height / 2;
       const rad = Math.hypot(hw, hh) / vx.k;
-      page.layers.push({
+      const vl: Page['layers'][number] = {
         scene: model,
         m,
         styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle || opt.ctb ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle, opt.ctb),
@@ -187,10 +205,14 @@ export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt:
         clipWorld: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
         // 다각형·원 뷰포트 경계(출력 좌표)
         clipPoly: vx.clip ? vx.clip.map((v, i) => (i & 1 ? (paper.maxY - v) * k : (v - paper.minX) * k)) : undefined,
-      });
+      };
+      page.layers.push(...xrefLayers(st, vl, opt), vl);
     }
   }
-  if (scene) page.layers.push({ scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(space), opt.plotStyle || opt.ctb ? 'paper-plot' : 'paper', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb) });
+  if (scene) {
+    const pl: Page['layers'][number] = { scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(space), opt.plotStyle || opt.ctb ? 'paper-plot' : 'paper', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle, opt.ctb) };
+    page.layers.push(...xrefLayers(st, pl, opt), pl);
+  }
   return page;
 }
 

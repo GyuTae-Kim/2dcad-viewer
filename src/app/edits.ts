@@ -10,6 +10,7 @@ import { type ChangeSummary, EditSession, type Transaction } from '../edit/sessi
 import type { App } from './app';
 import type { DocState } from './docstate';
 import { OverlayScene } from './scene';
+import { expandXrefBounds } from './refs';
 
 const REBUILD_DELAY = 1200;
 
@@ -153,6 +154,7 @@ export class EditManager {
     }
     if (!app.docs.includes(st)) return;
     st.addScene(app.view.renderer, msg, key);
+    expandXrefBounds(app, st, key);
     const ed = st.spaceEdits(key);
     const base = st.scenes.get(key)!;
     const dead = this.deadOf(st, key);

@@ -17,7 +17,7 @@ export class SpaceScene {
   readonly source: DisplayList;
   readonly styles: StyleTable;
   readonly entities: EntityBox[];
-  readonly bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   private styleCache = new Map<string, Float32Array>();
 
   constructor(

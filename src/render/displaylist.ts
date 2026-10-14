@@ -113,6 +113,21 @@ export interface DisplayList {
   xlineHandles: string[];
   /** 래스터 이미지(파일이 연결됐을 때만 그린다) */
   images?: ImageDraw[];
+  /** 외부 참조 인스턴스(참조 파일을 연결했을 때 그 모형 장면을 이 변환으로 그린다) */
+  xrefs?: XrefDraw[];
+}
+
+/** 외부 참조 하나: 참조 모형 좌표 → 이 공간 좌표 2D 아핀 [a, b, c, d, e, f] */
+export interface XrefDraw {
+  /** 외부 참조 블록 이름(대문자) */
+  key: string;
+  handle: string;
+  m: [number, number, number, number, number, number];
+  /** XCLIP 경계(이 공간 좌표) */
+  clip?: number[];
+  clipInverted?: boolean;
+  /** 블록 참조의 스타일(도면층 끄기·동결로 숨길 때) */
+  style: number;
 }
 
 /** 래스터 이미지 하나: 자르기 경계를 삼각형으로 나눈 정점 [x - ox, y - oy, u, v, …] */
@@ -388,6 +403,16 @@ export class DisplayListBuilder {
   }
 
   private pendingImages: ImageDraw[] = [];
+  private xrefs: XrefDraw[] = [];
+  private pendingXrefs: XrefDraw[] = [];
+
+  /** 외부 참조 인스턴스. 범위는 참조 쪽 범위를 모르므로 삽입점만 넣는다 */
+  xref(key: string, m: XrefDraw['m'], style: number, clip?: { poly: number[]; inverted: boolean }): void {
+    const d: XrefDraw = { key, handle: '', m, style, clip: clip?.poly, clipInverted: clip?.inverted };
+    this.xrefs.push(d);
+    this.pendingXrefs.push(d);
+    this.grow(m[4], m[5]);
+  }
 
   xline(x: number, y: number, dx: number, dy: number, ray: boolean, style: number): void {
     if (this.clips.length) {
@@ -405,8 +430,12 @@ export class DisplayListBuilder {
 
   /** 지금까지 모은 그림을 한 객체로 마감한다. */
   endEntity(handle: string): void {
+    // 이미지·외부 참조만 있는 객체도 범위를 남긴다
+    const hadOther = this.pendingImages.length > 0 || this.pendingXrefs.length > 0;
     for (const im of this.pendingImages) im.handle = handle;
     this.pendingImages = [];
+    for (const x of this.pendingXrefs) x.handle = handle;
+    this.pendingXrefs = [];
     while (this.xlineHandles.length < this.xlines.length / 7) this.xlineHandles.push(handle);
     for (const p of this.pendingInst) {
       let r = this.inst.get(p.g);
@@ -419,7 +448,7 @@ export class DisplayListBuilder {
     const hadGlyphs = this.pendingInst.length > 0;
     this.pendingInst = [];
     if (this.segS.length === 0 && this.triS.length === 0) {
-      if (hadGlyphs) this.recordEntity(handle);
+      if (hadGlyphs || hadOther) this.recordEntity(handle);
       this.resetEntity();
       this.serial++;
       return;
@@ -593,6 +622,7 @@ export class DisplayListBuilder {
       xlines: this.xlines,
       xlineHandles: this.xlineHandles,
       images: this.images.length ? this.images : undefined,
+      xrefs: this.xrefs.length ? this.xrefs : undefined,
     };
   }
 }

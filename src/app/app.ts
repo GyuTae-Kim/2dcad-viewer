@@ -21,6 +21,7 @@ import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
 import { OverlayScene } from './scene';
+import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 
 export class CancelError extends Error {
@@ -619,6 +620,7 @@ export class App {
         .build(st.docId, key)
         .then((msg) => {
           st.addScene(this.view.renderer, msg, key);
+          expandXrefBounds(this, st, key);
         })
         .finally(() => {
           st.buildPending.delete(key);

@@ -5,7 +5,9 @@ import { MODEL_SPACE, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
 import type { Camera, DocState } from './docstate';
-import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
+import { type OverlayScene, type PaperInfo, type SpaceScene, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
+import type { DisplayList } from '../render/displaylist';
+import type { LayerState } from '../render/styles';
 
 export interface Pt {
   x: number;
@@ -109,6 +111,52 @@ export class CadView {
 
   /** 문맥 복구 뒤 장면을 다시 올리는 함수(앱이 넣는다) */
   onRestore: (() => void) | null = null;
+  /** 외부 참조 장면(앱이 연결한 참조 파일). 문서 번호·참조 블록 이름(대문자)으로 찾는다 */
+  xrefScene: ((docId: number, key: string) => { scene: SpaceScene; layers: LayerState[] } | null) | null = null;
+
+  /**
+   * 표시 목록의 외부 참조 인스턴스를 그린다(참조 장면을 인스턴스 변환으로).
+   * hostStyles는 호스트 장면의 스타일 표(블록 참조의 도면층이 꺼져 있으면 건너뛴다)
+   */
+  private drawXrefs(list: DisplayList | undefined, xf: ViewXf, lwScale: number, dark: boolean, bg: number, hostStyles: Float32Array | null, toScreen: (x: number, y: number) => [number, number]): boolean {
+    const s = this.state;
+    const inst = list?.xrefs;
+    if (!s || !inst?.length || !this.xrefScene) return false;
+    const r = this.renderer;
+    let drew = false;
+    for (const x of inst) {
+      if (hostStyles && !(hostStyles[x.style * 8 + 5]! > 0)) continue;
+      const e = this.xrefScene(s.docId, x.key);
+      if (!e) continue;
+      const [a, b, c, d, ex, fy] = x.m;
+      const A = xf.A;
+      const dx = ex - xf.refX;
+      const dy = fy - xf.refY;
+      const xxf: ViewXf = {
+        A: [A[0] * a + A[2] * b, A[1] * a + A[3] * b, A[0] * c + A[2] * d, A[1] * c + A[3] * d],
+        refX: 0,
+        refY: 0,
+        tx: A[0] * dx + A[2] * dy + xf.tx,
+        ty: A[1] * dx + A[3] * dy + xf.ty,
+      };
+      if (x.clip && x.clip.length >= 6 && !x.clipInverted) {
+        const px: number[] = [];
+        for (let i = 0; i + 1 < x.clip.length; i += 2) px.push(...toScreen(x.clip[i]!, x.clip[i + 1]!));
+        const idx = earcut(px);
+        const tris: number[] = [];
+        for (const i of idx) tris.push(px[i * 2]!, px[i * 2 + 1]!);
+        r.stencilClip(tris.length ? tris : null);
+      }
+      r.clearDepth();
+      r.setStyles(e.scene.styleData(e.layers, 'xref', dark, bg, this.lwDisplay));
+      r.draw(e.scene.gpu, xxf, { lwScale, bg: rgbF(bg) });
+      if (x.clip && !x.clipInverted) r.stencilClip(null);
+      drew = true;
+    }
+    if (drew) r.clearDepth();
+    return drew;
+  }
+
   /** 깊이 확대용 세부 장면(앱이 만들고 버린다). region 안이고 편집 세대가 같을 때만 기본 장면 대신 그린다 */
   detail: { docId: number; space: string; gen: number; region: [number, number, number, number]; scale: number; scene: OverlayScene } | null = null;
 
@@ -328,7 +376,14 @@ export class CadView {
       if (!scene) return;
       const vis = this.visibleRect();
       const d = this.detail;
-      if (d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3]) {
+      const useDetail = !!d && d.docId === s.docId && d.space === s.space && d.gen === s.gen && d.region[0] <= vis[0] && d.region[1] <= vis[1] && d.region[2] >= vis[2] && d.region[3] >= vis[3];
+      // 외부 참조(밑그림)
+      const toScreenM = (x: number, y: number): [number, number] => {
+        const q = this.worldToScreen(x, y);
+        return [q.x * this.dpr, q.y * this.dpr];
+      };
+      this.drawXrefs(useDetail ? d!.scene.source : scene.source, this.viewXf(), 3.78 * this.dpr, dark, bg, scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay), toScreenM);
+      if (useDetail && d) {
         // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
         r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
         r.draw(d.scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
@@ -367,7 +422,10 @@ export class CadView {
     r.scissor(null);
     r.clearDepth();
     if (scene) {
-      r.setStyles(scene.styleData(s.sceneLayers(s.space), 'paper', false, 0xffffff, this.lwDisplay));
+      const paperStyles = scene.styleData(s.sceneLayers(s.space), 'paper', false, 0xffffff, this.lwDisplay);
+      // 종이 공간의 외부 참조(도곽 등)
+      this.drawXrefs(scene.source, this.viewXf(), lwScale, false, 0xffffff, paperStyles, (x, y) => [...toPx(x, y)] as [number, number]);
+      r.setStyles(paperStyles);
       r.draw(scene.gpu, this.viewXf(), { lwScale, visible: this.visibleRect() });
     }
     this.drawOverlayScene(s.space, this.viewXf(), lwScale, false, 0xffffff);
@@ -429,6 +487,14 @@ export class CadView {
     const rad = Math.hypot(hw, hh) / vx.k;
     const xf: ViewXf = { A, refX: vx.refX, refY: vx.refY, tx: center.x * this.dpr, ty: center.y * this.dpr };
     const vis: [number, number, number, number] = [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad];
+    // 모형의 외부 참조(뷰포트 안). 다각형 뷰포트의 스텐실과 겹치지 않게 XCLIP 없는 것만 자르기 없이
+    if (model.source.xrefs?.length) {
+      const styles = model.styleData(s.sceneLayers(MODEL_SPACE), 'vp', false, 0xffffff, this.lwDisplay, frozen.size ? frozen : undefined);
+      const toS = (x: number, y: number): [number, number] => [A[0] * (x - xf.refX) + A[2] * (y - xf.refY) + xf.tx, A[1] * (x - xf.refX) + A[3] * (y - xf.refY) + xf.ty];
+      if (this.drawXrefs(vx.clip ? { ...model.source, xrefs: model.source.xrefs.map((q) => ({ ...q, clip: undefined })) } : model.source, xf, lwScale, false, 0xffffff, styles, toS)) {
+        r.setStyles(styles);
+      }
+    }
     r.draw(model.gpu, xf, { lwScale, visible: vis });
     this.drawOverlayScene(MODEL_SPACE, xf, lwScale, false, 0xffffff, vx.frozen, vis);
     if (vx.clip) r.stencilClip(null);

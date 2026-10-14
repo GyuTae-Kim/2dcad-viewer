@@ -4,6 +4,8 @@
  * 파일은 서버로 보내지 않는다.
  */
 import type { CadDocument, ImageDefObject, UnderlayDefObject } from '../core/model';
+import type { LayerState } from '../render/styles';
+import { SpaceScene } from './scene';
 import type { App } from './app';
 import type { DocState } from './docstate';
 import { dialog, h, toast } from './ui/dom';
@@ -23,6 +25,99 @@ const baseKey = (p: string) => p.replace(/^.*[\\/]/, '').toLowerCase();
 /** 연결한 이미지 원본(그래픽 문맥을 되찾을 때 다시 올린다) */
 const bitmaps = new Map<string, ImageBitmap>();
 
+/** 연결한 외부 참조 파일(열쇠 = 파일 이름 소문자): 워커 문서와 모형 장면 */
+interface XrefFile {
+  name: string;
+  docId: number;
+  doc: CadDocument;
+  scene: SpaceScene;
+  layers: LayerState[];
+}
+const xrefFiles = new Map<string, XrefFile>();
+
+/** 호스트 도면의 외부 참조 블록 → 연결한 참조 파일 */
+export function xrefOfDoc(doc: CadDocument, blockKey: string): XrefFile | null {
+  const b = doc.blocks.get(blockKey);
+  if (!b || !(b.flags & 4)) return null;
+  return xrefFiles.get(baseKey(b.xrefPath || `${b.name}.dwg`)) ?? null;
+}
+
+function xrefFor(app: App, hostDocId: number, blockKey: string): XrefFile | null {
+  const st = app.docs.find((d) => d.docId === hostDocId);
+  return st ? xrefOfDoc(st.doc, blockKey) : null;
+}
+
+/**
+ * 연결한 외부 참조의 범위를 블록 참조의 범위와 공간 범위에 넣는다(범위 확대·창 선택·출력 범위).
+ * 장면을 새로 만들 때마다 다시 부른다.
+ */
+export function expandXrefBounds(app: App, st: DocState, space?: string): void {
+  for (const [key, sc] of st.scenes) {
+    if (space && key !== space) continue;
+    let changed = false;
+    for (const x of sc.source.xrefs ?? []) {
+      const e = xrefOfDoc(st.doc, x.key);
+      const b = e?.scene.bounds;
+      if (!b) continue;
+      const [a, bb, c, d, ex, fy] = x.m;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [px, py] of [
+        [b.minX, b.minY],
+        [b.maxX, b.minY],
+        [b.maxX, b.maxY],
+        [b.minX, b.maxY],
+      ] as const) {
+        const X = a * px + c * py + ex;
+        const Y = bb * px + d * py + fy;
+        minX = Math.min(minX, X);
+        minY = Math.min(minY, Y);
+        maxX = Math.max(maxX, X);
+        maxY = Math.max(maxY, Y);
+      }
+      const box = sc.boxOf(x.handle);
+      if (box) {
+        box.minX = Math.min(box.minX, minX);
+        box.minY = Math.min(box.minY, minY);
+        box.maxX = Math.max(box.maxX, maxX);
+        box.maxY = Math.max(box.maxY, maxY);
+      }
+      const sb = sc.bounds ?? { minX, minY, maxX, maxY };
+      sc.bounds = { minX: Math.min(sb.minX, minX), minY: Math.min(sb.minY, minY), maxX: Math.max(sb.maxX, maxX), maxY: Math.max(sb.maxY, maxY) };
+      changed = true;
+    }
+    if (changed) app.resetPicker(st, key);
+  }
+}
+
+/** 고른 파일 중 외부 참조(DWG·DXF)를 연다. 연결한 파일 이름들 */
+export async function linkXrefFiles(app: App, files: File[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const f of files) {
+    if (!/\.(dwg|dxf)$/i.test(f.name)) continue;
+    const key = f.name.toLowerCase();
+    try {
+      const res = await app.engine.open(f.name, await f.arrayBuffer());
+      const old = xrefFiles.get(key);
+      if (old) {
+        old.scene.dispose(app.view.renderer);
+        app.engine.closeDoc(old.docId);
+      }
+      xrefFiles.set(key, { name: f.name, docId: res.docId, doc: res.doc, scene: new SpaceScene(app.view.renderer, res.model, '*MODEL_SPACE'), layers: res.model.layers });
+      out.push(f.name);
+    } catch (e) {
+      app.cmd.print(`${f.name}: 외부 참조를 열지 못했습니다(${e instanceof Error ? e.message : String(e)}).`, 'err');
+    }
+  }
+  if (out.length) {
+    for (const st of app.docs) expandXrefBounds(app, st);
+    app.view.requestRender();
+  }
+  return out;
+}
+
 export function docRefs(app: App, doc: CadDocument): RefItem[] {
   const out: RefItem[] = [];
   for (const o of doc.objects.values()) {
@@ -36,7 +131,10 @@ export function docRefs(app: App, doc: CadDocument): RefItem[] {
     }
   }
   for (const b of doc.blocks.values())
-    if (b.flags & 4) out.push({ kind: 'xref', name: b.name, path: b.xrefPath ?? '', key: baseKey(b.xrefPath ?? b.name + '.dwg'), found: b.entities.length > 0 });
+    if (b.flags & 4) {
+      const key = baseKey(b.xrefPath || b.name + '.dwg');
+      out.push({ kind: 'xref', name: b.name, path: b.xrefPath ?? '', key, found: b.entities.length > 0 || xrefFiles.has(key) });
+    }
   return out.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
 }
 
@@ -149,6 +247,7 @@ function pickFiles(folder: boolean): Promise<File[]> {
 
 /** 문서를 연 뒤: 찾지 못한 참조 안내 */
 export function noteMissingRefs(app: App, st: DocState): void {
+  expandXrefBounds(app, st);
   const miss = docRefs(app, st.doc).filter((r) => !r.found);
   if (!miss.length) return;
   const n = (k: RefItem['kind']) => miss.filter((r) => r.kind === k).length;
@@ -156,12 +255,14 @@ export function noteMissingRefs(app: App, st: DocState): void {
   app.cmd.print(`참고: ${parts.join(', ')}의 파일을 찾지 못했습니다. EXTERNALREFERENCES(XR)에서 파일이 있는 폴더를 고르면 표시합니다.`);
 }
 
-export function registerRefCommands(app: App, extraLinker?: (files: File[]) => Promise<string[]>): void {
+export function registerRefCommands(app: App): void {
   const prevRestore = app.view.onRestore;
   app.view.onRestore = () => {
     prevRestore?.();
     reuploadImages(app);
+    for (const x of xrefFiles.values()) x.scene.reupload(app.view.renderer);
   };
+  app.view.xrefScene = (docId, key) => xrefFor(app, docId, key);
   app.register({
     name: 'EXTERNALREFERENCES',
     aliases: ['XR', 'ER', 'XREF', 'IMAGE'],
@@ -203,7 +304,7 @@ export function registerRefCommands(app: App, extraLinker?: (files: File[]) => P
         const want = new Set(refs.map((r) => r.key));
         const pick = files.filter((f) => want.has(f.name.toLowerCase()));
         const img = await linkImageFiles(app, pick);
-        const x = extraLinker ? await extraLinker(pick) : [];
+        const x = await linkXrefFiles(app, pick);
         const n = img.linked.length + x.length;
         ctx.print(n ? `파일 ${n}개를 연결했습니다: ${[...img.linked, ...x].slice(0, 6).join(', ')}${n > 6 ? ' …' : ''}` : '이 도면이 찾는 이름의 파일이 없습니다.', n ? undefined : 'err');
         if (img.unsupported.length) ctx.print(`참고: ${img.unsupported.slice(0, 4).join(', ')}은(는) 이 브라우저가 읽을 수 없는 이미지 형식입니다(PNG·JPEG·GIF·BMP·WebP만).`);

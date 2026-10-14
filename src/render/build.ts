@@ -1199,7 +1199,7 @@ export class SceneBuilder {
           multiply(rotationZ(e.rotation), multiply(translation(cI * e.columnSpacing, rI * e.rowSpacing, 0), scaling(sx, sy, sz))),
         );
         const m = multiply(om, multiply(local, translation(-b.basePoint.x, -b.basePoint.y, -b.basePoint.z)));
-        const clip = this.xclipPolygon(e, m);
+        const clip = b.flags & 4 && !b.entities.length ? null : this.xclipPolygon(e, m);
         if (clip) this.out.pushClip(clip.poly, clip.inverted);
         this.blockContents(b, e, m, ctx);
         if (clip) {
@@ -1287,6 +1287,9 @@ export class SceneBuilder {
 
   private blockContents(b: BlockDef, parent: Entity, m: Mat, ctx: Ctx, dimBlock = false): void {
     if (b.flags & 4 && !b.entities.length) {
+      // 외부 참조: 참조 파일의 모형 장면을 이 변환으로 그리도록 인스턴스만 남긴다(파일을 연결했을 때 화면이 그린다)
+      const clip = parent.type === 'INSERT' ? this.xclipPolygon(parent, m) : null;
+      this.out.xref(tableKey(b.name), [m[0]!, m[4]!, m[1]!, m[5]!, m[3]!, m[7]!], this.resolve(parent, ctx).style, clip ?? undefined);
       this.warnInc('xref.not_loaded');
       return;
     }
