@@ -299,6 +299,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       {
         title: '참조',
         large: [{ cmd: 'EXTERNALREFERENCES', label: '외부 참조', icon: 'folder', tip: '외부 참조·이미지·PDF 언더레이 (XR)' }],
+        cols: [[{ cmd: 'XCLIP', label: '자르기', icon: 'trim', tip: '블록·외부 참조를 경계로 자르기 (XC)' }]],
       },
       {
         title: '데이터',
