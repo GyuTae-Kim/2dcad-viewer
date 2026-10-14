@@ -1810,10 +1810,11 @@ export class SceneBuilder {
       const px: number[] = [];
       for (const [x, y] of bnd) px.push(x!, y!);
       if (px.length >= 6 && px[0] === px[px.length - 2] && px[1] === px[px.length - 1]) px.length -= 2;
-      const tri = triangulateLoops([px]);
-      const out: number[] = [];
       const sx = e.imageSize.x || 1;
       const sy = e.imageSize.y || 1;
+      // 반전 자르기(290): 이미지 전체에서 경계 안을 뺀다
+      const tri = e.clipping && e.clipInverted ? triangulateLoops([[-0.5, -0.5, sx - 0.5, -0.5, sx - 0.5, sy - 0.5, -0.5, sy - 0.5], px]) : triangulateLoops([px]);
+      const out: number[] = [];
       for (let i = 0; i + 1 < tri.length; i += 2) {
         const x = tri[i]! + 0.5;
         const y = H - 0.5 - tri[i + 1]!;
