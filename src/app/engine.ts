@@ -92,6 +92,11 @@ export class EngineClient {
   }
 
   /** 파일이 연결된 래스터 이미지 열쇠를 워커에 알린다 */
+  /** 숨길 최상위 객체(빈 배열이면 모두 보이기). 다음 장면부터 반영된다 */
+  hide(docId: number, handles: string[]): void {
+    this.post({ type: 'hide', docId, handles });
+  }
+
   images(keys: string[], pdfPages?: ReadonlyMap<string, readonly [number, number]>): void {
     this.post({ type: 'images', keys, pdfPages: pdfPages ? [...pdfPages].map(([k, [w, h]]) => [k, w, h] as [string, number, number]) : undefined });
   }

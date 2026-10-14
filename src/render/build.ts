@@ -63,6 +63,8 @@ export interface BuildOptions {
   ltFactor?: number;
   /** 파일이 연결된 PDF 페이지(pdfUnderlayKey → 페이지 폭·높이, 인치) */
   pdfPages?: ReadonlyMap<string, readonly [number, number]>;
+  /** 숨긴 최상위 객체(HIDEOBJECTS·ISOLATEOBJECTS) */
+  hidden?: ReadonlySet<string>;
   /** 곡선 정밀도(도면 단위). 없으면 도면 범위로 정한다 */
   tolerance?: number;
   /** 해치 무늬 선 상한 */
@@ -595,7 +597,8 @@ export class SceneBuilder {
   build(blockName: string): SpaceScene {
     this.out = new DisplayListBuilder((s) => this.styles.isTransparent(s, this.layers));
     const block = this.doc.blocks.get(tableKey(blockName));
-    const ents = block ? this.ordered(block).filter((e) => e.type !== 'VIEWPORT' || (e.id !== 1 && e.status !== 1)) : [];
+    const hidden = this.opt.hidden;
+    const ents = block ? this.ordered(block).filter((e) => (e.type !== 'VIEWPORT' || (e.id !== 1 && e.status !== 1)) && !hidden?.has(e.handle)) : [];
     this.prepare(blockName);
     const N = ents.length;
     for (let i = 0; i < N; i++) {

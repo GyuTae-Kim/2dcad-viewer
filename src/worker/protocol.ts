@@ -15,6 +15,7 @@ export type ToWorker =
   | { type: 'adopt'; id: number; name: string; doc: CadDocument }
   /** 파일이 연결된 래스터 이미지 열쇠(장면에 이미지 그리기를 넣는다) */
   | { type: 'images'; keys: string[]; pdfPages?: [string, number, number][] }
+  | { type: 'hide'; docId: number; handles: string[] }
   /** 사용자가 불러온 SHX 글꼴(문자 그리기에 쓴다). clear면 먼저 모두 지운다 */
   | { type: 'shx'; files: { name: string; data: ArrayBuffer }[]; clear?: boolean }
   /** 워커 문서를 파일로 쓴다 */

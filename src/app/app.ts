@@ -718,11 +718,23 @@ export class App {
     const block = st.doc.blocks.get(st.space);
     if (!block) return;
     const want = new Set(handles);
-    const list = block.entities.filter((e) => want.has(e.handle));
+    const list = block.entities.filter((e) => want.has(e.handle) && !st.hiddenObjects.has(e.handle));
     const scene = new OverlayScene(this.view.renderer, st.doc, list, this.text, st.space, 0.3 / cam.scale, this.imageKeys, this.pdfPages);
     this.dropDetail();
     this.view.detail = { docId: st.docId, space: st.space, gen: st.gen, region, scale: cam.scale, scene };
     this.view.requestRender();
+  }
+
+  /** 객체 숨기기·격리(HIDEOBJECTS·ISOLATEOBJECTS): 이 객체들을 그리지도 고르지도 않는다. 빈 목록이면 모두 보인다 */
+  setHiddenObjects(st: DocState, handles: Iterable<string>): void {
+    st.hiddenObjects.clear();
+    for (const h of handles) st.hiddenObjects.add(h);
+    for (const h of st.hiddenObjects) st.selection.delete(h);
+    this.engine.hide(st.docId, [...st.hiddenObjects]);
+    this.dropDetail();
+    this.edits.rebuildEverything(st);
+    this.ui.refreshStatus();
+    this.refreshSelectionOverlay();
   }
 
   /** 블록 편집기 열기: 블록 정의를 공간처럼 열어 그리기·수정 명령으로 고친다 */
@@ -1146,6 +1158,10 @@ export class App {
       { label: '리스트', icon: 'list', disabled: !sel, run: () => void this.run('LIST') },
       { label: '선택한 객체로 확대', icon: 'zoomWindow', disabled: !sel, run: () => void this.run('ZOOM', 'O') },
       { label: '선택 해제', disabled: !sel, kbd: 'Esc', run: () => this.clearSelection() },
+      { separator: true },
+      { label: '객체 격리', disabled: !sel, run: () => void this.run('ISOLATEOBJECTS') },
+      { label: '객체 숨기기', disabled: !sel, run: () => void this.run('HIDEOBJECTS') },
+      { label: '객체 격리 끝', disabled: !st?.hiddenObjects.size, run: () => void this.run('UNISOLATEOBJECTS') },
       { separator: true },
       { label: '거리 측정', icon: 'dist', run: () => void this.run('DIST') },
       { label: '면적 측정', icon: 'area', run: () => void this.run('AREA') },

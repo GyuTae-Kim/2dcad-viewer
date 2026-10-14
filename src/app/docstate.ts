@@ -38,6 +38,8 @@ export class DocState {
   /** 도면층 이름(대문자) → 상태(모든 공간이 함께 쓴다) */
   readonly layers = new Map<string, LayerState>();
   readonly scenes = new Map<string, SpaceScene>();
+  /** 숨긴 최상위 객체(HIDEOBJECTS·ISOLATEOBJECTS, 저장하지 않는다) */
+  readonly hiddenObjects = new Set<string>();
   /** PSLTSCALE: 뷰포트 축척별 모형 장면(선종류 배율 → 장면). 편집하면 버린다 */
   readonly ltVariants = new Map<string, LtVariant>();
   readonly ltPending = new Map<string, Promise<SpaceScene | null>>();

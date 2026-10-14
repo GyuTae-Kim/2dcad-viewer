@@ -120,7 +120,7 @@ export class EditManager {
     block?.entities.forEach((e, i) => order.set(e.handle, i));
     const list = [...ed.live.keys()]
       .map((h) => st.doc.entityIndex.get(h))
-      .filter((e): e is Entity => !!e && order.has(e.handle))
+      .filter((e): e is Entity => !!e && order.has(e.handle) && !st.hiddenObjects.has(e.handle))
       .sort((a, b) => order.get(a.handle)! - order.get(b.handle)!);
     if (list.length) ed.overlay = new OverlayScene(app.view.renderer, st.doc, list, app.text, space, undefined, app.imageKeys, app.pdfPages);
     app.updatePicker(st, space, changed);

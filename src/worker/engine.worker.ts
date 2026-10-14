@@ -31,10 +31,12 @@ function post(msg: FromWorker, transfer: Transferable[] = []): void {
 /** 파일이 연결된 래스터 이미지 */
 let imageKeys: ReadonlySet<string> = new Set();
 let pdfPages: ReadonlyMap<string, readonly [number, number]> = new Map();
+/** 문서별로 숨긴 최상위 객체 */
+const hiddenByDoc = new Map<number, ReadonlySet<string>>();
 
-function makeScene(doc: CadDocument, space: string, ltFactor?: number): SceneMessage {
+function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: number): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor });
+  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined });
   return {
     list: s.list,
     styles: s.styles.specs,
@@ -93,6 +95,11 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       }
       case 'close':
         docs.delete(msg.docId);
+        hiddenByDoc.delete(msg.docId);
+        break;
+      case 'hide':
+        if (msg.handles.length) hiddenByDoc.set(msg.docId, new Set(msg.handles));
+        else hiddenByDoc.delete(msg.docId);
         break;
       case 'adopt': {
         const doc = msg.doc;
@@ -130,7 +137,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       case 'build': {
         const doc = docs.get(msg.docId);
         if (!doc) throw new Error('문서가 없습니다');
-        const scene = makeScene(doc, msg.space, msg.ltFactor);
+        const scene = makeScene(doc, msg.space, msg.ltFactor, msg.docId);
         post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, transferables(scene.list));
         break;
       }

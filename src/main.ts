@@ -14,6 +14,7 @@ import { registerHatchCommands } from './app/hatchcmd';
 import { registerLayoutCommands } from './app/layoutcmds';
 import { noteMissingShx, registerShxCommands, restoreShxFonts } from './app/shxfonts';
 import { noteMissingRefs, registerRefCommands } from './app/refs';
+import { registerIsolateCommands } from './app/isolate';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -52,6 +53,7 @@ registerHatchCommands(app);
 registerLayoutCommands(app);
 registerShxCommands(app);
 registerRefCommands(app);
+registerIsolateCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);
