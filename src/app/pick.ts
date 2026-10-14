@@ -217,6 +217,25 @@ export class Picker {
     return g;
   }
 
+  /** 문서에 아직 없는 객체(미리보기)의 형상 */
+  geometryOf(list: Entity[]): OverlayGeom {
+    try {
+      return expandDisplayList(this.builder.buildEntities(list));
+    } catch {
+      return { segs: [], tris: [] };
+    }
+  }
+
+  /** 범위 상자가 사각형과 겹치는 객체(자르기·연장 경계 후보) */
+  overlapping(r: [number, number, number, number]): string[] {
+    const out: string[] = [];
+    for (const b of [...this.boxes.filter((x) => !this.exclude.has(x.handle)), ...this.extra]) {
+      if (b.maxX < r[0] || b.minX > r[2] || b.maxY < r[1] || b.minY > r[3]) continue;
+      out.push(b.handle);
+    }
+    return out;
+  }
+
   distance(handle: string, x: number, y: number): number {
     const g = this.geometry(handle);
     let best = Infinity;

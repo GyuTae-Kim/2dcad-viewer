@@ -39,7 +39,10 @@ interface PointRequest {
   base: Pt | null;
   keywords: Keyword[];
   rubber?: (p: Pt) => { pts: number[]; closed?: boolean; fill?: boolean; dashed?: boolean }[];
+  ghost?: (p: Pt) => OverlayGeom[];
   allowText: boolean;
+  /** 숫자만 입력하면 직접 거리 입력 대신 문자로 돌려준다(각도·축척 입력) */
+  preferNumber: boolean;
   resolve: (r: PointResult) => void;
   reject: (e: unknown) => void;
 }
@@ -66,7 +69,7 @@ type Request = PointRequest | EntityRequest | SelectRequest;
 export interface CommandContext {
   app: App;
   print(text: string, cls?: 'err' | 'res'): void;
-  getPoint(prompt: string, opt?: { base?: Pt | null; keywords?: Keyword[]; rubber?: PointRequest['rubber']; allowText?: boolean }): Promise<PointResult>;
+  getPoint(prompt: string, opt?: { base?: Pt | null; keywords?: Keyword[]; rubber?: PointRequest['rubber']; ghost?: PointRequest['ghost']; allowText?: boolean; preferNumber?: boolean }): Promise<PointResult>;
   getEntity(prompt: string, keywords?: Keyword[]): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }>;
   /** 객체 고르기(이미 고른 것이 있으면 그것). 빈 배열이면 아무것도 고르지 않음 */
   getSelection(prompt?: string, opt?: { keywords?: Keyword[]; noPickfirst?: boolean }): Promise<string[]>;
@@ -244,6 +247,7 @@ export class App {
         this.request = null;
         this.cmd.setPrompt('');
         this.view.overlay.rubber = [];
+        this.view.overlay.ghost = [];
         this.view.overlay.marks = [];
         this.view.overlay.tip = null;
         this.view.requestOverlay();
@@ -290,7 +294,9 @@ export class App {
         base: opt.base ?? null,
         keywords: opt.keywords ?? [],
         rubber: opt.rubber,
-        allowText: !!opt.allowText,
+        ghost: opt.ghost,
+        allowText: !!opt.allowText || !!opt.preferNumber,
+        preferNumber: !!opt.preferNumber,
         resolve: (r) => {
           this.request = null;
           resolve(r);
@@ -439,6 +445,11 @@ export class App {
       return;
     }
     if (r.kind === 'point') {
+      if (r.preferNumber && /^-?[\d.]+(?:e-?\d+)?$/i.test(t)) {
+        this.cmd.print(`${this.promptOf(r)} ${t}`);
+        r.resolve({ text: t });
+        return;
+      }
       const dir = this.cursorWorld && r.base ? { x: this.cursorWorld.x - r.base.x, y: this.cursorWorld.y - r.base.y } : null;
       const p = parsePointInput(t, r.base ?? this.lastPoint, dir);
       if (p) {
@@ -745,6 +756,7 @@ export class App {
     o.snap = snap;
     if (r?.kind === 'point') {
       o.rubber = r.rubber ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
+      o.ghost = r.ghost ? r.ghost(p) : [];
       if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
       else if (r.base) {
         const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);

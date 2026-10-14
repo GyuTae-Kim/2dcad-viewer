@@ -75,7 +75,7 @@ async function getDistance(ctx: CommandContext, prompt: string, base: Pt | null,
 
 async function getAngle(ctx: CommandContext, prompt: string, base: Pt | null, def = 0): Promise<number> {
   for (;;) {
-    const r = await ctx.getPoint(`${prompt} <${((def * 180) / Math.PI).toFixed(0)}>:`, { base, allowText: true });
+    const r = await ctx.getPoint(`${prompt} <${((def * 180) / Math.PI).toFixed(0)}>:`, { base, preferNumber: true });
     if ('enter' in r) return def;
     if ('point' in r && base) return ang(base, r.point);
     if ('text' in r) {
