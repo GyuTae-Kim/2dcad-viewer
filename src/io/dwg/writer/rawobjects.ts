@@ -1,9 +1,11 @@
 /**
  * 원본 태그(GenericObject.raw)나 필드 모델 값으로 쓰는 비도형 객체(objects/rawtags.ts·objects/field.ts의 짝):
- * FIELD·FIELDLIST(사양 20.4.76·77), DIMASSOC(표본으로 정한 배치), ACDB_TEXTOBJECTCONTEXTDATA_CLASS(사양 20.4.89·71 + 표본).
+ * FIELD·FIELDLIST(사양 20.4.76·77), DIMASSOC(표본으로 정한 배치), ACDB_TEXTOBJECTCONTEXTDATA_CLASS(사양 20.4.89·71 + 표본),
+ * 동적 블록 객체(../dyncodec.ts).
  */
-import type { FieldObject, FieldValue, GenericObject, RawTag } from '../../../core/model';
+import type { CadDocument, FieldObject, FieldValue, GenericObject, RawTag } from '../../../core/model';
 import { fieldFromTags, fieldListHandles } from '../../fields';
+import { DYN_TYPES, type DynContext, encodeDyn, writeDynOps } from '../dyncodec';
 import { R2004, R2007, R2010 } from '../version';
 import type { BitWriter } from './bitwriter';
 import type { WCtx } from './context';
@@ -15,8 +17,16 @@ const num = (v: string | number | undefined, d = 0): number => {
   return Number.isFinite(n) ? n : d;
 };
 
+/** 동적 블록 객체를 쓸 때 문서에서 찾는 값: 지움 막기 객체의 블록 레코드 = 소유 사전의 소유자 */
+function dynContext(o: GenericObject, doc: CadDocument | undefined): DynContext {
+  if (o.type !== 'ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION' || !doc || !o.owner) return {};
+  const block = doc.objects.get(o.owner.toUpperCase())?.owner;
+  return block ? { block: block.toUpperCase() } : {};
+}
+
 /** 이 종류를 원본 태그·모델 값으로 쓸 수 있는지 */
-export function rawObjectOk(o: GenericObject, ver: number): boolean {
+export function rawObjectOk(o: GenericObject, ver: number, doc?: CadDocument): boolean {
+  if (DYN_TYPES.has(o.type)) return !!encodeDyn(o.type, o.raw, ver, dynContext(o, doc));
   switch (o.type) {
     case 'FIELD':
       return ver >= R2004 && !!(o.field ?? fieldFromTags(o.raw));
@@ -314,5 +324,10 @@ export function writeRawObject(d: BitWriter, hd: BitWriter, ctx: WCtx, o: Generi
     case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
       writeTextContext(d, hd, ctx, parseTextContext(o.raw)!);
       break;
+    default:
+      if (DYN_TYPES.has(o.type)) {
+        const ops = encodeDyn(o.type, o.raw, ctx.ver, dynContext(o, ctx.doc))!;
+        writeDynOps(d, hd, ops, (h) => ctx.ref(h));
+      }
   }
 }

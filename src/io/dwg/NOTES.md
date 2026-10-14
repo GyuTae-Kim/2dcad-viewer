@@ -21,7 +21,8 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
 | `tablecodec.ts` | 표·테이블 스타일 본문 배치(읽기·쓰기가 같은 배치 함수): R2010+ 표 내용·셀 스타일·값, 옛 셀·표 재지정, 두 스타일 배치 |
 | `tablemodel.ts` | 표 본문 ↔ 셀 배치(`io/tablecells.ts`), 스타일 본문 ↔ 스타일 값(`io/tablestyle.ts`) |
 | `objects/tableraw.ts` | 표·테이블 스타일 → DXF와 같은 원본 태그(`raw`) |
-| `objects/field.ts`, `objects/rawtags.ts` | FIELD·FIELDLIST, 그리고 DXF 원본 태그로 푸는 객체(DIMASSOC, 문자 주석 축척 자료) |
+| `objects/field.ts`, `objects/rawtags.ts` | FIELD·FIELDLIST, 그리고 DXF 원본 태그로 푸는 객체(DIMASSOC, 문자 주석 축척 자료, 동적 블록 객체) |
+| `dyncodec.ts` | 동적 블록 객체 본문 ↔ DXF 원본 태그(읽기·쓰기, 아래 "동적 블록 객체") |
 | `build.ts` | 문서 조립(표 → 도형 → 블록 순서·속성·정점·배치·헤더 이름 풀기) |
 | `rawbody.ts` | 모델이 일부만 담는 객체의 원본 본문 보관(`dwgRaw`)과 지문 |
 | `writer/*` | DWG 쓰기(아래 "쓰기" 절) |
@@ -76,6 +77,7 @@ ODA 공개 사양(Open Design Specification for .dwg files 5.4.1)만 보고 만�
   BL 교차 경로 수 + H 332…, BD 40, 3BD 10, B 75(DXF는 40·10 다음에 332가 온다).
 - ACDB_TEXTOBJECTCONTEXTDATA_CLASS: 판(BS 70) 다음 비트 하나가 DXF 290이고 사양의 "확장 사전 파일 있음" 비트는 없다.
   그 뒤 BS 70 수평 정렬, BD 50 회전, RD2 10, RD2 11.
+- 동적 블록 객체(사양에 없음): 아래 "동적 블록 객체" 절.
 - 익명 블록 이름은 접두("*D")만 저장되고 블록 제어 목록 순번을 붙인다. R2007 이전으로 저장한 동적 블록은
   익명 *U 블록 + AcDbDynamicBlockTrueName 확장 자료이므로 본래 이름으로 되돌린다(이름이 접두 "*U"뿐일 때만.
   "*U17"처럼 번호까지 저장된 이름은 다른 프로그램이 쓴 것으로 보고 그대로 둔다 — 엔진도 그렇게 읽는다).
@@ -115,6 +117,7 @@ DXF와 같은 원본 태그(`GenericObject.raw`, ACAD_TABLE은 `TableEntity.raw`
 - TABLESTYLE(모든 버전): AcDbTableStyle 태그(R2010+ 셀 스타일 _DATA·_TITLE·_HEADER → 옛 행 스타일 셋).
 - FIELD·FIELDLIST(사양 20.4.76·77): `field`(모델 값)도 채운다. 객체의 필드 코드는 `io/fields.ts`의 `fieldCodesOf(doc, entity)`.
 - DIMASSOC(사양에 없음, 표본 R14~R2018로 배치를 정함), ACDB_TEXTOBJECTCONTEXTDATA_CLASS(R2010+, 사양 20.4.89·71 + 표본).
+- 동적 블록 객체 9종(사양에 없음, 표본 R2000~R2018로 배치를 정함, `tests/dwg/dynblock.test.ts`): 아래 "동적 블록 객체" 절.
 - 주석 축척의 AcDbContextDataManager·ACDB_ANNOTATIONSCALES는 보통 사전(DICTIONARY)이라 원래부터 `entries`로 읽힌다.
 
 ## 알려진 빈틈
@@ -169,7 +172,8 @@ ACAD_MATERIAL·ACAD_COLOR(R2004+)·ACAD_VISUALSTYLE(R2007+), 색상표 색의 DB
 MULTILEADER, MESH, MLEADERSTYLE, 해석하지 않는 비도형 객체)은 공통 자료 뒤의 자료·문자열·핸들 비트와 프록시 그림을 남긴다.
 쓰는 버전이 원본과 같고, 핸들이 같고, 모델 값의 지문이 같으면 공통 자료만 모델에서 다시 쓰고 본문은 그대로 붙인다.
 아니면 모델 값으로 쓸 수 있는 것은 쓰고(MULTILEADER·MESH·MLEADERSTYLE·DICTIONARYVAR·DBCOLOR·자리 표시자 등),
-ACAD_TABLE·TABLESTYLE·FIELD·FIELDLIST·DIMASSOC·문자 주석 축척 자료는 모델 값(원본 태그)으로 쓰고, 나머지(ACIS, 프록시, 동적 블록 객체, VISUALSTYLE·MATERIAL 등)는
+ACAD_TABLE·TABLESTYLE·FIELD·FIELDLIST·DIMASSOC·문자 주석 축척 자료·동적 블록 객체 9종(`dyncodec.ts`)은 모델 값(원본 태그)으로 쓰고,
+나머지(ACIS, 프록시, 그 밖의 동적 블록 객체, VISUALSTYLE·MATERIAL 등)는
 빼고 경고(`dwg.write_entity_dropped`, `dwg.write_object_dropped`, `dwg.write_table_as_insert`)를 남긴다.
 자료가 하나도 없는 객체는 경고 없이 뺀다. TABLECONTENT·TABLEGEOMETRY·CELLSTYLEMAP(DXF·옛 버전의 표 왕복 보조 자료)은
 원본 본문이 없으면 조용히 뺀다(표·스타일을 모델 값으로 쓰면 필요 없다).
@@ -223,7 +227,8 @@ R2007 이전으로 쓸 때 도면 코드 페이지로 못 쓰는 글자가 있�
 ### 쓰기의 알려진 빈틈
 
 - R2007(AC1021) 컨테이너는 쓰지 않는다(AC1018로 쓴다).
-- ACIS(REGION·3DSOLID·BODY·SURFACE), 프록시, OLE, 동적 블록·연관 객체는 같은 버전일 때만 남는다. R2013+ 자료 저장소
+- ACIS(REGION·3DSOLID·BODY·SURFACE), 프록시, OLE, 연관 객체, 아래 9종이 아닌 동적 블록 객체는 같은 버전일 때만 남는다.
+  동적 블록 정의는 평가 그래프의 노드를 하나라도 쓰지 못하면 그래프와 노드를 함께 빼서 보통 블록이 된다(`dwg.write_object_dropped`). R2013+ 자료 저장소
   (AcDb:AcDsPrototype_1b)는 쓰지 않아 같은 버전으로 되쓴 ACIS 도형도 형상 자료가 빠질 수 있다(`dataStore` 표지는 그대로).
 - ACAD_TABLE을 다른 버전으로 쓰면 셀 테두리 재지정·블록/필드 셀·사용자 셀 스타일이 빠진다(병합·정렬·문자 높이·색·채우기는 남는다).
   VISUALSTYLE·MATERIAL은 다른 버전이면 빠진다. FIELD는 R2004+만 쓴다(값 배치는 사양대로이고 AutoCAD 표본이 없어 우리 쓰기와의 왕복으로만 확인).
@@ -239,3 +244,62 @@ R2007 이전으로 쓸 때 도면 코드 페이지로 못 쓰는 글자가 있�
 - DXF 리더에서 본 차이(참고): ATTRIB·ATTDEF의 `generation`에 AcDbAttribute의 71(속성 종류)이 들어간다.
   MULTILEADER 문맥의 `backgroundFill`(291)·`backgroundColor`(91)가 지시선 쪽 291과 섞인다.
 - `scripts/oracle/ezdxf_dump.py`는 처음에 3DFACE의 extrusion에서 멈췄다(지금은 고쳐진 것으로 보임).
+
+## 동적 블록 객체(`dyncodec.ts`)
+
+사양에 없는 객체라 DIMASSOC처럼 AutoCAD가 같은 도면을 DWG와 DXF로 저장한 표본(ACadSharp `sample_AC1015`~`AC1032`, 동적 블록
+my-dynamic-block과 참조 ABA = *U18)을 같은 핸들끼리 맞춰 배치를 정했다. 판마다 16~18개(그래프 3·매개변수 2·그립 3·위치 식 6·
+동작 1·지움 막기 1·표현 자료 2), 6판 모두 DWG에서 푼 태그가 AutoCAD DXF 태그와 같다(R2004 이전 DXF에는 입체 이력 그래프 둘이 없다).
+그다음 표본 6개와 AutoCAD 예제 도면 14개(`all-samples`, R2007·R2018)의 같은 종류 객체 1168개(그래프 91, 표현 자료 104, 지움 막기 79,
+그립 위치 식 546, 선형 그립 106, 선형 매개변수 113, 축척 동작 38, 가시성 그립 44, 가시성 매개변수 47)가 모두 남는 비트 없이 읽히고,
+푼 것은 다시 쓴 자료·문자열 비트가 원본과 같다(독립 기준점이 있는 축척 동작 20개는 일부러 풀지 않는다 — 아래).
+
+DWG 자료 형식(공통 자료 다음, 핸들은 핸들 흐름). DXF와 순서가 다른 곳이 많다:
+- AcDbEvalExpr: BL −1(DXF에 없음, 늘 −1), BL 98, BL 99, BS 70 값 종류(−9999 = 값 없음, 40 = BD 값), BL 90 노드 번호.
+  DXF는 90, 98, 99 다음 값이 있을 때만 1(빈 문자열)·70·140. DXF는 1.797…e+307을 1.797693134862314E+99로 쓴다.
+- AcDbBlockElement: TV 300, BL 98, BL 99, BL 1071. 98·99는 형식을 따른다: AutoCAD 2018은 R2004 이전 DWG·DXF에 25/104,
+  R2007 이후에 33/329를 쓴다(예제 도면의 R2007 파일은 27/25). 다른 형식 계열로 쓸 때는 그 계열의 AutoCAD 값으로 바꾼다.
+- AcDbBlockParameter: B 280, B 281.
+- AcDbBlock1PtParameter: 3BD 1010, 연결 목록 둘(BL 개수 + (BL 노드, TV 속성)…), BL 93. DXF는 1010, 93, 170, 171.
+  비지 않은 연결 목록의 DXF 코드는 모른다(표본의 가시성 매개변수는 모두 비었다): 만나면 풀지 않는다.
+- AcDbBlock2PtParameter: 3BD 1010, 3BD 1011, 연결 목록 넷(DXF 171+92/301 … 174+95/304), BL 그립 노드 넷(DXF 170 = 4 + 91…),
+  BS 177. DXF는 170·91…이 연결 목록보다 앞이다.
+- AcDbBlockLinearParameter: TV 305, TV 306, BD 140, BL 96, BD 141, BD 142, BD 143, BS 175 + BD 144…. DXF는 140 다음에 307(빈 문자열)이 있다.
+- AcDbBlockVisibilityParameter: B 281, TV 301, TV 302, B 91, BL 93 + H 331…(소프트 포인터), BL 92 상태 수, 상태마다 TV 303,
+  BL 94 + H 332…, BL 95 + H 333….
+- AcDbBlockGrip: BL 91, BL 92, 3BD 1010, B 280, BL 93. AcDbBlockLinearGrip: 3BD(DXF 140·141·142). AcDbBlockVisibilityGrip: 없음.
+- BLOCKGRIPLOCATIONCOMPONENT: AcDbEvalExpr + AcDbBlockGripExpr BL 91, TV 300.
+- AcDbBlockAction: 3BD 1010, BL 71 + H 330…(소프트 포인터), BL 70 + BL 91…. DXF 순서는 70·91…, 71·330…, 1010.
+- AcDbBlockActionWithBasePt: 3BD, BL 92, TV 301, BL 93, TV 302, B 280, 3BD. DXF 순서는 92, 93, 301, 302, 1011, 280, 1012.
+  DXF 짝 표본의 두 점이 모두 0이라 어느 3BD가 1011(동적 블록 모듈은 오프셋으로 읽는다)이고 어느 것이 1012(기준점)인지 모른다.
+  예제 도면에서는 독립 기준점(280 = 0)의 좌표가 첫 3BD에 있고 둘째는 늘 0이다. 잘못 이름 붙이면 형식을 옮길 때 기준점이
+  바뀌므로 두 점이 모두 0인 것만 풀고 쓴다(첫 3BD → 1011로 둔다). 예제 도면의 축척 동작 38개 가운데 20개가 여기에 걸려 원본 비트로 남는다.
+- AcDbBlockScaleAction: (BL 94, TV 303), (BL 95, TV 304), (BL 96, TV 305), RC(DXF에 없음, 표본은 모두 0 — 0이 아니면 풀지 않는다).
+- ACAD_EVALUATION_GRAPH: BL 96, BL 97, BL 노드 수, 노드마다 BL 91, BL 93, BL 95, H 360(하드 소유), BL 92 ×4,
+  BL 간선 수, 간선마다 BL 92, BL 93, BL 94, BL 91 ×2, BL 92 ×5. DXF에는 개수가 없다.
+- ACDB_BLOCKREPRESENTATION_DATA: BS 70, H 340(하드 포인터, 정의 블록 레코드).
+- ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION: BS 70, H(하드 포인터, 블록 레코드). 이 핸들은 DXF에 없다: 79개 모두 소유 사전
+  (블록 레코드의 확장 사전)의 소유자와 같아서 쓸 때 그 값으로 채운다.
+- 클래스 목록 값(만든 버전·유지보수): 대부분 25/55, 위치 식 25/20, 지움 막기 25/61, 표현 자료 25/58(`writer/classes.ts`).
+
+DWG 리더는 XRECORD 점을 "x,y,z" 태그 하나로 담는다. 동적 블록 모듈의 캐시 해석(`edit/dynblock/reference.ts` `splitRecord`)은
+이를 DXF처럼 10·20·30으로 풀어 읽는다(쓰기는 둘 다 받는다).
+
+### 풀지 않는 종류(원본 비트 보존)
+
+DXF 짝 표본이 없어 DXF 태그 코드·순서를 확인할 수 없는 종류는 같은 버전일 때만 원본 본문으로 남긴다. 예제 도면으로 본 DWG 배치
+(모든 인스턴스가 남는 비트 없이 읽히는 것까지만 확인, DXF 코드는 모름 — 나중에 DXF 짝이 생기면 이것부터 맞춰 보면 된다):
+- BLOCKFLIPPARAMETER(18): 2점 매개변수 + TV ×4(레이블, 설명, 기준 상태, 뒤집힌 상태), 3BD, BL 노드 + TV 속성("UpdatedFlip").
+- BLOCKFLIPGRIP(18): 그립 + BL(노드), 3BD. BLOCKFLIPACTION(18): 동작 + (BL 노드, TV 속성) ×4.
+- BLOCKROTATIONPARAMETER(16): 2점 + TV ×2, 3BD, BD, BL 값 집합 종류, BD ×3, BS 개수 + BD…. BLOCKROTATIONGRIP(16): 그립만.
+- BLOCKROTATEACTION(16): 기준점 동작 + BL 노드, TV 속성.
+- BLOCKXYPARAMETER(6): 2점 + TV ×4, BD ×2, (BL 종류, BD ×3, BS 개수 + BD…) ×2. BLOCKXYGRIP(36): 그립만.
+- BLOCKLOOKUPPARAMETER(36): 1점 + TV ×2, BL(조회 동작 노드). BLOCKLOOKUPGRIP(34): 그립만.
+- BLOCKMOVEACTION(104): 동작 + (BL, TV) ×2, BD ×2, RC(모두 0).
+- BLOCKSTRETCHACTION(200): 동작 + (BL, TV) ×2, BL 틀 점 수 + RD2…, BL 객체 수 + (H, BL 점 수 + BL…)…,
+  BL 노드 수 + (BL 노드, BL 점 수 + BL…)…, BD ×2, RC(모두 0).
+- BLOCKPOINTPARAMETER(36): 1점(연결 목록이 비지 않은 것도 있다) + TV ×2, 3BD. BLOCKALIGNMENTPARAMETER(8): 2점 + B.
+  BLOCKALIGNMENTGRIP(8): 그립 + 3BD.
+- 정하지 못함: BLOCKBASEPOINTPARAMETER(16, 1점 + 0 값 여섯 — BD 여섯으로 보이나 모두 0), BLOCKPOLARPARAMETER(2, 2점 + TV ×4,
+  BD ×2 + 0 값 아홉), BLOCKLOOKUPACTION(20, BL 행, BL 열, TV 칸… 다음 열 기록), BLOCKARRAYACTION(4), BLOCKPOLARSTRETCHACTION(2),
+  BLOCKPOLARGRIP(2, 그립만으로 보임).

@@ -507,6 +507,158 @@ export function dynFixture(opt: FixtureOptions = {}): DynFixture {
 }
 
 /**
+ * DWG로도 쓸 수 있는 종류만 쓴 작은 동적 블록(손으로 만든 것 — 태그 배치는 ACadSharp 표본 my-dynamic-block과 같은 꼴).
+ *
+ * DYN-MINI: 반지름 1인 원(ETag 0)과 선(ETag 1).
+ *   선형 "지름"(id 1, -1,0 → 1,0, 값 목록 2·4·6) → 축척(id 10, 원, 기준점 = 선형 첫 점)
+ *   가시성 "보기"(id 23): 모두(원·선) / 원만 / 숨김
+ * 참조 M은 정의를 직접 가리킨다. 블록 레코드 확장 사전에 평가 그래프와 지움 막기 객체가 있다.
+ */
+export function dynMiniFixture(): DynFixture {
+  seq = 0x700;
+  const h: Record<string, string> = {};
+  for (const k of ['rec', 'begin', 'end', 'xd', 'graph', 'purge', 'circle', 'line', 'insM']) h[k] = H();
+  const lin: Node = {
+    id: 1,
+    handle: H(),
+    type: 'BLOCKLINEARPARAMETER',
+    body: [...head(1, 'Linear'), ...param(), ...twoPt([-1, 0], [1, 0], [5, 2]), [100, 'AcDbBlockLinearParameter'], [305, '지름'], [306, '원 지름'], [140, 2], [307, ''], [96, 8], [141, 0], [142, 0], [143, 0], [175, 3], [144, 2], [144, 4], [144, 6]],
+  };
+  const nodes: Node[] = [lin];
+  nodes.push(grip('BLOCKLINEARGRIP', 'AcDbBlockLinearGrip', 2, 3, 4, [1, 0], [[140, 2], [141, 0], [142, 0]]), glc(3, 1, 'UpdatedEndX'), glc(4, 1, 'UpdatedEndY'));
+  nodes.push(grip('BLOCKLINEARGRIP', 'AcDbBlockLinearGrip', 5, 6, 7, [-1, 0], [[140, -2], [141, 0], [142, 0]]), glc(6, 1, 'UpdatedBaseX'), glc(7, 1, 'UpdatedBaseY'));
+  const scale: Node = {
+    id: 10,
+    handle: H(),
+    type: 'BLOCKSCALEACTION',
+    body: [
+      ...action(10, 'Scale', [], [h.circle!], [0, -2]),
+      [100, 'AcDbBlockActionWithBasePt'],
+      [92, 1],
+      [93, 1],
+      [301, 'UpdatedBaseX'],
+      [302, 'UpdatedBaseY'],
+      ...P(1011, 0, 0),
+      [280, 1],
+      ...P(1012, 0, 0),
+      [100, 'AcDbBlockScaleAction'],
+      [94, 1],
+      [95, 1],
+      [96, 1],
+      [303, 'Scale'],
+      [304, 'XScale'],
+      [305, 'YScale'],
+    ],
+  };
+  nodes.push(scale);
+  const all = [lin.handle, scale.handle];
+  const vis: Node = {
+    id: 23,
+    handle: H(),
+    type: 'BLOCKVISIBILITYPARAMETER',
+    body: [
+      ...head(23, 'Visibility State'),
+      ...param(),
+      ...onePt(2, 1, 24),
+      [100, 'AcDbBlockVisibilityParameter'],
+      [281, 1],
+      [301, '보기'],
+      [302, ''],
+      [91, 0],
+      [93, 2],
+      [331, h.circle!],
+      [331, h.line!],
+      [92, 3],
+      [303, '모두'],
+      [94, 2],
+      [332, h.circle!],
+      [332, h.line!],
+      [95, all.length],
+      ...all.map((x) => [333, x] as Tag),
+      [303, '원만'],
+      [94, 1],
+      [332, h.circle!],
+      [95, all.length],
+      ...all.map((x) => [333, x] as Tag),
+      [303, '숨김'],
+      [94, 0],
+      [95, 0],
+    ],
+  };
+  nodes.push(vis, grip('BLOCKVISIBILITYGRIP', 'AcDbBlockVisibilityGrip', 24, 25, 26, [2, 1]), glc(25, 23, 'UpdatedX'), glc(26, 23, 'UpdatedY'));
+  const edges: [number, number][] = [
+    [2, 1],
+    [5, 1],
+    [1, 3],
+    [1, 4],
+    [1, 6],
+    [1, 7],
+    [1, 10],
+    [24, 23],
+    [23, 25],
+    [23, 26],
+  ];
+
+  const o = new Out();
+  o.rec('SECTION', [[2, 'HEADER']]);
+  o.tags([
+    [9, '$ACADVER'],
+    [1, 'AC1032'],
+    [9, '$INSUNITS'],
+    [70, 4],
+    [9, '$HANDSEED'],
+    [5, 'FFF'],
+  ]);
+  o.rec('ENDSEC', []);
+  o.rec('SECTION', [[2, 'TABLES']]);
+  o.rec('TABLE', [[2, 'LAYER'], [5, '2'], [330, '0'], [100, 'AcDbSymbolTable'], [70, 1]]);
+  o.rec('LAYER', [[5, '10'], [330, '2'], [100, 'AcDbSymbolTableRecord'], [100, 'AcDbLayerTableRecord'], [2, '0'], [70, 0], [62, 7], [6, 'Continuous']]);
+  o.rec('ENDTAB', []);
+  o.rec('TABLE', [[2, 'BLOCK_RECORD'], [5, '1'], [330, '0'], [100, 'AcDbSymbolTable'], [70, 3]]);
+  const br = (hh: string, nm: string, extra: Tag[] = [], xd?: string) =>
+    o.rec('BLOCK_RECORD', [[5, hh], ...(xd ? ([[102, '{ACAD_XDICTIONARY'], [360, xd], [102, '}']] as Tag[]) : []), [330, '1'], [100, 'AcDbSymbolTableRecord'], [100, 'AcDbBlockTableRecord'], [2, nm], [340, '0'], [70, 4], [280, 1], [281, 0], ...extra]);
+  br('1F', '*Model_Space');
+  br('1B', '*Paper_Space');
+  br(h.rec!, 'DYN-MINI', [[1001, 'AcDbBlockRepETag'], [1070, 1], [1071, 2], [1001, 'AcDbDynamicBlockTrueName'], [1000, 'DYN-MINI'], [1001, 'AcDbDynamicBlockGUID'], [1000, '{00000000-0000-0000-0000-000000000003}']], h.xd);
+  o.rec('ENDTAB', []);
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'BLOCKS']]);
+  const block = (begin: string, end: string, rec: string, nm: string, flags: number) => {
+    o.rec('BLOCK', [[5, begin], [330, rec], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockBegin'], [2, nm], [70, flags], ...P(10, 0, 0), [3, nm], [1, '']]);
+    return () => o.rec('ENDBLK', [[5, end], [330, rec], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockEnd']]);
+  };
+  block('20', '21', '1F', '*Model_Space', 0)();
+  block('1C', '1D', '1B', '*Paper_Space', 0)();
+  const end = block(h.begin!, h.end!, h.rec!, 'DYN-MINI', 0);
+  o.rec('CIRCLE', [...ent(h.circle!, h.rec!, 'AcDbCircle'), ...P(10, 0, 0), [40, 1], ...etag(0, h.circle!)]);
+  o.rec('LINE', [...ent(h.line!, h.rec!, 'AcDbLine'), ...P(10, -1, 0), ...P(11, 1, 0), ...etag(1, h.line!)]);
+  end();
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'ENTITIES']]);
+  o.rec('INSERT', [[5, h.insM!], [330, '1F'], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockReference'], [2, 'DYN-MINI'], ...P(10, 10, 5)]);
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'OBJECTS']]);
+  o.rec('DICTIONARY', [[5, 'C'], [330, '0'], [100, 'AcDbDictionary'], [281, 1], [3, 'ACAD_GROUP'], [350, 'D']]);
+  o.rec('DICTIONARY', [[5, 'D'], [102, '{ACAD_REACTORS'], [330, 'C'], [102, '}'], [330, 'C'], [100, 'AcDbDictionary'], [281, 1]]);
+  o.rec(
+    'DICTIONARY',
+    dict(h.xd!, h.rec!, [
+      ['ACAD_ENHANCEDBLOCK', h.graph!],
+      ['AcDbDynamicBlockRoundTripPurgePreventer', h.purge!],
+    ]),
+  );
+  o.rec('ACAD_EVALUATION_GRAPH', graph(h.graph!, h.xd!, nodes, edges));
+  for (const n of nodes) o.rec(n.type, [[5, n.handle], [330, h.graph!], ...n.body]);
+  o.rec('ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION', [[5, h.purge!], [102, '{ACAD_REACTORS'], [330, h.xd!], [102, '}'], [330, h.xd!], [100, 'AcDbDynamicBlockPurgePreventer'], [70, 1]]);
+  o.rec('ENDSEC', []);
+  o.tag(0, 'EOF');
+  return { text: o.lines.join('\n') + '\n', h };
+}
+
+/**
  * 원본 태그를 리더가 남기는 꼴(서브클래스 표지부터, 1001 앞까지)로 채운다.
  * 지금 DXF 리더는 객체 본문의 1000번대 코드(동적 블록 객체의 1071·1010)에서 원본 태그를 끊는다 — 리더를 고치면 필요 없다.
  */

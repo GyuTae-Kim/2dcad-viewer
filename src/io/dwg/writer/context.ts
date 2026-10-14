@@ -28,6 +28,7 @@ import type {
   ViewRecord,
   VPortRecord,
   XData,
+  XRecordObject,
 } from '../../../core/model';
 import { MODEL_SPACE, PAPER_SPACE, tableKey } from '../../../core/model';
 import { defaultLayout } from '../../../core/finalize';
@@ -38,6 +39,7 @@ import { R2004, R2007, R2018 } from '../version';
 import { ClassTable } from './classes';
 import { type TextEncoderCp, encoderFor } from './codepage';
 import { parseHandle, warnOnce } from './util';
+import { DYN_TYPES } from '../dyncodec';
 import { rawObjectOk } from './rawobjects';
 
 export type TableName = 'BLOCK_RECORD' | 'LAYER' | 'STYLE' | 'LTYPE' | 'VIEW' | 'UCS' | 'VPORT' | 'APPID' | 'DIMSTYLE' | 'VPENT';
@@ -120,6 +122,7 @@ const NATIVE_OBJECTS = new Set([
   'DIMASSOC',
   'ACDB_TEXTOBJECTCONTEXTDATA_CLASS',
   'TABLESTYLE',
+  ...DYN_TYPES,
 ]);
 
 /** 원본 본문이 없으면 조용히 빼는 객체: 표 내용·형상·셀 스타일 지도는 DXF·옛 버전의 왕복 보조 자료이고
@@ -164,6 +167,11 @@ function chooseCodepage(doc: CadDocument, cur: number): number {
         add(a.tag);
       }
     }
+  }
+  // 동적 블록 객체의 이름·레이블·상태 이름(원본 태그)과 그 캐시(XRECORD)의 문자열
+  for (const o of doc.objects.values()) {
+    const tags = DYN_TYPES.has(o.type) ? (o as GenericObject).raw : o.type === 'XRECORD' ? (o as XRecordObject).data : undefined;
+    if (tags) for (const t of tags) if ((t.code >= 1 && t.code <= 9) || (t.code >= 300 && t.code <= 309)) add(t.value);
   }
   if (!chars.size) return cur;
   const score = (n: number) => {
@@ -710,6 +718,24 @@ export class WCtx {
       this.objects.push(po);
       this.live.add(h);
     }
+    // 동적 블록 평가 그래프는 노드를 하나라도 쓰지 못하면(다른 버전으로 쓸 수 없는 노드) 그래프와 그 노드를 모두 뺀다.
+    // 빈 핸들을 가리키는 그래프보다 정의가 없는 보통 블록이 낫다(ACAD_ENHANCEDBLOCK 사전 항목도 빠진다).
+    const deadGraphs = new Set<number>();
+    for (const po of this.objects) {
+      if (po.o.type !== 'ACAD_EVALUATION_GRAPH') continue;
+      const nodes = ((po.o as GenericObject).raw ?? []).filter((t) => t.code === 360).map((t) => parseHandle(String(t.value)));
+      if (!nodes.every((n) => n && this.live.has(n))) deadGraphs.add(po.h);
+    }
+    if (deadGraphs.size) {
+      const keep = this.objects.filter((po) => {
+        if (!deadGraphs.has(po.h) && !deadGraphs.has(parseHandle(po.o.owner))) return true;
+        this.live.delete(po.h);
+        dropped[po.o.type] = (dropped[po.o.type] ?? 0) + 1;
+        return false;
+      });
+      this.objects.length = 0;
+      this.objects.push(...keep);
+    }
     for (const po of this.objects) {
       const c = po.o.type === 'DBCOLOR' ? (po.o as GenericObject).color : undefined;
       if (c?.name && !this.dbColorH.has(c.name.toUpperCase())) this.dbColorH.set(c.name.toUpperCase(), po.h);
@@ -900,6 +926,8 @@ export class WCtx {
         // 원본 태그(DXF·DWG 리더·편집)가 없으면 Standard 기본값으로 쓴다
         return true;
       default:
+        // 동적 블록 객체: 원본 태그(DXF·DWG 리더·편집)를 dyncodec 배치로 쓸 수 있을 때
+        if (DYN_TYPES.has(o.type)) return rawObjectOk(o as GenericObject, this.ver, this.doc);
         return true;
     }
   }

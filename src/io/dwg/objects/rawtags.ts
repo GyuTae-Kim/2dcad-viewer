@@ -13,11 +13,15 @@
  * - ACDB_TEXTOBJECTCONTEXTDATA_CLASS: 사양 20.4.89(AcDbObjectContextData: BS 70 판, B 290 기본)·20.4.71(H 340 축척)
  *   다음의 문자 자료는 표본(R2010~R2018)으로 정했다: BS 70 수평 정렬, BD 50 회전, RD2 10 삽입점, RD2 11 정렬점.
  *   표본에서는 사양의 "확장 사전 파일 있음" 비트가 없다(판 다음 비트 하나가 DXF 290이다).
+ * - 동적 블록 객체(평가 그래프·매개변수·그립·동작·표현 자료 등): 사양에 없다. 배치는 ../dyncodec.ts.
  *
  * 풀다가 자료 비트가 남거나 모자라면(배치가 맞지 않는 파일) null을 돌려 원본 태그 없이 둔다.
  */
 import type { FieldObject, RawTag } from '../../../core/model';
 import { fieldListTags, fieldTags } from '../../fields';
+import { BitReader } from '../bitstream';
+import { DYN_TYPES, decodeDyn } from '../dyncodec';
+import { stringStreamRange } from '../streams';
 import { R2007 } from '../version';
 import { readField, readFieldList } from './field';
 import { hex } from './nonentities';
@@ -31,7 +35,7 @@ export interface DecodedRaw {
 const RAD2DEG = 180 / Math.PI;
 
 /** 풀 수 있는 종류 */
-export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS']);
+export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS', ...DYN_TYPES]);
 
 /** 자료 흐름을 다 읽었는지(R2007+는 끝의 문자열 흐름 표지 비트 하나를 남길 수 있다) */
 function consumed(or: ObjectReader): boolean {
@@ -39,6 +43,13 @@ function consumed(or: ObjectReader): boolean {
   if (r.overflowed()) return false;
   if (or.ver >= R2007) return r.pos === r.end || r.pos === r.end - 1;
   return r.pos === r.end;
+}
+
+/** R2007+ 문자열 흐름을 다 읽었는지(문자열 흐름이 없으면 참) */
+function stringsConsumed(or: ObjectReader): boolean {
+  if (or.ver < R2007) return true;
+  const rg = stringStreamRange(new BitReader(or.buf, or.ver, or.dat.decoder), or.h.startBit, or.h.handleBit);
+  return rg ? or.str.pos === rg.end : true;
 }
 
 const pt3 = (code: number, p: { x: number; y: number; z: number }, out: RawTag[]) => out.push({ code, value: p.x }, { code: code + 10, value: p.y }, { code: code + 20, value: p.z });
@@ -115,10 +126,13 @@ export function decodeRawTags(or: ObjectReader, type: string): DecodedRaw | null
         res = { raw: textContext(or) };
         break;
       default:
-        return null;
+        if (!DYN_TYPES.has(type)) return null;
+        res = { raw: decodeDyn(type, or.dat, or.hdl, or.h.handle) };
+        if (!stringsConsumed(or)) return null;
     }
     return consumed(or) ? res : null;
   } catch {
+    // 배치가 맞지 않는 객체(DynLayoutError, 개수 오류 등)는 원본 비트만 남긴다
     return null;
   }
 }

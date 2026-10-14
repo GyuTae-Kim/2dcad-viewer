@@ -96,10 +96,26 @@ export function readCache(doc: CadDocument, ins: InsertEntity): RefCache | null 
   return { xdict, rep, repData, appCache, data, hdata, history, records };
 }
 
-/** XRECORD 자료 → 머리(1071, 1071, 70, 70)와 값 태그 */
+/**
+ * XRECORD 자료 → 머리(1071, 1071, 70, 70)와 값 태그.
+ * DWG 리더는 XRECORD 점을 "x,y,z" 태그 하나로 담는다: DXF처럼 10·20·30 태그로 풀어 둔다(DWG 쓰기는 둘 다 받는다).
+ */
 export function splitRecord(data: readonly RawTag[]): { header: RawTag[]; body: RawTag[] } {
-  if (data.length >= 4 && data[0]!.code === 1071 && data[1]!.code === 1071 && data[2]!.code === 70 && data[3]!.code === 70) return { header: data.slice(0, 4), body: data.slice(4) };
-  return { header: [], body: [...data] };
+  const d = unpackPoints(data);
+  if (d.length >= 4 && d[0]!.code === 1071 && d[1]!.code === 1071 && d[2]!.code === 70 && d[3]!.code === 70) return { header: d.slice(0, 4), body: d.slice(4) };
+  return { header: [], body: d };
+}
+
+function unpackPoints(data: readonly RawTag[]): RawTag[] {
+  if (!data.some((t) => t.code >= 10 && t.code <= 18 && typeof t.value === 'string' && t.value.includes(','))) return [...data];
+  const out: RawTag[] = [];
+  for (const t of data) {
+    if (t.code >= 10 && t.code <= 18 && typeof t.value === 'string' && t.value.includes(',')) {
+      const [x, y, z] = t.value.split(',').map((s) => tagNum(s));
+      out.push({ code: t.code, value: x ?? 0 }, { code: t.code + 10, value: y ?? 0 }, { code: t.code + 20, value: z ?? 0 });
+    } else out.push(t);
+  }
+  return out;
 }
 
 interface Parsed {

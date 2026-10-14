@@ -11,6 +11,8 @@ import { ROOT } from './writer-fixtures';
 
 const CACHE = join(ROOT, '.runtime/io3/engine');
 const VERSION = '2';
+/** 이 시험 실행(작업자)만의 이름표 */
+const RUN = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
 const SCRIPT = `
 import sys, json
@@ -68,12 +70,13 @@ export function engineRead(files: Map<string, Uint8Array>): Map<string, EngineRe
     hashes.set(k, h);
     const out = join(CACHE, `${h}.json`);
     if (existsSync(out)) continue;
-    const inp = join(CACHE, `${h}.dwg`);
+    // 입력 파일은 실행마다 따로 둔다(같은 바이트를 동시에 읽는 다른 시험 파일이 먼저 지우지 않게)
+    const inp = join(CACHE, `${h}-${RUN}.dwg`);
     writeFileSync(inp, bytes);
     todo.push({ in: inp, out });
   }
   if (todo.length) {
-    const list = join(CACHE, `jobs-${process.pid}.json`);
+    const list = join(CACHE, `jobs-${RUN}.json`);
     writeFileSync(list, JSON.stringify(todo));
     try {
       execFileSync(PYTHON, ['-I', '-c', SCRIPT, list], { stdio: 'pipe', timeout: 1_800_000, maxBuffer: 1 << 26 });

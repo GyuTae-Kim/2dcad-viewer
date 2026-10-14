@@ -54,6 +54,16 @@ const KNOWN: Record<string, [string, string, number, boolean, number, number]> =
   REVOLVEDSURFACE: ['AcDbRevolvedSurface', 'ObjectDBX Classes', 0, true, 26, 0],
   SWEPTSURFACE: ['AcDbSweptSurface', 'ObjectDBX Classes', 0, true, 26, 0],
   NURBSURFACE: ['AcDbNurbSurface', 'ObjectDBX Classes', 4095, true, 27, 0],
+  // 동적 블록 객체(AutoCAD 표본 sample_AC1018·AC1032와 서식 도면의 클래스 목록 값)
+  ACAD_EVALUATION_GRAPH: ['AcDbEvalGraph', 'ObjectDBX Classes', 1153, false, 25, 55],
+  ACDB_BLOCKREPRESENTATION_DATA: ['AcDbBlockRepresentationData', 'ObjectDBX Classes', 1153, false, 25, 58],
+  ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION: ['AcDbDynamicBlockPurgePreventer', 'ObjectDBX Classes', 1153, false, 25, 61],
+  BLOCKGRIPLOCATIONCOMPONENT: ['AcDbBlockGripExpr', 'ObjectDBX Classes', 1153, false, 25, 20],
+  BLOCKVISIBILITYPARAMETER: ['AcDbBlockVisibilityParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKVISIBILITYGRIP: ['AcDbBlockVisibilityGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKLINEARPARAMETER: ['AcDbBlockLinearParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKLINEARGRIP: ['AcDbBlockLinearGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKSCALEACTION: ['AcDbBlockScaleAction', 'ObjectDBX Classes', 1153, false, 25, 55],
 };
 
 export interface WClass {
