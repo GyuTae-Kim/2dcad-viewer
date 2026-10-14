@@ -13,6 +13,7 @@ import { dialog, h } from './ui/dom';
 import { unlockedOnly } from './layers';
 import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
+import { textStyleAnnotative } from '../edit/annoscale/xdata';
 
 // ---------------------------------------------------------------------------
 // 공통
@@ -909,11 +910,13 @@ export function registerDrawCommands(app: App): void {
       const styleName = String(d.header.get('$TEXTSTYLE') ?? 'Standard');
       const style = d.textStyles.get(tableKey(styleName));
       const defH = Number(d.header.get('$TEXTSIZE') ?? 2.5) || 2.5;
-      ctx.print(`현재 문자 스타일: "${style?.name ?? styleName}"  문자 높이: ${fmt(ctx, style?.height || defH)}`);
+      // 주석 스타일이면 높이는 용지 문자 높이(AutoCAD와 같다)
+      const anno = textStyleAnnotative(d, styleName);
+      ctx.print(`현재 문자 스타일: "${style?.name ?? styleName}"  문자 높이: ${fmt(ctx, style?.height || defH)}  주석: ${anno ? '예' : '아니오'}`);
       const p0 = pt(await ctx.getPoint('문자의 시작점 지정:'));
       if (!p0) return;
       let height = style?.height || 0;
-      if (!height) height = await getDistance(ctx, '높이 지정', p0, defH);
+      if (!height) height = await getDistance(ctx, anno ? '용지 문자 높이 지정' : '높이 지정', p0, defH);
       d.header.set('$TEXTSIZE', height);
       const rot = await getAngle(ctx, '문자의 회전 각도 지정', p0, 0);
       let at = p0;

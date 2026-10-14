@@ -11,6 +11,7 @@ import { addEntities, currentProps } from './draw';
 import { unlockedOnly } from './layers';
 import { ask, form } from './ui/dom';
 import type { Pt } from './view';
+import { withAnnotativeFlag } from '../edit/annoscale/xdata';
 
 const BAD_BLOCK_NAME = /[<>/\\":;?*|,=`]/;
 
@@ -150,6 +151,8 @@ export function registerBlockCommands(app: App): void {
               { value: 'delete', label: '삭제' },
             ],
           },
+          { key: 'annotative', label: '주석', type: 'check', value: false },
+          { key: 'matchLayout', label: '블록 방향을 배치에 일치(주석일 때)', type: 'check', value: false },
         ],
         {
           ok: '만들기',
@@ -191,6 +194,8 @@ export function registerBlockCommands(app: App): void {
       ops.push(...removeOps.reverse());
       const hasAtt = ents.some((e) => e.type === 'ATTDEF');
       const record: BlockRecord = { name, handle: recordHandle, flags: 0, insertUnits: Number(st.doc.header.get('$INSUNITS') ?? 0) || 0, explodable: true, scalable: true };
+      // 주석 블록(AcadAnnotative, 방향 일치는 AcadAnnoPO 1070 1)
+      if (v.annotative) record.xdata = [...withAnnotativeFlag(undefined, true), ...(v.matchLayout ? [{ app: 'AcadAnnoPO', items: [{ code: 1070 as const, value: 1 }] }] : [])];
       const def: BlockDef = {
         name,
         handle: st.session.newHandle(),

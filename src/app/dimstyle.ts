@@ -11,6 +11,7 @@ import type { App } from './app';
 import { dimensionBlockOps } from './dimcmds';
 import type { DocState } from './docstate';
 import { type FormField, dialog, form, h } from './ui/dom';
+import { annotativeFlag, withAnnotativeFlag } from '../edit/annoscale/xdata';
 
 type Opt = { value: string; label: string };
 interface VarField {
@@ -399,8 +400,13 @@ export function registerDimStyleCommands(app: App): void {
           if (!pick) return;
           if (pick.tab === '__done') break;
           const tab = TABS.find(([t]) => t === pick.tab)![1];
-          const v = await form(`${s.name} - ${pick.tab}`, fieldsOf(st, next, tab), { ok: '적용' });
+          const fit = pick.tab === '맞춤';
+          const fields = fieldsOf(st, next, tab);
+          // 맞춤 탭: 치수 피쳐 축척의 "주석"(AcadAnnotative)
+          if (fit) fields.push({ key: '__anno', label: '주석(축척은 주석 축척을 따름)', type: 'check', value: annotativeFlag(next.xdata) ?? false });
+          const v = await form(`${s.name} - ${pick.tab}`, fields, { ok: '적용' });
           if (v) next = applyFields(next, tab, v);
+          if (v && fit && (v.__anno || annotativeFlag(next.xdata) !== undefined)) next = { ...next, xdata: withAnnotativeFlag(next.xdata, !!v.__anno) };
         }
         const key = tableKey(next.name);
         st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'dimStyle', key, before: isNew ? null : (st.doc.dimStyles.get(key) ?? null), after: next }] });
