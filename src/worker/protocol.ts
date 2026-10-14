@@ -7,7 +7,8 @@ import type { EditOp } from '../edit/session';
 export type ToWorker =
   | { type: 'init'; fontBase: string }
   | { type: 'open'; id: number; name: string; data: ArrayBuffer }
-  | { type: 'build'; id: number; docId: number; space: string; ltFactor?: number }
+  /** ltFactor: 선종류 배율(PSLTSCALE), annoScale·annoAllVisible: 주석 축척 표현(배치 뷰포트의 모형 장면) */
+  | { type: 'build'; id: number; docId: number; space: string; ltFactor?: number; annoScale?: string | null; annoAllVisible?: boolean }
   /** 메인에서 적용한 편집을 워커 문서에도 적용한다(응답 없음) */
   | { type: 'edit'; docId: number; ops: EditOp[] }
   | { type: 'close'; docId: number }
@@ -30,6 +31,8 @@ export interface SceneMessage {
   layerIndex: [string, number][];
   warnings: { code: string; count: number }[];
   ms: number;
+  /** 주석 객체 수 */
+  annotative?: number;
 }
 
 export type FromWorker =

@@ -86,7 +86,9 @@ export class EditManager {
       (o) =>
         (o.kind === 'header' && /^\$(LTSCALE|PSLTSCALE|PDMODE|PDSIZE|FILLMODE|MIRRTEXT|QTEXTMODE|TEXTFILL|ATTMODE)$/.test(o.name)) ||
         // 이미지·가리기 테두리 설정(IMAGEFRAME·WIPEOUTFRAME)
-        (o.kind === 'object' && /^(RASTERVARIABLES|WIPEOUTVARIABLES)$/.test((o.after ?? o.before)?.type ?? '')),
+        (o.kind === 'object' && /^(RASTERVARIABLES|WIPEOUTVARIABLES)$/.test((o.after ?? o.before)?.type ?? '')) ||
+        // 주석 축척(CANNOSCALE 변수 사전, 배치의 ANNOALLVISIBLE)
+        (o.kind === 'object' && /^(DICTIONARYVAR|LAYOUT)$/.test((o.after ?? o.before)?.type ?? '')),
     );
     if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged || drawVars) this.schedule(st, sum.blocksChanged || sum.tablesChanged || drawVars, tx.rebuildNow || drawVars ? 0 : REBUILD_DELAY);
     app.view.requestRender();

@@ -59,6 +59,7 @@ import { codepageToEncoding, decoderFor } from '../core/codepage';
 import { mlineDrawing } from '../edit/mline/draw';
 import { toleranceLayout } from '../edit/annot/tolerance';
 import { breakRuns } from '../edit/annot/mleader';
+import { type AnnoDisplay, annoDisplayFor } from '../edit/annoscale/view';
 
 export interface BuildOptions {
   text: TextEngine;
@@ -74,6 +75,10 @@ export interface BuildOptions {
   tolerance?: number;
   /** 해치 무늬 선 상한 */
   hatchLineLimit?: number;
+  /** 주석 축척 이름(주석 객체를 그 축척의 표현으로 그린다). 없으면 공간에 맞게(모형 CANNOSCALE, 배치 1:1), null이면 고르지 않는다 */
+  annoScale?: string | null;
+  /** ANNOALLVISIBLE(0이면 그 축척을 지원하지 않는 주석 객체를 숨긴다). 없으면 그 탭의 값 */
+  annoAllVisible?: boolean;
 }
 
 export interface SpaceScene {
@@ -82,6 +87,8 @@ export interface SpaceScene {
   layers: LayerState[];
   layerIndex: Map<string, number>;
   warnings: { code: string; count: number; detail?: Record<string, unknown> }[];
+  /** 주석 객체 수(배치 뷰포트마다 다른 축척의 장면이 필요한지 가린다) */
+  annotative?: number;
 }
 
 interface ColorSpec {
@@ -639,6 +646,20 @@ export class SceneBuilder {
     const diag = spaceExtentSize(this.doc, blockName);
     this.extentSize = diag;
     this.tol = this.opt.tolerance || diag * 2e-5;
+    try {
+      this.anno = annoDisplayFor(this.doc, blockName, this.opt);
+    } catch {
+      this.anno = null;
+    }
+  }
+
+  /** 주석 축척 표현 선택기(prepare가 정한다) */
+  private anno: AnnoDisplay | null = null;
+
+  /** 블록 정의(주석 표현이 쓰는 가상 블록 포함) */
+  private blockNamed(name: string): BlockDef | undefined {
+    const k = tableKey(name);
+    return this.anno?.blocks.get(k) ?? this.doc.blocks.get(k);
   }
 
   build(blockName: string): SpaceScene {
@@ -677,7 +698,7 @@ export class SceneBuilder {
       this.out.endEntity(e.handle);
     }
     const warnings = [...this.warn.entries()].map(([code, count]) => ({ code, count }));
-    return { list: this.out.finish(), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings };
+    return { list: this.out.finish(), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings, annotative: this.anno?.annotative ?? 0 };
   }
 
   /**
@@ -732,6 +753,12 @@ export class SceneBuilder {
 
   private entity(e: Entity, ctx: Ctx): void {
     if (e.invisible) return;
+    // 주석 객체(공간의 최상위 객체): 그 공간·뷰포트의 주석 축척 표현, 지원하지 않으면 ANNOALLVISIBLE대로
+    if (this.anno && ctx.depth === 0) {
+      const v = this.anno.view(e);
+      if (!v) return;
+      e = v;
+    }
     switch (e.type) {
       case 'LINE': {
         const r = this.resolve(e, ctx);
@@ -1384,7 +1411,7 @@ export class SceneBuilder {
   }
 
   private dimension(e: DimensionEntity, ctx: Ctx): void {
-    const b = e.block ? this.doc.blocks.get(tableKey(e.block)) : undefined;
+    const b = e.block ? this.blockNamed(e.block) : undefined;
     if (b && b.entities.length) {
       if (ctx.chain.includes(tableKey(b.name)) || ctx.depth >= MAX_DEPTH) return;
       // 치수 블록의 내용은 치수의 OCS에 있다.
@@ -1472,7 +1499,7 @@ export class SceneBuilder {
   private arrowAt(name: string, tip: { x: number; y: number }, dir: number, size: number, r: Resolved, ctx: Ctx, parent?: Entity): void {
     if (!(size > 0)) return;
     // 이름 또는 블록 레코드 핸들(치수 변수 341~344는 핸들이다)
-    const blk = name ? (this.doc.blocks.get(tableKey(name)) ?? (/^[0-9A-F]+$/i.test(name) ? this.blockByRecord.get(normalizeHandle(name)) : undefined)) : undefined;
+    const blk = name ? (this.blockNamed(name) ?? (/^[0-9A-F]+$/i.test(name) ? this.blockByRecord.get(normalizeHandle(name)) : undefined)) : undefined;
     if (blk) name = blk.name;
     const c = Math.cos(dir) * size;
     const s = Math.sin(dir) * size;

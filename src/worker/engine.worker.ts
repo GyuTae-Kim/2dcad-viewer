@@ -34,9 +34,9 @@ let pdfPages: ReadonlyMap<string, readonly [number, number]> = new Map();
 /** 문서별로 숨긴 최상위 객체 */
 const hiddenByDoc = new Map<number, ReadonlySet<string>>();
 
-function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: number): SceneMessage {
+function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: number, anno?: { annoScale?: string | null; annoAllVisible?: boolean }): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined });
+  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined, annoScale: anno?.annoScale, annoAllVisible: anno?.annoAllVisible });
   return {
     list: s.list,
     styles: s.styles.specs,
@@ -44,6 +44,7 @@ function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: n
     layerIndex: [...s.layerIndex.entries()],
     warnings: s.warnings,
     ms: performance.now() - t0,
+    annotative: s.annotative ?? 0,
   };
 }
 
@@ -137,7 +138,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       case 'build': {
         const doc = docs.get(msg.docId);
         if (!doc) throw new Error('문서가 없습니다');
-        const scene = makeScene(doc, msg.space, msg.ltFactor, msg.docId);
+        const scene = makeScene(doc, msg.space, msg.ltFactor, msg.docId, { annoScale: msg.annoScale, annoAllVisible: msg.annoAllVisible });
         post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, transferables(scene.list));
         break;
       }

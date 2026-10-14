@@ -1,6 +1,9 @@
 /**
- * PSLTSCALE: 배치 뷰포트에서 모형의 선종류 무늬(점선 등)를 종이 단위로 맞춘다.
- * 모형에 무늬 선이 있을 때만, 뷰포트 축척별로 선종류 배율(1 / 축척)을 곱해 다시 그린 모형 장면을 워커에서 받아 쓴다.
+ * 배치 뷰포트마다 쓰는 모형 장면 변형.
+ * - PSLTSCALE: 모형에 무늬 선이 있으면 뷰포트 축척별로 선종류 배율(1 / 축척)을 곱해 다시 그린다.
+ * - 주석 축척: 모형에 주석 객체가 있으면 뷰포트의 주석 축척(과 배치의 ANNOALLVISIBLE)으로 다시 그린다.
+ *   모형 장면은 CANNOSCALE·모형 탭의 ANNOALLVISIBLE로 그려져 있으므로 둘이 같으면 기본 장면을 쓴다.
+ * 두 조건을 한 변형 열쇠(선종류 배율 | 주석 축척 | ANNOALLVISIBLE)로 묶어 워커에서 받아 쓴다.
  * 기본 모형 장면이 바뀌었거나 모형에 아직 다시 그리지 않은 편집이 있으면 변형 장면은 쓰지 않는다.
  */
 import { MODEL_SPACE, tableKey } from '../core/model';
@@ -8,6 +11,9 @@ import type { App } from './app';
 import type { LayerState } from '../render/styles';
 import type { DocState } from './docstate';
 import { SpaceScene, type ViewportXf, layoutViewports, viewportXf } from './scene';
+import { ScaleIndex } from '../edit/annoscale/represent';
+import { viewportAnnoScale } from '../edit/annoscale/view';
+import { allVisible, currentScale } from '../edit/annoscale/vars';
 
 /** 문서 하나가 둘 수 있는 변형 장면 수 */
 const MAX_VARIANTS = 8;
@@ -28,7 +34,14 @@ export interface ViewportModel {
   index: Map<string, number>;
 }
 
-/** 실패한 배율(같은 기본 장면에서 다시 청하지 않는다) */
+/** 변형 하나: 선종류 배율(1 = 그대로), 주석 축척(null = 모형과 같다), ANNOALLVISIBLE */
+export interface VariantSpec {
+  f: number;
+  anno: string | null;
+  vis: boolean;
+}
+
+/** 실패한 변형(같은 기본 장면에서 다시 청하지 않는다) */
 const failed = new WeakMap<SpaceScene, Set<string>>();
 
 /** 뷰포트의 선종류 배율. PSLTSCALE이 0이거나 축척이 1이면 1 */
@@ -40,7 +53,58 @@ export function ltFactor(st: DocState, vx: ViewportXf): number {
   return Math.abs(f - 1) < 1e-9 ? 1 : f;
 }
 
-const keyOf = (f: number): string => f.toPrecision(8);
+const keyOf = (s: VariantSpec): string => `${s.f.toPrecision(8)}|${s.anno ?? ''}|${s.anno ? (s.vis ? 1 : 0) : ''}`;
+
+/** 문서 세대마다 한 번 읽는 주석 축척 정보 */
+interface AnnoInfo {
+  gen: number;
+  idx: ScaleIndex;
+  model: string;
+  modelVis: boolean;
+  layoutVis: Map<string, boolean>;
+}
+const annoInfo = new WeakMap<DocState, AnnoInfo>();
+
+function infoOf(st: DocState): AnnoInfo {
+  let a = annoInfo.get(st);
+  if (!a || a.gen !== st.gen) {
+    const idx = new ScaleIndex(st.doc);
+    a = { gen: st.gen, idx, model: (currentScale(st.doc, idx.list)?.name ?? '1:1').toUpperCase(), modelVis: allVisible(st.doc, MODEL_SPACE), layoutVis: new Map() };
+    annoInfo.set(st, a);
+  }
+  return a;
+}
+
+/** 뷰포트가 든 배치 블록 키 */
+function layoutOf(st: DocState, vx: ViewportXf): string {
+  const owner = vx.vp.owner?.toUpperCase();
+  const lay = owner ? st.doc.layouts.find((l) => l.blockRecord.toUpperCase() === owner) : undefined;
+  return tableKey(lay?.blockName ?? st.displaySpace);
+}
+
+/** 뷰포트에 쓸 변형(모형 장면 base 기준) */
+export function variantSpec(st: DocState, vx: ViewportXf, base: SpaceScene): VariantSpec {
+  const f = base.source.dashed ? ltFactor(st, vx) : 1;
+  if (!base.annotative) return { f, anno: null, vis: true };
+  const info = infoOf(st);
+  const lay = layoutOf(st, vx);
+  let vis = info.layoutVis.get(lay);
+  if (vis === undefined) {
+    vis = allVisible(st.doc, lay);
+    info.layoutVis.set(lay, vis);
+  }
+  const name = (viewportAnnoScale(st.doc, vx.vp, info.idx.list)?.name ?? info.model).toUpperCase();
+  if (name === info.model && vis === info.modelVis) return { f, anno: null, vis };
+  return { f, anno: name, vis };
+}
+
+/** 뷰포트의 주석 축척 이름(화면 표시용). 주석 객체가 없으면 null */
+export function viewportAnnoName(st: DocState, vx: ViewportXf): string | null {
+  const info = infoOf(st);
+  return viewportAnnoScale(st.doc, vx.vp, info.idx.list)?.name ?? null;
+}
+
+const trivial = (s: VariantSpec): boolean => s.f === 1 && !s.anno;
 
 function modelClean(st: DocState): boolean {
   const ed = st.edits.get(MODEL_SPACE);
@@ -57,7 +121,7 @@ function dropStale(app: App, st: DocState, base: SpaceScene | undefined): void {
 }
 
 function wanted(st: DocState, base: SpaceScene | undefined): base is SpaceScene {
-  return !!base && !!base.source.dashed && base.entities.length <= MAX_ENTITIES && modelClean(st);
+  return !!base && (!!base.source.dashed || base.annotative > 0) && base.entities.length <= MAX_ENTITIES && modelClean(st);
 }
 
 function baseModel(st: DocState, base: SpaceScene): ViewportModel {
@@ -70,9 +134,10 @@ function baseModel(st: DocState, base: SpaceScene): ViewportModel {
 export function viewportModel(app: App | null, st: DocState, vx: ViewportXf): ViewportModel | null {
   const base = st.scenes.get(MODEL_SPACE);
   if (!base) return null;
-  const f = ltFactor(st, vx);
-  if (f === 1 || !wanted(st, base)) return baseModel(st, base);
-  const v = st.ltVariants.get(keyOf(f));
+  if (!wanted(st, base)) return baseModel(st, base);
+  const spec = variantSpec(st, vx, base);
+  if (trivial(spec)) return baseModel(st, base);
+  const v = st.ltVariants.get(keyOf(spec));
   if (v && v.base === base) {
     return { scene: v.scene, layers: v.names.map((n) => st.layers.get(n)!), index: new Map(v.names.map((n, i) => [n, i])) };
   }
@@ -90,9 +155,11 @@ function scheduleVariants(app: App, st: DocState): void {
     window.setTimeout(() => {
       timers.delete(st);
       if (!app.docs.includes(st)) return;
-      // 지금 어느 배치의 뷰포트도 쓰지 않는 배율은 버린다
+      const base = st.scenes.get(MODEL_SPACE);
+      if (!base) return;
+      // 지금 어느 배치의 뷰포트도 쓰지 않는 변형은 버린다
       const live = new Set<string>();
-      for (const lay of st.doc.layouts) for (const vp of layoutViewports(st.doc, lay)) live.add(keyOf(ltFactor(st, viewportXf(st.doc, vp))));
+      for (const lay of st.doc.layouts) for (const vp of layoutViewports(st.doc, lay)) live.add(keyOf(variantSpec(st, viewportXf(st.doc, vp), base)));
       for (const [k, v] of st.ltVariants)
         if (!live.has(k)) {
           v.scene.dispose(app.view.renderer);
@@ -101,18 +168,19 @@ function scheduleVariants(app: App, st: DocState): void {
       const lay = st.layoutFor(st.displaySpace);
       if (!lay) return;
       for (const vp of layoutViewports(st.doc, lay)) {
-        const f = ltFactor(st, viewportXf(st.doc, vp));
-        if (f !== 1) void requestVariant(app, st, f);
+        const spec = variantSpec(st, viewportXf(st.doc, vp), base);
+        if (!trivial(spec)) void requestVariant(app, st, spec);
       }
     }, 250),
   );
 }
 
-/** 배율 f의 변형 장면을 워커에서 그려 온다 */
-export function requestVariant(app: App, st: DocState, f: number): Promise<SpaceScene | null> {
+/** 변형 장면을 워커에서 그려 온다(숫자 하나면 선종류 배율만) */
+export function requestVariant(app: App, st: DocState, specOrF: VariantSpec | number): Promise<SpaceScene | null> {
+  const spec: VariantSpec = typeof specOrF === 'number' ? { f: specOrF, anno: null, vis: true } : specOrF;
   const base = st.scenes.get(MODEL_SPACE);
   if (!wanted(st, base)) return Promise.resolve(null);
-  const k = keyOf(f);
+  const k = keyOf(spec);
   const have = st.ltVariants.get(k);
   if (have && have.base === base) return Promise.resolve(have.scene);
   if (failed.get(base)?.has(k)) return Promise.resolve(null);
@@ -121,7 +189,7 @@ export function requestVariant(app: App, st: DocState, f: number): Promise<Space
   dropStale(app, st, base);
   if (st.ltVariants.size >= MAX_VARIANTS) return Promise.resolve(null);
   const p = app.engine
-    .build(st.docId, MODEL_SPACE, f)
+    .build(st.docId, MODEL_SPACE, spec.f !== 1 ? spec.f : undefined, spec.anno ? { annoScale: spec.anno, annoAllVisible: spec.vis } : undefined)
     .then((msg) => {
       if (!app.docs.includes(st) || st.scenes.get(MODEL_SPACE) !== base || !modelClean(st)) return null;
       st.ltVariants.get(k)?.scene.dispose(app.view.renderer);
@@ -150,11 +218,12 @@ export function requestVariant(app: App, st: DocState, f: number): Promise<Space
 /** 배치의 모든 뷰포트에 쓸 변형 장면을 마련한다(출력·내보내기 전에) */
 export async function ensureLayoutVariants(app: App, st: DocState, space: string): Promise<void> {
   const lay = st.layoutFor(tableKey(space));
-  if (!lay || !wanted(st, st.scenes.get(MODEL_SPACE))) return;
-  const fs = new Set<number>();
+  const base = st.scenes.get(MODEL_SPACE);
+  if (!lay || !wanted(st, base)) return;
+  const specs = new Map<string, VariantSpec>();
   for (const vp of layoutViewports(st.doc, lay)) {
-    const f = ltFactor(st, viewportXf(st.doc, vp));
-    if (f !== 1) fs.add(f);
+    const spec = variantSpec(st, viewportXf(st.doc, vp), base);
+    if (!trivial(spec)) specs.set(keyOf(spec), spec);
   }
-  await Promise.all([...fs].map((f) => requestVariant(app, st, f)));
+  await Promise.all([...specs.values()].map((s) => requestVariant(app, st, s)));
 }

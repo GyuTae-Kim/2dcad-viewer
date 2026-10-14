@@ -296,7 +296,11 @@ export class EditSession {
     return k ?? null;
   }
 
+  /** 커밋 직전에 트랜잭션을 고치는 고리(주석 축척: 새 주석 객체에 축척 레코드 붙이기 등) */
+  beforeCommit: ((tx: Transaction) => Transaction) | null = null;
+
   commit(tx: Transaction): void {
+    if (this.beforeCommit && tx.ops.length) tx = this.beforeCommit(tx);
     if (!tx.ops.length) return;
     const summary = emptySummary();
     applyOps(this.doc, tx.ops, summary);

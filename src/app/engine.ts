@@ -124,11 +124,12 @@ export class EngineClient {
     });
   }
 
-  build(docId: number, space: string, ltFactor?: number): Promise<SceneMessage> {
+  /** 공간 장면을 그려 온다. anno: 주석 축척 표현(배치 뷰포트의 모형 장면, 없으면 공간에 맞게) */
+  build(docId: number, space: string, ltFactor?: number, anno?: { annoScale?: string | null; annoAllVisible?: boolean }): Promise<SceneMessage> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.post({ type: 'build', id, docId, space, ltFactor });
+      this.post({ type: 'build', id, docId, space, ltFactor, annoScale: anno?.annoScale, annoAllVisible: anno?.annoAllVisible });
     });
   }
 }

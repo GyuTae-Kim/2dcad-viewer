@@ -13,6 +13,7 @@ import { pickColor } from './colorpick';
 import { dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
 import { icon } from './icons';
 import { RecentStore } from '../recent';
+import { type AnnoStatus, annoStatus } from '../annoscale-status';
 
 interface Btn {
   cmd?: string;
@@ -405,6 +406,21 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'CENTERMARK', label: '중심 표식', icon: 'circle', tip: '원·호의 중심 표식 (CM)' },
             { cmd: 'CENTERLINE', label: '중심선', icon: 'xline', tip: '두 선 사이 중심선 (CL)' },
+          ],
+        ],
+      },
+      {
+        title: '주석 축척',
+        large: [{ cmd: 'SCALELISTEDIT', label: '축척 리스트', icon: 'scale', tip: '도면 축척 편집 (SCALELISTEDIT)' }],
+        cols: [
+          [
+            { cmd: 'OBJECTSCALE', label: '축척 추가/삭제', icon: 'scale', tip: '주석 객체 축척 (OBJECTSCALE)' },
+            { cmd: 'AIOBJECTSCALEADD', label: '현재 축척 추가', icon: 'plus', tip: '고른 주석 객체에 현재 주석 축척 추가' },
+            { cmd: 'AIOBJECTSCALEREMOVE', label: '현재 축척 삭제', icon: 'erase', tip: '고른 주석 객체에서 현재 주석 축척 삭제' },
+          ],
+          [
+            { cmd: 'ANNORESET', label: '위치 재설정', icon: 'move', tip: '모든 축척 표현의 위치를 현재 표현의 위치로 (ANNORESET)' },
+            { cmd: 'ANNOUPDATE', label: '주석 업데이트', icon: 'text', tip: '문자를 문자 스타일의 주석 설정에 맞춤' },
           ],
         ],
       },
@@ -1064,6 +1080,8 @@ export class Shell implements UiHooks {
   private spaceLabel = h('span', { class: 'status-text' });
   private unitLabel = h('span', { class: 'status-text' });
   private selLabel = h('span', { class: 'status-text' });
+  /** 주석 축척 항목(annoscale-status.ts) */
+  private annoItems: AnnoStatus | null = null;
 
   private buildStatus(): void {
     const app = this.app;
@@ -1112,6 +1130,8 @@ export class Shell implements UiHooks {
       h('span', { class: 'status-sep' }),
       this.selLabel,
       h('span', { class: 'status-spacer' }),
+      ...(this.annoItems = annoStatus(app)).elements,
+      h('span', { class: 'status-sep' }),
       this.unitLabel,
       mk('ext', 'extents', '전체 보기', () => app.view.zoomExtents()),
       mk('props', 'props', '특성 팔레트 (Ctrl+1)', () => this.openPalette('props')),
@@ -1168,6 +1188,7 @@ export class Shell implements UiHooks {
       this.selLabel.textContent = '';
       this.coords.textContent = '';
     }
+    this.annoItems?.refresh();
     this.refreshRibbonState();
   }
 

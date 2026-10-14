@@ -18,6 +18,8 @@ export class SpaceScene {
   readonly styles: StyleTable;
   readonly entities: EntityBox[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
+  /** 주석 객체 수(배치 뷰포트마다 다른 주석 축척의 장면이 필요한지) */
+  readonly annotative: number;
   private styleCache = new Map<string, Float32Array>();
 
   constructor(
@@ -30,6 +32,7 @@ export class SpaceScene {
     this.styles = new StyleTable();
     for (const s of msg.styles) this.styles.intern(s as StyleSpec);
     this.entities = msg.list.entities;
+    this.annotative = msg.annotative ?? 0;
     const l: DisplayList = msg.list;
     this.bounds = Number.isFinite(l.minX) && l.minX <= l.maxX ? { minX: l.minX, minY: l.minY, maxX: l.maxX, maxY: l.maxY } : null;
   }

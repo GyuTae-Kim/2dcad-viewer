@@ -12,6 +12,7 @@ import { pickColor } from './colorpick';
 import { h, showMenu } from './dom';
 import { icon } from './icons';
 import { dynPaletteGroup } from '../dynblock';
+import { annoCurrentRow, annoPaletteGroup } from '../annoscale-palette';
 
 type Tab = 'props' | 'layers' | 'dims' | 'find';
 
@@ -136,6 +137,8 @@ export class Palette {
     const title = sel.length === 1 ? typeName(sel[0]!) : types.size === 1 ? `${typeName(sel[0]!)} (${sel.length.toLocaleString()})` : `전체 (${sel.length.toLocaleString()})`;
     this.body.append(h('div', { class: 'prop-title' }, title));
     this.editGroup('일반', GENERAL_FIELDS, sel, handles);
+    const anno = annoPaletteGroup(this.app, sel);
+    if (anno) this.body.append(anno);
     if (types.size === 1) {
       const t = sel[0]!.type;
       const fields = geometryFields(t);
@@ -204,6 +207,8 @@ export class Palette {
         }),
       );
     }
+    const annoRow = annoCurrentRow(app);
+    if (annoRow) rows.push(annoRow);
     this.body.append(h('div', { class: 'prop-group' }, h('h4', {}, '새 객체의 현재 특성'), ...rows));
   }
 
