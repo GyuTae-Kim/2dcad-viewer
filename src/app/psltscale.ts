@@ -76,8 +76,36 @@ export function viewportModel(app: App | null, st: DocState, vx: ViewportXf): Vi
   if (v && v.base === base) {
     return { scene: v.scene, layers: v.names.map((n) => st.layers.get(n)!), index: new Map(v.names.map((n, i) => [n, i])) };
   }
-  if (app) void requestVariant(app, st, f);
+  if (app) scheduleVariants(app, st);
   return baseModel(st, base);
+}
+
+/** 문서별 변형 요청 타이머(확대·이동 중에는 기다렸다가 멈추면 청한다) */
+const timers = new WeakMap<DocState, number>();
+
+function scheduleVariants(app: App, st: DocState): void {
+  clearTimeout(timers.get(st));
+  timers.set(
+    st,
+    window.setTimeout(() => {
+      timers.delete(st);
+      if (!app.docs.includes(st)) return;
+      // 지금 어느 배치의 뷰포트도 쓰지 않는 배율은 버린다
+      const live = new Set<string>();
+      for (const lay of st.doc.layouts) for (const vp of layoutViewports(st.doc, lay)) live.add(keyOf(ltFactor(st, viewportXf(st.doc, vp))));
+      for (const [k, v] of st.ltVariants)
+        if (!live.has(k)) {
+          v.scene.dispose(app.view.renderer);
+          st.ltVariants.delete(k);
+        }
+      const lay = st.layoutFor(st.displaySpace);
+      if (!lay) return;
+      for (const vp of layoutViewports(st.doc, lay)) {
+        const f = ltFactor(st, viewportXf(st.doc, vp));
+        if (f !== 1) void requestVariant(app, st, f);
+      }
+    }, 250),
+  );
 }
 
 /** 배율 f의 변형 장면을 워커에서 그려 온다 */

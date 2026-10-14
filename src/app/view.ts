@@ -3,7 +3,7 @@
  */
 import type { XrefPlacement } from './refs';
 import type { ViewportModel } from './psltscale';
-import { MODEL_SPACE, tableKey } from '../core/model';
+import { MODEL_SPACE, type ViewportEntity, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type ViewXf } from '../render/webgl';
 import type { Camera, DocState } from './docstate';
@@ -58,6 +58,8 @@ export interface ViewEvents {
   dblclick(world: Pt, screen: Pt, ev: MouseEvent): void;
   leave(): void;
   viewChanged(): void;
+  /** MSPACE에서 확대·이동이 뷰포트의 뷰를 바꿀 때 */
+  viewportView?(vp: ViewportEntity, patch: Pick<ViewportEntity, 'viewHeight' | 'viewCenter'>): void;
 }
 
 const DARK_BG = 0x212830;
@@ -200,22 +202,73 @@ export class CadView {
   // 카메라
   // -------------------------------------------------------------------------
 
+  /** 배치 그리기 중: MSPACE여도 종이 카메라를 쓴다 */
+  private paperCam = false;
+
   camera(): Camera {
     const s = this.state;
     if (!s) return { cx: 0, cy: 0, scale: 1 };
-    let c = s.cameras.get(s.space);
+    if (s.msVp && !this.paperCam) {
+      const m = this.msInfo(s);
+      if (m) {
+        // 모형 → 종이(뷰포트 변환) → 화면(종이 카메라). 비틀림 없는 뷰포트만 들어온다
+        const { vp, vx, paper } = m;
+        return { cx: vx.refX + (paper.cx - vp.center.x) / vx.k, cy: vx.refY + (paper.cy - vp.center.y) / vx.k, scale: paper.scale * vx.k };
+      }
+    }
+    const space = s.msVp ? s.msVp.layout : s.space;
+    let c = s.cameras.get(space);
     if (!c) {
       c = { cx: 0, cy: 0, scale: 1 };
-      s.cameras.set(s.space, c);
-      this.zoomExtents(false);
-      c = s.cameras.get(s.space)!;
+      s.cameras.set(space, c);
+      if (!s.msVp) {
+        this.zoomExtents(false);
+        c = s.cameras.get(space)!;
+      }
     }
     return c;
+  }
+
+  /** MSPACE의 활성 뷰포트와 그 변환, 종이 카메라 */
+  msInfo(s: DocState): { vp: ViewportEntity; vx: ViewportXf; paper: Camera } | null {
+    const e = s.msVp ? s.doc.entityIndex.get(s.msVp.handle) : undefined;
+    if (!e || e.type !== 'VIEWPORT') return null;
+    const paper = s.cameras.get(s.msVp!.layout);
+    if (!paper) return null;
+    return { vp: e, vx: viewportXf(s.doc, e), paper };
+  }
+
+  /** 화면 점 → 종이 좌표(MSPACE에서도 배치 좌표) */
+  paperPoint(x: number, y: number): Pt {
+    this.paperCam = true;
+    try {
+      return this.screenToWorld(x, y);
+    } finally {
+      this.paperCam = false;
+    }
   }
 
   private setCamera(c: Camera, remember = true): void {
     const s = this.state;
     if (!s) return;
+    if (s.msVp && !this.paperCam) {
+      const m = this.msInfo(s);
+      if (m) {
+        const { vp, vx, paper } = m;
+        if (vp.flags & 0x4000) {
+          // 잠긴 뷰포트: 뷰는 그대로 두고 종이 공간을 확대·이동한다
+          s.cameras.set(s.msVp.layout, { cx: vp.center.x + (c.cx - vx.refX) * vx.k, cy: vp.center.y + (c.cy - vx.refY) * vx.k, scale: clampScale(c.scale / vx.k) });
+        } else {
+          const k = c.scale / paper.scale;
+          const refX = c.cx - (paper.cx - vp.center.x) / k;
+          const refY = c.cy - (paper.cy - vp.center.y) / k;
+          this.events?.viewportView?.(vp, { viewHeight: vp.height / k, viewCenter: { x: refX - vp.viewTarget.x, y: refY - vp.viewTarget.y } });
+        }
+        this.requestRender();
+        this.events?.viewChanged();
+        return;
+      }
+    }
     if (remember) {
       const prev = s.cameras.get(s.space);
       if (prev) {
@@ -275,8 +328,12 @@ export class CadView {
   zoomRect(x0: number, y0: number, x1: number, y1: number, remember = true, margin = 0.02): void {
     const w = Math.max(Math.abs(x1 - x0), 1e-9);
     const h = Math.max(Math.abs(y1 - y0), 1e-9);
-    const sx = (this.w * (1 - margin * 2)) / w;
-    const sy = (this.h * (1 - margin * 2)) / h;
+    // MSPACE: 뷰포트 크기에 맞춘다
+    const m = this.state?.msVp && !this.paperCam ? this.msInfo(this.state) : null;
+    const W = m ? m.vp.width * m.paper.scale : this.w;
+    const H = m ? m.vp.height * m.paper.scale : this.h;
+    const sx = (W * (1 - margin * 2)) / w;
+    const sy = (H * (1 - margin * 2)) / h;
     let scale = Math.min(sx, sy);
     if (!Number.isFinite(scale) || scale <= 0) scale = 1;
     this.setCamera({ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, scale: clampScale(scale) }, remember);
@@ -284,7 +341,7 @@ export class CadView {
 
   zoomPrevious(): boolean {
     const s = this.state;
-    if (!s) return false;
+    if (!s || s.msVp) return false;
     const list = s.prevCameras.get(s.space);
     const c = list?.pop();
     if (!c) return false;
@@ -370,8 +427,21 @@ export class CadView {
       r.clear(rgbF(DARK_BG));
       return;
     }
+    if (s.isModel && !s.msVp) this.renderModel(s);
+    else {
+      this.paperCam = true;
+      try {
+        this.renderLayout(s);
+      } finally {
+        this.paperCam = false;
+      }
+    }
+  }
+
+  private renderModel(s: DocState): void {
+    const r = this.renderer;
     const scene = s.scenes.get(s.space);
-    if (s.isModel) {
+    {
       const bg = this.modelBg;
       const dark = isDark(bg);
       r.clear(rgbF(bg));
@@ -394,11 +464,16 @@ export class CadView {
         r.draw(scene.gpu, this.viewXf(), { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
       }
       this.drawOverlayScene(s.space, this.viewXf(), 3.78 * this.dpr, dark, bg);
-      return;
     }
-    // 배치
+  }
+
+  /** 배치(용지, 뷰포트, 종이 공간 객체). MSPACE여도 배치를 그린다 */
+  private renderLayout(s: DocState): void {
+    const r = this.renderer;
+    const space = s.displaySpace;
+    const scene = s.scenes.get(space);
     r.clear(rgbF(LAYOUT_BG));
-    const lay = s.layoutFor(s.space);
+    const lay = s.layoutFor(space);
     if (!lay) return;
     const paper = paperInfo(lay, scene?.bounds ?? null);
     const toPx = (x: number, y: number) => {
@@ -422,13 +497,13 @@ export class CadView {
     r.scissor(null);
     r.clearDepth();
     if (scene) {
-      const paperStyles = scene.styleData(s.sceneLayers(s.space), 'paper', false, 0xffffff, this.lwDisplay);
+      const paperStyles = scene.styleData(s.sceneLayers(space), 'paper', false, 0xffffff, this.lwDisplay);
       // 종이 공간의 외부 참조(도곽 등)
       this.drawXrefs(scene.source, this.viewXf(), lwScale, false, 0xffffff, paperStyles, (x, y) => [...toPx(x, y)] as [number, number]);
       r.setStyles(paperStyles);
       r.draw(scene.gpu, this.viewXf(), { lwScale, visible: this.visibleRect() });
     }
-    this.drawOverlayScene(s.space, this.viewXf(), lwScale, false, 0xffffff);
+    this.drawOverlayScene(space, this.viewXf(), lwScale, false, 0xffffff);
   }
 
   /** 편집 덧그림(기본 장면 위) */
@@ -509,12 +584,25 @@ export class CadView {
     g.setTransform(d, 0, 0, d, 0, 0);
     const s = this.state;
     const o = this.overlay;
-    const dark = s ? (s.isModel ? isDark(this.modelBg) : true) : true;
+    const dark = s ? (s.isModel && !s.msVp ? isDark(this.modelBg) : true) : true;
     const W = (x: number, y: number) => this.worldToScreen(x, y);
-    // 배치: 인쇄 가능 영역 점선
-    if (s && !s.isModel) {
-      const lay = s.layoutFor(s.space);
-      const scene = s.scenes.get(s.space);
+    // 배치: 인쇄 가능 영역 점선, MSPACE의 활성 뷰포트 굵은 테두리
+    let vpRect: [number, number, number, number] | null = null;
+    if (s && s.onLayout) {
+      this.paperCam = true;
+      const lay = s.layoutFor(s.displaySpace);
+      const scene = s.scenes.get(s.displaySpace);
+      const m = s.msVp ? this.msInfo(s) : null;
+      if (m) {
+        const a = W(m.vp.center.x - m.vp.width / 2, m.vp.center.y + m.vp.height / 2);
+        const b = W(m.vp.center.x + m.vp.width / 2, m.vp.center.y - m.vp.height / 2);
+        g.save();
+        g.strokeStyle = 'rgba(40,120,220,0.95)';
+        g.lineWidth = 2.5;
+        g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        g.restore();
+        vpRect = [a.x, a.y, b.x - a.x, b.y - a.y];
+      }
       if (lay) {
         const p: PaperInfo = paperInfo(lay, scene?.bounds ?? null);
         if (p.printable) {
@@ -528,6 +616,7 @@ export class CadView {
           g.restore();
         }
       }
+      this.paperCam = false;
     }
     const drawGeom = (geom: OverlayGeom, color: string, width: number, dash: number[] | null, fill?: string) => {
       g.save();
@@ -560,6 +649,13 @@ export class CadView {
       g.stroke();
       g.restore();
     };
+    // MSPACE: 강조·선택·그립은 활성 뷰포트 안만
+    if (vpRect) {
+      g.save();
+      g.beginPath();
+      g.rect(...vpRect);
+      g.clip();
+    }
     if (o.hover) drawGeom(o.hover, dark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)', 2.2, null, 'rgba(120,170,255,0.25)');
     for (const sel of o.selection) drawGeom(sel, '#3d8dff', 1.6, [6, 4], 'rgba(61,141,255,0.25)');
     // 그립
@@ -578,6 +674,7 @@ export class CadView {
       g.fillRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
     g.restore();
+    if (vpRect) g.restore();
     // 블록 편집기: 블록 기준점
     const be = s?.blockEdit ? s.doc.blocks.get(s.blockEdit.key) : null;
     if (be) {

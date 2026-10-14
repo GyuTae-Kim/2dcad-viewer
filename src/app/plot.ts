@@ -114,9 +114,9 @@ export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPe
     }
     return pages;
   }
-  if (s.what === 'layout' && !st.isModel) {
-    await ensureLayoutVariants(app, st, st.space);
-    const p = layoutPage(st, st.space, unitsPerMm, opt);
+  if (s.what === 'layout' && st.onLayout) {
+    await ensureLayoutVariants(app, st, st.displaySpace);
+    const p = layoutPage(st, st.displaySpace, unitsPerMm, opt);
     if (p) pages.push(p);
     return pages;
   }
@@ -145,7 +145,7 @@ export function registerPlotCommands(app: App): void {
       const layoutCount = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).length;
       const prev = lastSettings.get(st);
       const metric = !!st.units.measurement;
-      const sheet = st.layoutFor(st.space)?.plot.styleSheet;
+      const sheet = st.layoutFor(st.displaySpace)?.plot.styleSheet;
       const sheetCtb = ctbByName(sheet);
       const v = await form(
         '플롯',
@@ -154,15 +154,15 @@ export function registerPlotCommands(app: App): void {
             key: 'what',
             label: '플롯 영역',
             type: 'select',
-            value: prev?.what ?? (st.isModel ? 'display' : 'layout'),
+            value: prev?.what ?? (!st.onLayout ? 'display' : 'layout'),
             options: [
-              ...(st.isModel
+              ...(!st.onLayout
                 ? [
                     { value: 'display', label: '화면 표시' },
                     { value: 'extents', label: '범위' },
                     { value: 'window', label: '윈도우(두 점 지정)' },
                   ]
-                : [{ value: 'layout', label: `배치 "${st.layoutFor(st.space)?.name ?? ''}" (용지 그대로)` }]),
+                : [{ value: 'layout', label: `배치 "${st.layoutFor(st.displaySpace)?.name ?? ''}" (용지 그대로)` }]),
               ...(layoutCount ? [{ value: 'layouts', label: `모든 배치 (${layoutCount}쪽)` }] : []),
             ],
           },
@@ -240,7 +240,7 @@ export function registerPlotCommands(app: App): void {
         return;
       }
       const blob = await pdfDocument(pages, st.saveName);
-      const suffix = s.what === 'layouts' ? '-배치' : s.what === 'layout' ? `-${st.layoutFor(st.space)?.name ?? 'layout'}` : '';
+      const suffix = s.what === 'layouts' ? '-배치' : s.what === 'layout' ? `-${st.layoutFor(st.displaySpace)?.name ?? 'layout'}` : '';
       download(blob, `${name}${suffix}.pdf`);
       ctx.print(`PDF ${pages.length}쪽을 저장했습니다.`);
     },

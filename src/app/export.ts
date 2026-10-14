@@ -222,7 +222,7 @@ function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
   if (!st) return null;
   const v = app.view;
   const opt: PageOptions = { lineweights: app.view.lwDisplay };
-  if (st.isModel) {
+  if (!st.onLayout) {
     const a = v.screenToWorld(0, v.height);
     const b = v.screenToWorld(v.width, 0);
     const ww = b.x - a.x;
@@ -231,7 +231,7 @@ function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
     const k = W / ww;
     return modelPage(st, [a.x, a.y, b.x, b.y], W, wh * k, k, unitsPerMm, opt, false);
   }
-  return layoutPage(st, st.space, unitsPerMm, opt);
+  return layoutPage(st, st.displaySpace, unitsPerMm, opt);
 }
 
 function css(styles: Float32Array, s: number): string {
@@ -245,10 +245,10 @@ export async function exportSvg(app: App): Promise<Blob | null> {
   // SVG 단위 = mm(배치) 또는 화면 픽셀(모형)
   const st = app.active;
   if (!st) return null;
-  if (!st.isModel) await ensureLayoutVariants(app, st, st.space);
+  if (st.onLayout) await ensureLayoutVariants(app, st, st.displaySpace);
   const page = pageFor(app, 1);
   if (!page) return null;
-  return exportPageSvg(page, st.isModel ? 'px' : 'mm');
+  return exportPageSvg(page, !st.onLayout ? 'px' : 'mm');
 }
 
 /** 출력할 래스터 이미지: UV(0~1, v는 위가 0) → 출력 좌표 아핀과 경계 삼각형(출력 좌표) */
@@ -371,9 +371,9 @@ export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
 export async function exportPdf(app: App): Promise<Blob | null> {
   const st = app.active;
   if (!st) return null;
-  if (!st.isModel) await ensureLayoutVariants(app, st, st.space);
+  if (st.onLayout) await ensureLayoutVariants(app, st, st.displaySpace);
   // 모형: 지금 화면을 A3 가로(420 mm) 폭에 맞춘다
-  const page = pageFor(app, PT_PER_MM, st.isModel ? 420 * PT_PER_MM : undefined);
+  const page = pageFor(app, PT_PER_MM, !st.onLayout ? 420 * PT_PER_MM : undefined);
   if (!page) return null;
   return pdfDocument([page], st.name);
 }

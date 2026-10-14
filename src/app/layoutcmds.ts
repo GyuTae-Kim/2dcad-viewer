@@ -212,7 +212,7 @@ export function registerLayoutCommands(app: App): void {
     title: '배치',
     async run(ctx, arg) {
       const st = app.active!;
-      const cur = st.layoutFor(st.space);
+      const cur = st.layoutFor(st.displaySpace);
       const curName = cur && tableKey(cur.blockName) !== MODEL_SPACE ? cur.name : (st.doc.layouts.find((l) => tableKey(l.blockName) !== MODEL_SPACE)?.name ?? '');
       let opt = arg?.trim().toUpperCase();
       if (!opt) {
@@ -291,7 +291,7 @@ export function registerLayoutCommands(app: App): void {
           ]);
           if (a !== 'ok') return;
           const key = tableKey(l.blockName);
-          if (st.space === key) await app.setSpace('*Model_Space');
+          if (st.displaySpace === key) await app.setSpace('*Model_Space');
           const ops: EditOp[] = [{ kind: 'layout', key, before: l, after: null }];
           const obj = st.doc.objects.get(l.handle);
           if (obj) ops.push({ kind: 'object', key: l.handle, before: obj, after: null });
@@ -325,7 +325,7 @@ export function registerLayoutCommands(app: App): void {
         ctx.print('블록 편집기에서는 쓸 수 없습니다.', 'err');
         return;
       }
-      const l = st.layoutFor(st.space);
+      const l = st.layoutFor(st.displaySpace);
       if (!l) return;
       const p = l.plot;
       const key = paperKey(p);

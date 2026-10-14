@@ -210,7 +210,7 @@ export function viewportXf(doc: CadDocument, vp: ViewportEntity): ViewportXf {
 }
 
 /** 뷰포트 자르기 경계 객체의 윤곽(종이 좌표, [x, y, …]) */
-function outlineOf(e: Entity): number[] | null {
+export function outlineOf(e: Entity): number[] | null {
   const tol = 0;
   switch (e.type) {
     case 'LWPOLYLINE': {

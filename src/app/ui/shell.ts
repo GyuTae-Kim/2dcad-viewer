@@ -693,13 +693,13 @@ export class Shell implements UiHooks {
     for (const l of st.layouts) {
       const key = tableKey(l.blockName);
       const label = key === MODEL_SPACE ? '모형' : l.name;
-      const b = h('button', { class: `layouttab ${st.space === key ? 'active' : ''}` }, label);
+      const b = h('button', { class: `layouttab ${st.displaySpace === key ? 'active' : ''}` }, label);
       b.addEventListener('click', () => void app.setSpace(l.blockName));
       b.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         const paper = key !== MODEL_SPACE;
         const go = async (cmd: string, arg?: string) => {
-          if (paper && st.space !== key) await app.setSpace(l.blockName);
+          if (paper && st.displaySpace !== key) await app.setSpace(l.blockName);
           void app.run(cmd, arg);
         };
         showMenu(ev.clientX, ev.clientY - (paper ? 190 : 80), [
@@ -810,7 +810,15 @@ export class Shell implements UiHooks {
     this.statusBtns.dyn?.classList.toggle('on', app.dynOn);
     this.statusBtns.lw?.classList.toggle('on', app.view.lwDisplay);
     this.statusBtns.bg?.classList.toggle('on', app.view.modelBg === 0xffffff);
-    this.spaceLabel.textContent = st ? (st.blockEdit ? `블록 편집기: ${st.blockEdit.name}` : st.isModel ? '모형' : `배치: ${st.layoutFor(st.space)?.name ?? ''}`) : '';
+    this.spaceLabel.textContent = st
+      ? st.blockEdit
+        ? `블록 편집기: ${st.blockEdit.name}`
+        : st.msVp
+          ? `배치: ${st.layoutFor(st.msVp.layout)?.name ?? ''} · 모형 공간(뷰포트)`
+          : st.isModel
+            ? '모형'
+            : `배치: ${st.layoutFor(st.space)?.name ?? ''}`
+      : '';
     if (st) {
       const abbr = unitAbbr(st.units.insunits);
       this.unitLabel.textContent = abbr ? `단위: ${abbr}` : '단위 없음';

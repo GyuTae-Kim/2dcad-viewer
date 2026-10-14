@@ -83,6 +83,19 @@ export class DocState {
   /** 블록 편집기로 연 블록(그 블록을 공간처럼 보고 고친다) */
   blockEdit: { name: string; key: string; back: string; depth: number } | null = null;
 
+  /** 배치에서 뷰포트를 통해 모형을 다루는 중(MSPACE): 배치 공간 키와 뷰포트 핸들. 이때 space는 모형이다 */
+  msVp: { layout: string; handle: string } | null = null;
+
+  /** 화면에 그리는 공간(MSPACE 중이면 배치) */
+  get displaySpace(): string {
+    return this.msVp?.layout ?? this.space;
+  }
+
+  /** 배치 탭을 보고 있는지(MSPACE 포함) */
+  get onLayout(): boolean {
+    return this.msVp !== null || !this.isModel;
+  }
+
   /** 모형처럼 그리는 공간(모형 공간, 블록 편집기) */
   get isModel(): boolean {
     return this.space === MODEL_SPACE || this.blockEdit !== null;

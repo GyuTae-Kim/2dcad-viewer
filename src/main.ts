@@ -15,6 +15,7 @@ import { registerLayoutCommands } from './app/layoutcmds';
 import { noteMissingShx, registerShxCommands, restoreShxFonts } from './app/shxfonts';
 import { noteMissingRefs, registerRefCommands } from './app/refs';
 import { registerIsolateCommands } from './app/isolate';
+import { registerViewportCommands } from './app/vpcmds';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -54,6 +55,7 @@ registerLayoutCommands(app);
 registerShxCommands(app);
 registerRefCommands(app);
 registerIsolateCommands(app);
+registerViewportCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);
@@ -99,7 +101,7 @@ app.register({
     const b = await exportSvg(app);
     if (!b) return;
     download(b, `${baseName(app.active!.name)}.svg`);
-    ctx.print(app.active!.isModel ? '지금 화면 범위를 SVG로 저장했습니다.' : '배치 용지를 SVG로 저장했습니다(단위 mm).');
+    ctx.print(!app.active!.onLayout ? '지금 화면 범위를 SVG로 저장했습니다.' : '배치 용지를 SVG로 저장했습니다(단위 mm).');
   },
 });
 app.register({

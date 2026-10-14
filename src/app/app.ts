@@ -2,7 +2,7 @@
  * 앱 컨트롤러: 문서·화면·명령·선택·스냅을 묶는다.
  */
 import { viewportModel } from './psltscale';
-import type { Entity } from '../core/model';
+import type { Entity, ViewportEntity } from '../core/model';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import { errorMessage } from '../core/errors';
 import type { CadErrorCode } from '../core/errors';
@@ -21,7 +21,7 @@ import { gripPoints } from '../edit/geom';
 import { spaceTolerance } from '../render/build';
 import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
-import { OverlayScene } from './scene';
+import { OverlayScene, layoutViewports } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 
@@ -173,6 +173,7 @@ export class App {
         this.ui?.refreshStatus();
         this.scheduleDetail();
       },
+      viewportView: (vp, patch) => this.onViewportView(vp, patch),
     });
     this.cmd.onChange = (t) => {
       this.view.overlay.dynInput = this.dynOn && t ? t : null;
@@ -644,11 +645,92 @@ export class App {
     await p;
   }
 
+  /** MSPACE에서 뷰포트 확대·이동: 뷰를 곧바로 바꾸고, 멈추면 한 번의 편집(명령 취소 한 단계)으로 기록한다 */
+  private vpViewPending: { st: DocState; layout: string; before: ViewportEntity; timer: number } | null = null;
+
+  private onViewportView(vp: ViewportEntity, patch: Pick<ViewportEntity, 'viewHeight' | 'viewCenter'>): void {
+    const st = this.active;
+    if (!st?.msVp) return;
+    let p = this.vpViewPending;
+    if (p && (p.st !== st || p.before.handle !== vp.handle)) {
+      this.flushViewportView();
+      p = null;
+    }
+    if (!p) p = this.vpViewPending = { st, layout: st.msVp.layout, before: { ...vp, viewCenter: { ...vp.viewCenter } }, timer: 0 };
+    vp.viewHeight = patch.viewHeight;
+    vp.viewCenter = { ...patch.viewCenter };
+    clearTimeout(p.timer);
+    p.timer = window.setTimeout(() => this.flushViewportView(), 500);
+  }
+
+  /** 미뤄 둔 뷰포트 뷰 변경을 기록한다 */
+  flushViewportView(): void {
+    const p = this.vpViewPending;
+    if (!p) return;
+    this.vpViewPending = null;
+    clearTimeout(p.timer);
+    const cur = p.st.doc.entityIndex.get(p.before.handle);
+    if (!cur || cur.type !== 'VIEWPORT') return;
+    const after = { ...cur, viewCenter: { ...cur.viewCenter } };
+    // 지금 객체는 이미 바뀌어 있으므로 원래 값으로 되돌린 뒤 편집으로 적용한다
+    Object.assign(cur, { viewHeight: p.before.viewHeight, viewCenter: p.before.viewCenter });
+    p.st.session.commit({ label: 'ZOOM', ops: [{ kind: 'modify', block: p.layout, before: p.before, after }] });
+  }
+
+  /** 배치의 뷰포트로 들어가 모형을 다룬다(MSPACE). 비틀린 뷰포트는 아직 못 들어간다 */
+  enterViewport(st: DocState, vp: ViewportEntity): boolean {
+    if (vp.twistAngle) {
+      this.cmd.print('비틀린 뷰포트는 아직 모형 공간으로 들어갈 수 없습니다.', 'err');
+      return false;
+    }
+    const layout = st.msVp?.layout ?? st.space;
+    if (!st.layoutFor(layout) || layout === MODEL_SPACE) return false;
+    this.flushViewportView();
+    if (st.msVp?.handle === vp.handle) return true;
+    this.cancel(true);
+    st.msVp = { layout, handle: vp.handle };
+    st.space = MODEL_SPACE;
+    st.selection.clear();
+    this.view.setState(st);
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+    return true;
+  }
+
+  /** 뷰포트에서 나와 종이 공간으로(PSPACE) */
+  exitViewport(st: DocState): void {
+    if (!st.msVp) return;
+    this.flushViewportView();
+    this.cancel(true);
+    st.space = st.msVp.layout;
+    st.msVp = null;
+    st.selection.clear();
+    this.view.setState(st);
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+  }
+
   /** 모형·배치 전환 */
   async setSpace(space: string): Promise<void> {
     const st = this.active;
     if (!st) return;
     const key = tableKey(space);
+    if (st.msVp) {
+      this.flushViewportView();
+      const lay = st.msVp.layout;
+      st.msVp = null;
+      st.space = lay;
+      if (key === lay) {
+        this.view.setState(st);
+        this.ui.refreshLayouts();
+        this.ui.refreshStatus();
+        return;
+      }
+    }
     if (st.space === key) return;
     if (st.blockEdit) {
       await this.closeBlockEditor(true);
@@ -687,7 +769,7 @@ export class App {
 
   private updateDetail(): void {
     const st = this.active;
-    if (!st || !st.isModel || !st.scenes.get(st.space)) return this.dropDetail();
+    if (!st || !st.isModel || st.msVp || !st.scenes.get(st.space)) return this.dropDetail();
     const cam = this.view.camera();
     // 기본 장면의 현-곡선 오차가 0.6픽셀을 넘을 때만
     if (spaceTolerance(st.doc, st.space) * cam.scale < 0.6) return this.dropDetail();
@@ -1012,10 +1094,37 @@ export class App {
     this.view.requestOverlay();
   }
 
+  /** 종이 좌표의 점이 든 뷰포트(가장 앞) */
+  viewportAt(st: DocState, p: Pt): ViewportEntity | null {
+    const lay = st.layoutFor(st.displaySpace);
+    if (!lay) return null;
+    const vps = layoutViewports(st.doc, lay);
+    for (let i = vps.length - 1; i >= 0; i--) {
+      const v = vps[i]!;
+      if (Math.abs(p.x - v.center.x) <= v.width / 2 && Math.abs(p.y - v.center.y) <= v.height / 2) return v;
+    }
+    return null;
+  }
+
   private onClick(w: Pt, s: Pt, ev: PointerEvent): void {
     closeMenu();
     const st = this.active;
     if (!st) return;
+    if (st.msVp) {
+      // MSPACE: 활성 뷰포트 밖을 누르면 그 자리의 뷰포트를 활성으로(없으면 무시)
+      const pp = this.view.paperPoint(s.x, s.y);
+      const at = this.viewportAt(st, pp);
+      if (!at) return;
+      if (at.handle !== st.msVp.handle) {
+        if (this.request) {
+          this.flushViewportView();
+          if (!at.twistAngle) st.msVp.handle = at.handle;
+          this.view.requestRender();
+          this.view.requestOverlay();
+        } else this.enterViewport(st, at);
+        return;
+      }
+    }
     const r = this.request;
     if (r?.kind === 'point') {
       const { p } = this.resolvePoint(w);
@@ -1111,10 +1220,24 @@ export class App {
     this.view.requestOverlay();
   }
 
-  private onDblClick(w: Pt, _s: Pt): void {
-    void _s;
+  private onDblClick(w: Pt, sp: Pt): void {
     const st = this.active;
     if (!st || this.request) return;
+    // 배치: 뷰포트 안을 두 번 누르면 모형 공간으로, MSPACE에서 뷰포트 밖이면 종이 공간으로
+    if (st.onLayout && !st.blockEdit) {
+      const at = this.viewportAt(st, this.view.paperPoint(sp.x, sp.y));
+      if (st.msVp && !at) {
+        this.exitViewport(st);
+        return;
+      }
+      if (!st.msVp && at) {
+        const hit = this.picker()?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
+        if (!hit || hit === at.handle) {
+          this.enterViewport(st, at);
+          return;
+        }
+      }
+    }
     const pk = this.picker();
     const h = pk?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
     if (!h) return;
