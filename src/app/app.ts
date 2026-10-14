@@ -978,9 +978,13 @@ export class App {
   // 선택
   // -------------------------------------------------------------------------
 
+  /** 고를 수 있는 객체만 남기는 고리(참조 편집: 작업 세트에 없는 객체 잠금) */
+  selectionFilter: ((handles: string[]) => string[]) | null = null;
+
   setSelection(handles: Iterable<string>, mode: 'replace' | 'add' | 'remove' = 'replace'): void {
     const st = this.active;
     if (!st) return;
+    if (mode !== 'remove' && this.selectionFilter) handles = this.selectionFilter([...handles]);
     if (mode === 'replace') st.selection.clear();
     for (const h of handles) {
       if (mode === 'remove') st.selection.delete(h);
@@ -1595,6 +1599,12 @@ export class App {
       if (k === '9') {
         ev.preventDefault();
         this.cmd.el.hidden = !this.cmd.el.hidden;
+        return;
+      }
+      if (k === '2' && !typing) {
+        // 디자인센터 열기·닫기(AutoCAD와 같다)
+        ev.preventDefault();
+        void this.run('ADCENTER');
         return;
       }
       if (k === 'p') {

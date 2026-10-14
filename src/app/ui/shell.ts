@@ -221,6 +221,10 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'LAYTHW', label: '모두 동결 해제', icon: 'sun' },
             { cmd: 'LAYUNISO', label: '격리 해제', icon: 'layers' },
           ],
+          [
+            { cmd: 'LAYWALK', label: '도면층 탐색', icon: 'eye', tip: '고른 도면층만 잠시 보기 (LAYWALK)' },
+            { cmd: 'COPYTOLAYER', label: '도면층에 복사', icon: 'copy', tip: '객체를 다른 도면층에 복사 (COPYTOLAYER)' },
+          ],
         ],
       },
       {
@@ -300,6 +304,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
             { cmd: 'BLOCKREPLACE', label: '블록 대치', icon: 'insert' },
           ],
+          [{ cmd: 'ADCENTER', label: '디자인센터', icon: 'blocks', tip: '다른 도면의 블록·도면층·스타일 가져오기 (Ctrl+2)' }],
           [
             { cmd: 'DYNPROPS', label: '동적 특성', icon: 'props', tip: '동적 블록 참조의 매개변수 값' },
             { cmd: 'RESETBLOCK', label: '블록 재설정', icon: 'redo', tip: '동적 블록 참조를 정의 기본값으로' },
@@ -602,6 +607,16 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DRAWINGRECOVERY', label: '도면 복구', icon: 'folder', tip: '자동 저장한 도면 열기 (DRM)', noDoc: true },
             { cmd: 'PURGE', label: '소거', icon: 'erase', tip: '쓰지 않는 블록·도면층·스타일 지우기' },
             { cmd: 'OVERKILL', label: '중복 정리', icon: 'erase' },
+          ],
+        ],
+      },
+      {
+        title: 'CAD 표준',
+        cols: [
+          [
+            { cmd: 'STANDARDS', label: '구성', icon: 'settings', tip: '표준 파일 연결 (STA)' },
+            { cmd: 'CHECKSTANDARDS', label: '검사', icon: 'list', tip: '표준 위반 검사·수정 (CHK)' },
+            { cmd: 'LAYTRANS', label: '도면층 변환기', icon: 'layers', tip: '다른 도면의 도면층으로 변환' },
           ],
         ],
       },
