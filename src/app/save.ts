@@ -4,6 +4,7 @@
  * 아니면 내려받기로 저장한다.
  */
 import { syncActiveVports } from './vports';
+import { forgetRecovery } from './autosave';
 import { createNewDocument } from '../core/newdoc';
 import type { SaveFormat } from '../worker/protocol';
 import type { App, CommandContext } from './app';
@@ -44,7 +45,7 @@ export const SAVE_TYPES: { value: string; label: string; format: SaveFormat; ver
 const targets = new WeakMap<DocState, SaveTarget>();
 
 /** 열린 파일과 같은 형식으로 저장할 수 있으면 그 설정 */
-function sameFormat(st: DocState): SaveTarget | null {
+export function sameFormat(st: DocState): SaveTarget | null {
   const d = st.doc;
   if (d.format === 'dwg') {
     // R2007은 쓸 수 없어 R2004로, R13·R14는 R2000으로
@@ -91,6 +92,8 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
   } else download(blob, name);
   st.saveName = name;
   st.session.markSaved();
+  // 저장했으니 자동 저장본은 필요 없다
+  forgetRecovery(st);
   targets.set(st, t);
   app.ui.refreshTabs();
   document.title = `${st.saveName} - OpenCAD 2D 뷰어`;

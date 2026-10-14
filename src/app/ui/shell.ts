@@ -647,6 +647,8 @@ export class Shell implements UiHooks {
         { separator: true },
         { label: '저장', icon: 'save', kbd: 'Ctrl+S', disabled: !app.active, run: () => void app.run('QSAVE') },
         { label: '다른 이름으로 저장…', icon: 'save', kbd: 'Ctrl+Shift+S', disabled: !app.active, run: () => void app.run('SAVEAS') },
+        { label: '도면 복구 관리자…', icon: 'folder', run: () => void app.run('DRAWINGRECOVERY') },
+        { label: '복구(파일 열고 검사)…', icon: 'open', run: () => void app.run('RECOVER') },
         { separator: true },
         { label: 'PNG로 내보내기', icon: 'exportPng', disabled: !app.active, run: () => void app.run('PNGOUT') },
         { label: 'SVG로 내보내기', icon: 'exportSvg', disabled: !app.active, run: () => void app.run('SVGOUT') },

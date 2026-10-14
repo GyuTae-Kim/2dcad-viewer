@@ -271,9 +271,11 @@ export function registerUtil2MiscCommands(app: App): void {
   app.register({
     name: 'AUDIT',
     title: '감사',
-    async run(ctx) {
+    async run(ctx, arg) {
       const st = app.active!;
-      const fix = (await askKeyword(
+      // RECOVER처럼 'Y'·'N'을 함께 넘기면 묻지 않는다
+      const pre = arg?.trim().toUpperCase();
+      const fix = (pre === 'Y' || pre === 'N' ? pre : await askKeyword(
         ctx,
         '검출된 오류를 수정하시겠습니까? [예(Y)/아니오(N)] <N>:',
         [
@@ -282,6 +284,7 @@ export function registerUtil2MiscCommands(app: App): void {
         ],
         'N',
       )) === 'Y';
+      if (pre === 'Y' || pre === 'N') ctx.print(`검출된 오류를 수정하시겠습니까? [예(Y)/아니오(N)] <N>: ${pre}`);
       const rep = auditDocument(st.doc);
       let shown = 0;
       for (const ph of AUDIT_PHASES) {

@@ -660,10 +660,14 @@ export class App {
     return true;
   }
 
+  /** 문서를 닫은 뒤(자동 저장본 지우기 등) */
+  onClosed: ((st: DocState) => void) | null = null;
+
   private closeNow(st: DocState): void {
     const i = this.docs.indexOf(st);
     if (i < 0) return;
     this.docs.splice(i, 1);
+    this.onClosed?.(st);
     this.edits.detach(st);
     st.dispose(this.view.renderer);
     for (const k of [...this.pickers.keys()]) if (k.startsWith(`${st.docId}:`)) this.pickers.delete(k);
