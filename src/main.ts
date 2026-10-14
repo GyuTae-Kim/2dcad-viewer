@@ -24,6 +24,9 @@ import { registerPropCommands } from './app/propcmds';
 import { registerDimStyleCommands } from './app/dimstyle';
 import { registerUtil2Commands } from './app/util2';
 import { registerModify2Commands } from './app/modify2';
+import { registerTableEditCommands } from './app/tablecmds';
+import { registerFieldCommands } from './app/fieldcmds';
+import { registerMLineCommands } from './app/mlinecmds';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -73,6 +76,9 @@ registerDimStyleCommands(app);
 // OOPS가 등록된 ERASE를 감싸므로 그리기 명령 뒤에 등록한다
 registerUtil2Commands(app);
 registerModify2Commands(app);
+registerTableEditCommands(app);
+registerFieldCommands(app);
+registerMLineCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);

@@ -24,6 +24,7 @@ import type {
   UnderlayDefObject,
   UnderlayEntity,
   UnknownEntity,
+  Vec2,
   Vec3,
 } from '../core/model';
 import { BYBLOCK, BYLAYER, tableKey } from '../core/model';
@@ -55,6 +56,7 @@ import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/l
 import { type ShxFont, ShxRunner } from '../text/shx';
 import { parseProxyGraphics } from './proxy';
 import { codepageToEncoding, decoderFor } from '../core/codepage';
+import { mlineDrawing } from '../edit/mline/draw';
 
 export interface BuildOptions {
   text: TextEngine;
@@ -1810,42 +1812,29 @@ export class SceneBuilder {
   private mline(e: MLineEntity, ctx: Ctx): void {
     const r = this.resolve(e, ctx);
     const st = (e.styleHandle && this.mlineStyles.get(e.styleHandle)) || this.mlineStyles.get('NAME:' + tableKey(e.styleName));
-    const nEl = e.elementCount || e.vertices[0]?.elements.length || 0;
-    const closed = (e.flags & 2) !== 0;
-    const m = ctx.m;
-    const vs = e.vertices;
-    if (vs.length < 2) return;
-    const elemPts: number[][] = [];
-    for (let k = 0; k < nEl; k++) {
-      const pts: number[] = [];
-      for (const v of vs) {
-        const el = v.elements[k];
-        const d = el?.params[0] ?? 0;
-        const p = applyXY(m, v.position.x + v.miter.x * d, v.position.y + v.miter.y * d, v.position.z + v.miter.z * d);
-        pts.push(p.x, p.y);
+    if (e.vertices.length < 2) return;
+    // 요소 선(끊기 반영)·마구리·연결부·채우기는 편집 명령과 같은 계산을 쓴다
+    const d = mlineDrawing(e, st ?? null);
+    const z = e.vertices[0]!.position.z;
+    const W = (pl: readonly Vec2[]): number[] => {
+      const out: number[] = [];
+      for (const p of pl) {
+        const q = applyXY(ctx.m, p.x, p.y, z);
+        out.push(q.x, q.y);
       }
-      elemPts.push(pts);
+      return out;
+    };
+    d.elements.forEach((pls, k) => {
       const se = st?.elements[k];
       let er = r;
       if (se) {
         const color = se.color.aci === 256 && se.color.rgb === undefined ? e.color : se.color.aci === 0 && se.color.rgb === undefined ? e.color : se.color;
         er = this.resolve({ layer: e.layer, color, linetype: se.linetype.toUpperCase() === 'BYLAYER' ? e.linetype : se.linetype, lineweight: e.lineweight, ltscale: e.ltscale, transparency: e.transparency }, ctx);
       }
-      this.stroke(pts, closed, er, ctx);
-    }
-    if (st && !closed && elemPts.length >= 2) {
-      const first = elemPts[0]!;
-      const last = elemPts[elemPts.length - 1]!;
-      if (st.flags & 16) this.out.segment(first[0]!, first[1]!, last[0]!, last[1]!, r.style);
-      const n = first.length;
-      if (st.flags & 256) this.out.segment(first[n - 2]!, first[n - 1]!, last[n - 2]!, last[n - 1]!, r.style);
-      if (st.flags & 1) {
-        const ring = [...first];
-        for (let i = last.length - 2; i >= 0; i -= 2) ring.push(last[i]!, last[i + 1]!);
-        const tris = triangulateLoops([ring]);
-        this.out.triangles(tris, this.styleWithColor(r, st.fillColor, ctx));
-      }
-    }
+      for (const pl of pls) this.stroke(W(pl), false, er, ctx);
+    });
+    for (const pl of [...d.caps, ...d.joints]) this.stroke(W(pl), false, r, ctx);
+    if (st && d.fill.length) this.out.triangles(triangulateLoops(d.fill.map(W)), this.styleWithColor(r, st.fillColor, ctx));
   }
 }
 

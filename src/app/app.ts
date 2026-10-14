@@ -25,6 +25,7 @@ import { EditManager } from './edits';
 import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
+import { isEditableTable } from '../edit/table/entity';
 
 export class CancelError extends Error {
   constructor() {
@@ -1316,6 +1317,18 @@ export class App {
     const h = pk?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
     if (!h) return;
     const e = st.doc.entityIndex.get(h);
+    // 표는 셀 편집, 여러 줄은 여러 줄 편집 도구
+    const tableLike = (x: Entity | undefined): boolean => isEditableTable(x);
+    if (tableLike(e)) {
+      this.setSelection([h], 'replace');
+      void import('./tablecmds').then((m) => m.editTableAt(this, h, w));
+      return;
+    }
+    if (e?.type === 'MLINE') {
+      this.setSelection([h], 'replace');
+      void this.run('MLEDIT');
+      return;
+    }
     // 문자·치수·속성 블록은 두 번 누르면 바로 고친다(AutoCAD와 같다)
     if (e && (e.type === 'TEXT' || e.type === 'MTEXT' || e.type === 'ATTDEF' || e.type === 'DIMENSION' || (e.type === 'INSERT' && e.attribs.some((a) => !(a.attFlags & 2))))) {
       this.setSelection([h], 'replace');

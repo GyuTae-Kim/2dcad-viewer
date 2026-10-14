@@ -101,7 +101,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'REVCLOUD', label: '구름형 수정 기호', icon: 'polygon', tip: '구름형 수정 기호 (REVCLOUD)' },
             { cmd: 'WIPEOUT', label: '가리기', icon: 'rect', tip: '뒤의 객체를 가리는 영역 (WIPEOUT)' },
-            { cmd: 'BOUNDARY', label: '경계', icon: 'pline', tip: '내부 점으로 경계 폴리선 만들기 (BO)' },
+            {
+              cmd: 'MLINE',
+              label: '여러 줄',
+              icon: 'xline',
+              tip: '여러 줄 (ML)',
+              menu: [
+                { label: '여러 줄', cmd: 'MLINE', icon: 'xline' },
+                { label: '여러 줄 편집', cmd: 'MLEDIT', icon: 'xline' },
+                { label: '여러 줄 스타일', cmd: 'MLSTYLE', icon: 'settings' },
+              ],
+            },
           ],
         ],
       },
@@ -289,6 +299,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         title: '참조',
         large: [{ cmd: 'EXTERNALREFERENCES', label: '외부 참조', icon: 'folder', tip: '외부 참조·이미지·PDF 언더레이 (XR)' }],
       },
+      {
+        title: '데이터',
+        cols: [
+          [
+            { cmd: 'FIELD', label: '필드', icon: 'text', tip: '날짜·파일 이름·객체 특성 등을 문자에 넣기' },
+            { cmd: 'UPDATEFIELD', label: '필드 업데이트', icon: 'redo', tip: '고른 문자의 필드를 다시 계산' },
+          ],
+        ],
+      },
     ],
   },
   {
@@ -328,6 +347,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       {
         title: '지시선',
         large: [{ cmd: 'MLEADER', label: '다중 지시선', icon: 'leader', tip: '다중 지시선 (MLD)' }],
+      },
+      {
+        title: '표',
+        large: [{ cmd: 'TABLE', label: '테이블', icon: 'table', tip: '표 삽입 (TB)' }],
+        cols: [
+          [
+            { cmd: 'TABLEDIT', label: '셀 문자', icon: 'text', tip: '표 셀 문자 편집(표를 두 번 눌러도 됨)' },
+            { cmd: 'TABLECELL', label: '셀 편집', icon: 'table', tip: '행·열 삽입·삭제, 병합, 정렬 (TCELL)' },
+            { cmd: 'TABLESTYLE', label: '테이블 스타일', icon: 'settings', tip: '테이블 스타일 (TS)' },
+          ],
+        ],
       },
     ],
   },
