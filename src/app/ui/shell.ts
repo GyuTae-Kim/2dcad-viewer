@@ -71,13 +71,37 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           ],
           [
             { cmd: 'SPLINE', label: '스플라인', icon: 'spline', tip: '스플라인 (SPL)' },
-            { cmd: 'HATCH', label: '해치', icon: 'hatch', tip: '해치 (H)' },
-            { cmd: 'POINT', label: '점', icon: 'point', tip: '점 (PO)' },
+            {
+              cmd: 'HATCH',
+              label: '해치',
+              icon: 'hatch',
+              tip: '해치 (H)',
+              menu: [
+                { label: '해치', cmd: 'HATCH', icon: 'hatch' },
+                { label: '경계', cmd: 'BOUNDARY', icon: 'pline' },
+              ],
+            },
+            {
+              cmd: 'POINT',
+              label: '점',
+              icon: 'point',
+              tip: '점 (PO)',
+              menu: [
+                { label: '여러 점', cmd: 'POINT', icon: 'point' },
+                { label: '등분할', cmd: 'DIVIDE', icon: 'point' },
+                { label: '길이 분할', cmd: 'MEASURE', icon: 'point' },
+              ],
+            },
           ],
           [
             { cmd: 'XLINE', label: '구성선', icon: 'xline', tip: '구성선 (XL)' },
             { cmd: 'RAY', label: '광선', icon: 'ray' },
             { cmd: 'DONUT', label: '도넛', icon: 'donut', tip: '도넛 (DO)' },
+          ],
+          [
+            { cmd: 'REVCLOUD', label: '구름형 수정 기호', icon: 'polygon', tip: '구름형 수정 기호 (REVCLOUD)' },
+            { cmd: 'WIPEOUT', label: '가리기', icon: 'rect', tip: '뒤의 객체를 가리는 영역 (WIPEOUT)' },
+            { cmd: 'BOUNDARY', label: '경계', icon: 'pline', tip: '내부 점으로 경계 폴리선 만들기 (BO)' },
           ],
         ],
       },
@@ -86,7 +110,16 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         cols: [
           [
             { cmd: 'MOVE', label: '이동', icon: 'move', tip: '이동 (M)' },
-            { cmd: 'COPY', label: '복사', icon: 'copy', tip: '복사 (CO)' },
+            {
+              cmd: 'COPY',
+              label: '복사',
+              icon: 'copy',
+              tip: '복사 (CO)',
+              menu: [
+                { label: '복사', cmd: 'COPY', icon: 'copy' },
+                { label: '여러 번 복사', cmd: 'COPYM', icon: 'copy' },
+              ],
+            },
             { cmd: 'STRETCH', label: '신축', icon: 'stretch', tip: '신축 (S)' },
           ],
           [
@@ -95,7 +128,16 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'SCALE', label: '축척', icon: 'scale', tip: '축척 (SC)' },
           ],
           [
-            { cmd: 'TRIM', label: '자르기', icon: 'trim', tip: '자르기 (TR)' },
+            {
+              cmd: 'TRIM',
+              label: '자르기',
+              icon: 'trim',
+              tip: '자르기 (TR)',
+              menu: [
+                { label: '자르기', cmd: 'TRIM', icon: 'trim' },
+                { label: '경계 한쪽 모두 자르기', cmd: 'EXTRIM', icon: 'trim' },
+              ],
+            },
             { cmd: 'EXTEND', label: '연장', icon: 'extend', tip: '연장 (EX)' },
             { cmd: 'OFFSET', label: '간격띄우기', icon: 'offset', tip: '간격띄우기 (O)' },
           ],
@@ -117,6 +159,22 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'ERASE', label: '지우기', icon: 'erase', tip: '지우기 (E, Delete)' },
             { cmd: 'EXPLODE', label: '분해', icon: 'explode', tip: '분해 (X)' },
             { cmd: 'JOIN', label: '결합', icon: 'join', tip: '결합 (J)' },
+          ],
+          [
+            {
+              cmd: 'PEDIT',
+              label: '폴리선 편집',
+              icon: 'pline',
+              tip: '폴리선 편집 (PE)',
+              menu: [
+                { label: '폴리선 편집', cmd: 'PEDIT', icon: 'pline' },
+                { label: '스플라인 편집', cmd: 'SPLINEDIT', icon: 'spline' },
+                { label: '혼합 곡선', cmd: 'BLEND', icon: 'spline' },
+                { label: '방향 반전', cmd: 'REVERSE', icon: 'redo' },
+              ],
+            },
+            { cmd: 'ALIGN', label: '정렬', icon: 'move', tip: '정렬 (AL)' },
+            { cmd: 'OVERKILL', label: '중복 정리', icon: 'erase', tip: '겹치거나 중복된 객체 정리 (OVERKILL)' },
           ],
         ],
       },
@@ -245,6 +303,10 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' },
             { cmd: 'STYLE', label: '문자 스타일', icon: 'text', tip: '문자 스타일 (ST)' },
           ],
+          [
+            { cmd: 'SCALETEXT', label: '문자 축척', icon: 'scale', tip: '문자 높이를 한 번에 바꾸기' },
+            { cmd: 'JUSTIFYTEXT', label: '자리맞추기', icon: 'text', tip: '위치는 그대로 두고 자리맞추기만 바꾸기' },
+          ],
         ],
       },
       {
@@ -352,6 +414,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'AUDIT', label: '감사', icon: 'info', tip: '도면 오류 찾기·고치기' },
             { cmd: 'PURGE', label: '소거', icon: 'erase', tip: '쓰지 않는 블록·도면층·스타일 지우기' },
+            { cmd: 'OVERKILL', label: '중복 정리', icon: 'erase' },
           ],
         ],
       },
