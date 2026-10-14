@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.runtime/
+.DS_Store
+*.log
+# 전역 gitignore가 *.png를 빼므로 저장소에서는 다시 포함한다.
+!*.png
