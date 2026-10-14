@@ -18,6 +18,7 @@ import type {
   MLineEntity,
   MLineStyleObject,
   SortEntsTableObject,
+  SpatialFilterObject,
   TextEntity,
   TextStyle,
   Vec3,
@@ -27,6 +28,7 @@ import { DIM_VAR_CODES, DIM_VAR_DEFAULTS } from '../core/dimvars';
 import { ACI_RGB } from '../core/color';
 import {
   type Mat,
+  apply,
   applyDir,
   applyXY,
   identity,
@@ -1076,7 +1078,15 @@ export class SceneBuilder {
           multiply(rotationZ(e.rotation), multiply(translation(cI * e.columnSpacing, rI * e.rowSpacing, 0), scaling(sx, sy, sz))),
         );
         const m = multiply(om, multiply(local, translation(-b.basePoint.x, -b.basePoint.y, -b.basePoint.z)));
+        const clip = this.xclipPolygon(e, m);
+        if (clip) this.out.pushClip(clip.poly, clip.inverted);
         this.blockContents(b, e, m, ctx);
+        if (clip) {
+          this.out.popClip();
+          // 자르기 경계 틀(XCLIPFRAME 1·2, 기본 2 = 화면에 보임)
+          const xf = this.doc.header.get('$XCLIPFRAME');
+          if (clip.frame && (xf === undefined || xf === 1 || xf === 2)) this.out.polyline(clip.poly, true, this.resolve(e, ctx).style);
+        }
       }
     // 속성은 블록 참조와 같은 공간에 있다
     if (e.attribs.length) {
@@ -1084,6 +1094,51 @@ export class SceneBuilder {
       const child = this.childCtx(e, ctx, r, ctx.m);
       for (const a of e.attribs) this.text(a as unknown as TextEntity, { ...child, inBlock: false });
     }
+  }
+
+  /**
+   * XCLIP: 블록 참조의 확장 사전 → ACAD_FILTER → SPATIAL 필터의 경계를 월드 다각형으로.
+   * 경계는 클립할 때의 좌표(clipTransform으로 WCS) → inverseBlockTransform으로 블록 좌표 → 지금 변환 m으로 월드.
+   */
+  private xclipPolygon(e: InsertEntity, m: Mat): { poly: number[]; inverted: boolean; frame: boolean } | null {
+    if (!e.xdict) return null;
+    const dict = (h: string | undefined) => {
+      const o = h ? this.doc.objects.get(h) : undefined;
+      return o && (o.type === 'DICTIONARY' || o.type === 'ACDBDICTIONARYWDFLT') ? (o as DictionaryObject) : null;
+    };
+    const entry = (d: DictionaryObject | null, k: string) => {
+      if (!d) return undefined;
+      for (const [n, h] of d.entries) if (n.toUpperCase() === k) return h;
+      return undefined;
+    };
+    const fd = dict(entry(dict(e.xdict), 'ACAD_FILTER'));
+    const sh = entry(fd, 'SPATIAL');
+    const sf = sh ? this.doc.objects.get(sh) : undefined;
+    if (!sf || sf.type !== 'SPATIAL_FILTER') return null;
+    const f = sf as SpatialFilterObject;
+    let pts = f.boundary;
+    if (pts.length === 2) {
+      const [a, b] = pts as [{ x: number; y: number }, { x: number; y: number }];
+      pts = [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }];
+    }
+    if (pts.length < 3) return null;
+    const apply43 = (M: number[], x: number, y: number, z: number) =>
+      M.length >= 12 ? { x: M[0]! * x + M[1]! * y + M[2]! * z + M[3]!, y: M[4]! * x + M[5]! * y + M[6]! * z + M[7]!, z: M[8]! * x + M[9]! * y + M[10]! * z + M[11]! } : { x, y, z };
+    const poly: number[] = [];
+    for (const p of pts) {
+      // 경계 평면(원점·법선) → 클립 변환 → 블록 좌표 → 월드
+      const om = ocsMatrix(f.normal);
+      const w0 = om ? apply(om, p.x, p.y, 0) : { x: p.x, y: p.y, z: 0 };
+      w0.x += f.origin.x;
+      w0.y += f.origin.y;
+      w0.z += f.origin.z;
+      const w1 = apply43(f.clipTransform, w0.x, w0.y, w0.z);
+      const bp = apply43(f.inverseBlockTransform, w1.x, w1.y, w1.z);
+      const q = applyXY(m, bp.x, bp.y, bp.z);
+      poly.push(q.x, q.y);
+    }
+    if (!poly.every(Number.isFinite)) return null;
+    return { poly, inverted: !!f.inverted, frame: f.displayBoundary };
   }
 
   private childCtx(parent: Entity, ctx: Ctx, r: Resolved, m: Mat): Ctx {

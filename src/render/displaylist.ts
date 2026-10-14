@@ -205,8 +205,68 @@ export class DisplayListBuilder {
     if (y > this.maxY) this.maxY = y;
   }
 
+  // -------------------------------------------------------------------------
+  // 자르기(XCLIP): 블록 참조를 펼치는 동안 경계 다각형 안(반전이면 밖)만 남긴다
+  // -------------------------------------------------------------------------
+
+  private clips: Clip[] = [];
+
+  /** 월드 좌표 다각형 [x, y, …]으로 자르기 시작 */
+  pushClip(poly: number[], inverted = false): void {
+    if (poly.length < 6) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < poly.length; i += 2) {
+      minX = Math.min(minX, poly[i]!);
+      maxX = Math.max(maxX, poly[i]!);
+      minY = Math.min(minY, poly[i + 1]!);
+      maxY = Math.max(maxY, poly[i + 1]!);
+    }
+    this.clips.push({ poly: ccw(poly), inverted, convex: isConvex(poly), bbox: [minX, minY, maxX, maxY] });
+  }
+
+  popClip(): void {
+    this.clips.pop();
+  }
+
+  private inside(x: number, y: number): boolean {
+    for (const c of this.clips) if (pointInPolygon(x, y, c.poly) === c.inverted) return false;
+    return true;
+  }
+
   segment(x0: number, y0: number, x1: number, y1: number, style: number): void {
     if (!Number.isFinite(x0 + y0 + x1 + y1)) return;
+    if (this.clips.length) {
+      // 모든 경계와의 교점으로 나눠 가운데가 안에 있는 조각만
+      const ts = [0, 1];
+      for (const c of this.clips) segmentPolygonParams(x0, y0, x1, y1, c.poly, ts);
+      ts.sort((a, b) => a - b);
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      let open = -1;
+      for (let i = 0; i + 1 < ts.length; i++) {
+        const ta = ts[i]!;
+        const tb = ts[i + 1]!;
+        if (tb - ta < 1e-12) continue;
+        const tm = (ta + tb) / 2;
+        const ins = this.inside(x0 + dx * tm, y0 + dy * tm);
+        if (ins && open < 0) open = ta;
+        if (!ins && open >= 0) {
+          this.rawSegment(x0 + dx * open, y0 + dy * open, x0 + dx * ta, y0 + dy * ta, style);
+          open = -1;
+        }
+      }
+      if (open >= 0) this.rawSegment(x0 + dx * open, y0 + dy * open, x1, y1, style);
+      // 점(길이 0)
+      if (dx === 0 && dy === 0 && this.inside(x0, y0)) this.rawSegment(x0, y0, x1, y1, style);
+      return;
+    }
+    this.rawSegment(x0, y0, x1, y1, style);
+  }
+
+  private rawSegment(x0: number, y0: number, x1: number, y1: number, style: number): void {
     this.segX.push(x0, y0, x1, y1, this.depth);
     this.segS.push(style);
     this.grow(x0, y0);
@@ -222,6 +282,30 @@ export class DisplayListBuilder {
 
   triangle(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, style: number): void {
     if (!Number.isFinite(x0 + y0 + x1 + y1 + x2 + y2)) return;
+    if (this.clips.length) {
+      let polys: number[][] = [[x0, y0, x1, y1, x2, y2]];
+      for (const c of this.clips) {
+        if (c.convex && !c.inverted) polys = polys.map((pg) => clipConvex(pg, c.poly)).filter((pg) => pg.length >= 6);
+        else
+          polys = polys.filter((pg) => {
+            let cx = 0;
+            let cy = 0;
+            const n = pg.length / 2;
+            for (let i = 0; i < pg.length; i += 2) {
+              cx += pg[i]!;
+              cy += pg[i + 1]!;
+            }
+            return pointInPolygon(cx / n, cy / n, c.poly) !== c.inverted;
+          });
+      }
+      // 부채꼴로 다시 나눈다: (0, i, i+1)
+      for (const pg of polys) for (let i = 1; i + 1 < pg.length / 2; i++) this.rawTriangle(pg[0]!, pg[1]!, pg[i * 2]!, pg[i * 2 + 1]!, pg[i * 2 + 2]!, pg[i * 2 + 3]!, style);
+      return;
+    }
+    this.rawTriangle(x0, y0, x1, y1, x2, y2, style);
+  }
+
+  private rawTriangle(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, style: number): void {
     const d = this.depth;
     this.triX.push(x0, y0, d, x1, y1, d, x2, y2, d);
     this.triS.push(style);
@@ -248,6 +332,12 @@ export class DisplayListBuilder {
     }
     const [a, b, c, d, e, f] = m as [number, number, number, number, number, number];
     if (!Number.isFinite(a + b + c + d + e + f)) return;
+    if (this.clips.length) {
+      // 글자는 가운데가 경계 안에 있을 때만
+      const mx = (bbox[0] + bbox[2]) / 2;
+      const my = (bbox[1] + bbox[3]) / 2;
+      if (!this.inside(a * mx + c * my + e, b * mx + d * my + f)) return;
+    }
     this.pendingInst.push({ g, v: [a, b, c, d, e, f, this.depth, style, this.serial], transparent: this.transparent(style) });
     const [x0, y0, x1, y1] = bbox;
     for (const [x, y] of [
@@ -260,6 +350,16 @@ export class DisplayListBuilder {
   }
 
   xline(x: number, y: number, dx: number, dy: number, ray: boolean, style: number): void {
+    if (this.clips.length) {
+      // 자르기 안의 구성선·광선: 경계 범위를 넉넉히 덮는 선분으로 바꿔 자른다
+      const bb = this.clips[0]!.bbox;
+      const L = Math.hypot(bb[2] - bb[0], bb[3] - bb[1]) + Math.hypot(x - bb[0], y - bb[1]) + 1;
+      const n = Math.hypot(dx, dy) || 1;
+      const ux = dx / n;
+      const uy = dy / n;
+      this.segment(ray ? x : x - ux * L, ray ? y : y - uy * L, x + ux * L, y + uy * L, style);
+      return;
+    }
     this.xlines.push(x, y, dx, dy, ray ? 1 : 0, this.depth, style);
   }
 
@@ -459,5 +559,112 @@ export function transferables(dl: DisplayList): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
   for (const c of dl.chunks) out.push(c.segs, c.tris, c.tsegs, c.ttris);
   out.push(dl.glyphs.instances, dl.glyphs.fillVerts.buffer as ArrayBuffer, dl.glyphs.strokeSegs.buffer as ArrayBuffer);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 자르기 도우미
+// ---------------------------------------------------------------------------
+
+interface Clip {
+  poly: number[];
+  inverted: boolean;
+  convex: boolean;
+  bbox: [number, number, number, number];
+}
+
+/** 반시계 방향 다각형으로 */
+function ccw(poly: number[]): number[] {
+  let a = 0;
+  const n = poly.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += poly[i * 2]! * poly[j * 2 + 1]! - poly[j * 2]! * poly[i * 2 + 1]!;
+  }
+  if (a >= 0) return poly.slice();
+  const out: number[] = [];
+  for (let i = n - 1; i >= 0; i--) out.push(poly[i * 2]!, poly[i * 2 + 1]!);
+  return out;
+}
+
+function isConvex(poly: number[]): boolean {
+  const n = poly.length / 2;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const ax = poly[i * 2]!;
+    const ay = poly[i * 2 + 1]!;
+    const bx = poly[((i + 1) % n) * 2]!;
+    const by = poly[((i + 1) % n) * 2 + 1]!;
+    const cx = poly[((i + 2) % n) * 2]!;
+    const cy = poly[((i + 2) % n) * 2 + 1]!;
+    const z = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (Math.abs(z) < 1e-15) continue;
+    if (!sign) sign = Math.sign(z);
+    else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+}
+
+/** 홀짝 규칙 점 포함 */
+export function pointInPolygon(x: number, y: number, poly: number[]): boolean {
+  let inside = false;
+  const n = poly.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[i * 2]!;
+    const yi = poly[i * 2 + 1]!;
+    const xj = poly[j * 2]!;
+    const yj = poly[j * 2 + 1]!;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** 선분과 다각형 변의 교점 매개변수(0~1)를 ts에 더한다 */
+function segmentPolygonParams(x0: number, y0: number, x1: number, y1: number, poly: number[], ts: number[]): void {
+  const n = poly.length / 2;
+  const rx = x1 - x0;
+  const ry = y1 - y0;
+  for (let i = 0; i < n; i++) {
+    const ax = poly[i * 2]!;
+    const ay = poly[i * 2 + 1]!;
+    const bx = poly[((i + 1) % n) * 2]!;
+    const by = poly[((i + 1) % n) * 2 + 1]!;
+    const sx = bx - ax;
+    const sy = by - ay;
+    const den = rx * sy - ry * sx;
+    if (Math.abs(den) < 1e-18) continue;
+    const t = ((ax - x0) * sy - (ay - y0) * sx) / den;
+    const u = ((ax - x0) * ry - (ay - y0) * rx) / den;
+    if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+  }
+}
+
+/** 볼록(반시계) 다각형으로 다각형 자르기(Sutherland–Hodgman) */
+function clipConvex(subject: number[], clip: number[]): number[] {
+  let out = subject;
+  const n = clip.length / 2;
+  for (let i = 0; i < n && out.length >= 6; i++) {
+    const ax = clip[i * 2]!;
+    const ay = clip[i * 2 + 1]!;
+    const bx = clip[((i + 1) % n) * 2]!;
+    const by = clip[((i + 1) % n) * 2 + 1]!;
+    const side = (x: number, y: number) => (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+    const input = out;
+    out = [];
+    const m = input.length / 2;
+    for (let k = 0; k < m; k++) {
+      const px = input[k * 2]!;
+      const py = input[k * 2 + 1]!;
+      const qx = input[((k + 1) % m) * 2]!;
+      const qy = input[((k + 1) % m) * 2 + 1]!;
+      const sp = side(px, py);
+      const sq = side(qx, qy);
+      if (sp >= 0) out.push(px, py);
+      if (sp >= 0 !== sq >= 0) {
+        const t = sp / (sp - sq);
+        out.push(px + (qx - px) * t, py + (qy - py) * t);
+      }
+    }
+  }
   return out;
 }
