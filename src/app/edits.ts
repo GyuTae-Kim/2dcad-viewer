@@ -161,6 +161,16 @@ export class EditManager {
     app.refreshSelectionOverlay();
   }
 
+  /** 미뤄 둔 다시 그리기를 지금 끝낸다(내보내기·출력 전에) */
+  async flush(st: DocState): Promise<void> {
+    if (!this.timers.has(st)) return;
+    clearTimeout(this.timers.get(st));
+    this.timers.delete(st);
+    const everything = this.rebuildAll.delete(st);
+    const spaces = everything ? [...st.scenes.keys()] : [...st.edits.entries()].filter(([, e]) => e.live.size || e.hidden.size).map(([k]) => k);
+    await Promise.all(spaces.map((sp) => this.rebuild(st, sp)));
+  }
+
   /** 문서를 닫을 때 */
   detach(st: DocState): void {
     clearTimeout(this.timers.get(st));

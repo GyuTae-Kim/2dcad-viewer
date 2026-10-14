@@ -117,6 +117,23 @@ export interface ResolveOptions {
   defaultLineweight: number;
   /** 뷰포트별로 동결한 도면층 번호 */
   viewportFrozen?: Set<number>;
+  /** 출력(플롯): 플롯하지 않는 도면층과 Defpoints를 빼고, 플롯 스타일로 색을 바꾼다 */
+  plot?: { style: PlotStyle };
+}
+
+/** 플롯 스타일: 색 그대로, 흑백(monochrome), 회색조(grayscale) */
+export type PlotStyle = 'color' | 'mono' | 'gray';
+
+/** 플롯 스타일을 적용한 색 */
+export function plotColor(rgb: number, style: PlotStyle): number {
+  if (style === 'color') return rgb;
+  if (style === 'mono') return 0;
+  const r = (rgb >> 16) & 255;
+  const g = (rgb >> 8) & 255;
+  const b = rgb & 255;
+  // 밝은 색도 흰 종이에서 보이도록 회색 값을 조금 어둡게
+  const y = Math.round(Math.min(255, 0.299 * r + 0.587 * g + 0.114 * b) * 0.85);
+  return (y << 16) | (y << 8) | y;
 }
 
 /**
@@ -143,7 +160,9 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
       default:
         rgb = opt.backgroundRgb;
     }
+    if (opt.plot) rgb = plotColor(rgb, opt.plot.style);
     let visible = L ? L.on && !L.frozen : true;
+    if (opt.plot && L && (L.plot === false || L.name.toUpperCase() === 'DEFPOINTS')) visible = false;
     if (visible && opt.viewportFrozen?.has(s.layer)) visible = false;
     if (visible)
       for (const f of s.freezeLayers) {

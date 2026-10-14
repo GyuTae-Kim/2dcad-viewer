@@ -6,10 +6,12 @@ import { MODEL_SPACE } from '../core/model';
 import type { DisplayList } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
 import type { App } from './app';
+import type { DocState } from './docstate';
+import type { PlotStyle } from '../render/styles';
 import type { SpaceScene } from './scene';
 import { layoutViewports, paperInfo, viewportXf } from './scene';
 
-type Affine = [number, number, number, number, number, number];
+export type Affine = [number, number, number, number, number, number];
 
 interface Sink {
   seg(x0: number, y0: number, x1: number, y1: number, style: number): void;
@@ -17,7 +19,7 @@ interface Sink {
 }
 
 /** 표시 목록을 그리기 순서(깊이)대로 내보낸다. m: 도면 → 출력 좌표 */
-function walk(dl: DisplayList, m: Affine, visible: (s: number) => boolean, sink: Sink, clip?: [number, number, number, number]): void {
+export function walk(dl: DisplayList, m: Affine, visible: (s: number) => boolean, sink: Sink, clip?: [number, number, number, number]): void {
   type Item = { d: number; f: () => void };
   const items: Item[] = [];
   const X = (x: number, y: number): [number, number] => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
@@ -108,7 +110,7 @@ function walk(dl: DisplayList, m: Affine, visible: (s: number) => boolean, sink:
   for (const it of items) it.f();
 }
 
-interface Page {
+export interface Page {
   /** 출력 크기(포인트 또는 픽셀) */
   width: number;
   height: number;
@@ -119,26 +121,33 @@ interface Page {
   lwScale: number;
 }
 
-/** 지금 공간을 출력 페이지로(배치는 용지, 모형은 지금 화면) */
-function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
-  const st = app.active;
-  if (!st) return null;
-  const scene = st.scenes.get(st.space);
-  const v = app.view;
-  if (st.isModel) {
-    if (!scene) return null;
-    const a = v.screenToWorld(0, v.height);
-    const b = v.screenToWorld(v.width, 0);
-    const ww = b.x - a.x;
-    const wh = b.y - a.y;
-    const W = fitWidth ?? v.width;
-    const k = W / ww;
-    const H = wh * k;
-    // 흰 바탕에 출력한다(ACI 7 = 검정)
-    const styles = scene.styleData(st.sceneLayers(st.space), 'export', false, 0xffffff, app.view.lwDisplay);
-    return { width: W, height: H, background: 0xffffff, lwScale: unitsPerMm, layers: [{ scene, m: [k, 0, 0, -k, -a.x * k, b.y * k], styles }] };
-  }
-  const lay = st.layoutFor(st.space)!;
+export interface PageOptions {
+  plotStyle?: PlotStyle;
+  /** 선가중치 출력 */
+  lineweights: boolean;
+}
+
+/** 모형의 사각형(도면 좌표)을 용지에 놓는다. k = 출력 단위 / 도면 단위, 원점 = 용지 위 왼쪽 기준 출력 좌표 */
+export function modelPage(st: DocState, rect: [number, number, number, number], width: number, height: number, k: number, unitsPerMm: number, opt: PageOptions, clip = true): Page | null {
+  const scene = st.scenes.get(MODEL_SPACE);
+  if (!scene) return null;
+  const [x0, y0, x1, y1] = rect;
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const styles = scene.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle ? 'plot' : 'export', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle);
+  const m: Affine = [k, 0, 0, -k, width / 2 - cx * k, height / 2 + cy * k];
+  const page: Page = { width, height, background: 0xffffff, lwScale: unitsPerMm, layers: [] };
+  const L: Page['layers'][number] = { scene, m, styles, clipWorld: [x0, y0, x1, y1] };
+  if (clip) L.clipPx = [width / 2 - (cx - x0) * k, height / 2 - (y1 - cy) * k, width / 2 + (x1 - cx) * k, height / 2 + (cy - y0) * k];
+  page.layers.push(L);
+  return page;
+}
+
+/** 배치를 용지 크기 그대로(1:1) */
+export function layoutPage(st: DocState, space: string, unitsPerMm: number, opt: PageOptions): Page | null {
+  const scene = st.scenes.get(space);
+  const lay = st.layoutFor(space);
+  if (!lay) return null;
   const paper = paperInfo(lay, scene?.bounds ?? null);
   const pw = paper.maxX - paper.minX;
   const ph = paper.maxY - paper.minY;
@@ -169,14 +178,32 @@ function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
       page.layers.push({
         scene: model,
         m,
-        styles: model.styleData(st.sceneLayers(MODEL_SPACE), 'vp', false, 0xffffff, app.view.lwDisplay, frozen.size ? frozen : undefined),
+        styles: model.styleData(st.sceneLayers(MODEL_SPACE), opt.plotStyle ? 'vp-plot' : 'vp', false, 0xffffff, opt.lineweights, frozen.size ? frozen : undefined, opt.plotStyle),
         clipPx: [cx - hw * k, cy - hh * k, cx + hw * k, cy + hh * k],
         clipWorld: [vx.refX - rad, vx.refY - rad, vx.refX + rad, vx.refY + rad],
       });
     }
   }
-  if (scene) page.layers.push({ scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(st.space), 'paper', false, 0xffffff, app.view.lwDisplay) });
+  if (scene) page.layers.push({ scene, m: [k, 0, 0, -k, -paper.minX * k, paper.maxY * k], styles: scene.styleData(st.sceneLayers(space), opt.plotStyle ? 'paper-plot' : 'paper', false, 0xffffff, opt.lineweights, undefined, opt.plotStyle) });
   return page;
+}
+
+/** 지금 공간을 출력 페이지로(배치는 용지, 모형은 지금 화면) */
+function pageFor(app: App, unitsPerMm: number, fitWidth?: number): Page | null {
+  const st = app.active;
+  if (!st) return null;
+  const v = app.view;
+  const opt: PageOptions = { lineweights: app.view.lwDisplay };
+  if (st.isModel) {
+    const a = v.screenToWorld(0, v.height);
+    const b = v.screenToWorld(v.width, 0);
+    const ww = b.x - a.x;
+    const wh = b.y - a.y;
+    const W = fitWidth ?? v.width;
+    const k = W / ww;
+    return modelPage(st, [a.x, a.y, b.x, b.y], W, wh * k, k, unitsPerMm, opt, false);
+  }
+  return layoutPage(st, st.space, unitsPerMm, opt);
 }
 
 function css(styles: Float32Array, s: number): string {
@@ -192,8 +219,12 @@ export function exportSvg(app: App): Blob | null {
   if (!st) return null;
   const page = pageFor(app, 1);
   if (!page) return null;
+  return exportPageSvg(page, st.isModel ? 'px' : 'mm');
+}
+
+/** 페이지 하나를 SVG로. unit이 px이면 선 굵기를 1로 고정한다 */
+export function exportPageSvg(page: Page, unit: 'px' | 'mm' = 'mm'): Blob {
   const out: string[] = [];
-  const unit = st.isModel ? 'px' : 'mm';
   out.push(`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${page.width.toFixed(2)}${unit}" height="${page.height.toFixed(2)}${unit}" viewBox="0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}">`);
   out.push(`<rect width="100%" height="100%" fill="#ffffff"/>`);
   let clipId = 0;
@@ -213,7 +244,7 @@ export function exportSvg(app: App): Blob | null {
       if (!path) return;
       if (curKind === 'seg') {
         const w = Math.max(0.1, styles[curStyle * 8 + 4]! * page.lwScale) || 0.25 * page.lwScale;
-        out.push(`<path d="${path}" fill="none" stroke="${css(styles, curStyle)}" stroke-width="${(st.isModel ? 1 : w).toFixed(3)}" stroke-linecap="round"/>`);
+        out.push(`<path d="${path}" fill="none" stroke="${css(styles, curStyle)}" stroke-width="${(unit === 'px' ? 1 : w).toFixed(3)}" stroke-linecap="round"/>`);
       } else out.push(`<path d="${path}" fill="${css(styles, curStyle)}"/>`);
       path = '';
     };
@@ -251,10 +282,16 @@ export function exportSvg(app: App): Blob | null {
 export async function exportPdf(app: App): Promise<Blob | null> {
   const st = app.active;
   if (!st) return null;
-  const PT_PER_MM = 72 / 25.4;
   // 모형: 지금 화면을 A3 가로(420 mm) 폭에 맞춘다
   const page = pageFor(app, PT_PER_MM, st.isModel ? 420 * PT_PER_MM : undefined);
   if (!page) return null;
+  return pdfDocument([page], st.name);
+}
+
+export const PT_PER_MM = 72 / 25.4;
+
+/** 페이지 하나의 PDF 그리기 명령 */
+export function pdfContent(page: Page): string {
   const ops: string[] = [];
   const H = page.height;
   ops.push('1 1 1 rg', `0 0 ${page.width.toFixed(2)} ${H.toFixed(2)} re f`, '1 J 1 j');
@@ -305,9 +342,18 @@ export async function exportPdf(app: App): Promise<Blob | null> {
     flush();
     ops.push('Q');
   }
-  const content = new TextEncoder().encode(ops.join('\n'));
-  const compressed = await deflate(content);
-  return buildPdf(page.width, page.height, compressed ?? content, !!compressed, st.name);
+  return ops.join('\n');
+}
+
+/** 여러 페이지 PDF */
+export async function pdfDocument(pages: Page[], title: string): Promise<Blob> {
+  const out: { w: number; h: number; content: Uint8Array; flate: boolean }[] = [];
+  for (const p of pages) {
+    const raw = new TextEncoder().encode(pdfContent(p));
+    const z = await deflate(raw);
+    out.push({ w: p.width, h: p.height, content: z ?? raw, flate: !!z });
+  }
+  return buildPdf(out, title);
 }
 
 async function deflate(data: Uint8Array): Promise<Uint8Array | null> {
@@ -317,7 +363,7 @@ async function deflate(data: Uint8Array): Promise<Uint8Array | null> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-function buildPdf(w: number, h: number, content: Uint8Array, flate: boolean, title: string): Blob {
+function buildPdf(pages: { w: number; h: number; content: Uint8Array; flate: boolean }[], title: string): Blob {
   const enc = new TextEncoder();
   const parts: Uint8Array[] = [];
   const offsets: number[] = [];
@@ -335,20 +381,26 @@ function buildPdf(w: number, h: number, content: Uint8Array, flate: boolean, tit
     add('\nendobj\n');
   };
   const t = title.replace(/[()\\]/g, '');
+  // 1 카탈로그, 2 페이지 목록, 3 정보, 4부터 페이지·내용 쌍
+  const n = pages.length;
+  const pageObj = (i: number) => 4 + i * 2;
   add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
-  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w.toFixed(2)} ${h.toFixed(2)}] /Contents 4 0 R /Resources << >> >>`);
-  obj(4, () => {
-    add(`<< /Length ${content.length}${flate ? ' /Filter /FlateDecode' : ''} >>\nstream\n`);
-    add(content);
-    add('\nendstream');
+  obj(2, `<< /Type /Pages /Kids [${pages.map((_, i) => `${pageObj(i)} 0 R`).join(' ')}] /Count ${n} >>`);
+  obj(3, `<< /Producer (OpenCAD 2D Viewer) /Title (${/^[\x20-\x7e]*$/.test(t) ? t : 'drawing'}) >>`);
+  pages.forEach((p, i) => {
+    obj(pageObj(i), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${p.w.toFixed(2)} ${p.h.toFixed(2)}] /Contents ${pageObj(i) + 1} 0 R /Resources << >> >>`);
+    obj(pageObj(i) + 1, () => {
+      add(`<< /Length ${p.content.length}${p.flate ? ' /Filter /FlateDecode' : ''} >>\nstream\n`);
+      add(p.content);
+      add('\nendstream');
+    });
   });
-  obj(5, `<< /Producer (OpenCAD 2D Viewer) /Title (${/^[\x20-\x7e]*$/.test(t) ? t : 'drawing'}) >>`);
+  const total = 4 + n * 2;
   const xref = pos;
-  add(`xref\n0 6\n0000000000 65535 f \n`);
-  for (let i = 1; i <= 5; i++) add(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
-  add(`trailer\n<< /Size 6 /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  add(`xref\n0 ${total}\n0000000000 65535 f \n`);
+  for (let i = 1; i < total; i++) add(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
+  add(`trailer\n<< /Size ${total} /Root 1 0 R /Info 3 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
   return new Blob(parts as BlobPart[], { type: 'application/pdf' });
 }
 

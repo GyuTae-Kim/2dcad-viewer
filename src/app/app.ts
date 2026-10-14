@@ -569,6 +569,27 @@ export class App {
     else this.ui.refreshTabs();
   }
 
+  /** 공간 장면이 없으면 워커에서 그려 온다 */
+  async ensureScene(st: DocState, space: string): Promise<void> {
+    const key = tableKey(space);
+    if (st.scenes.has(key)) return;
+    let p = st.buildPending.get(key);
+    if (!p) {
+      this.ui.setBusy('배치 그리는 중…', 0.5);
+      p = this.engine
+        .build(st.docId, key)
+        .then((msg) => {
+          st.addScene(this.view.renderer, msg, key);
+        })
+        .finally(() => {
+          st.buildPending.delete(key);
+          this.ui.setBusy(null);
+        });
+      st.buildPending.set(key, p);
+    }
+    await p;
+  }
+
   /** 모형·배치 전환 */
   async setSpace(space: string): Promise<void> {
     const st = this.active;
@@ -576,23 +597,7 @@ export class App {
     const key = tableKey(space);
     if (st.space === key) return;
     this.cancel(true);
-    if (!st.scenes.has(key)) {
-      let p = st.buildPending.get(key);
-      if (!p) {
-        this.ui.setBusy('배치 그리는 중…', 0.5);
-        p = this.engine
-          .build(st.docId, space)
-          .then((msg) => {
-            st.addScene(this.view.renderer, msg, key);
-          })
-          .finally(() => {
-            st.buildPending.delete(key);
-            this.ui.setBusy(null);
-          });
-        st.buildPending.set(key, p);
-      }
-      await p;
-    }
+    await this.ensureScene(st, key);
     st.space = key;
     st.selection.clear();
     this.view.setState(st);

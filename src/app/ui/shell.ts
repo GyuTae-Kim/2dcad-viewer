@@ -262,11 +262,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
     tab: '출력',
     panels: [
       {
+        title: '플롯',
+        large: [
+          { cmd: 'PLOT', label: '플롯', icon: 'print', tip: '용지·축척·플롯 스타일을 골라 PDF로 출력 (Ctrl+P)' },
+          { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
+        ],
+      },
+      {
         title: '내보내기',
         large: [
           { cmd: 'PNGOUT', label: 'PNG', icon: 'exportPng', tip: '지금 화면을 이미지로 저장' },
           { cmd: 'SVGOUT', label: 'SVG', icon: 'exportSvg', tip: '지금 공간을 벡터 그림으로 저장' },
-          { cmd: 'PLOT', label: 'PDF', icon: 'exportPdf', tip: '지금 화면 또는 배치를 PDF로 저장 (Ctrl+P)' },
         ],
       },
     ],
@@ -382,7 +388,8 @@ export class Shell implements UiHooks {
         { separator: true },
         { label: 'PNG로 내보내기', icon: 'exportPng', disabled: !app.active, run: () => void app.run('PNGOUT') },
         { label: 'SVG로 내보내기', icon: 'exportSvg', disabled: !app.active, run: () => void app.run('SVGOUT') },
-        { label: 'PDF로 내보내기', icon: 'exportPdf', kbd: 'Ctrl+P', disabled: !app.active, run: () => void app.run('PLOT') },
+        { label: '플롯(PDF)…', icon: 'print', kbd: 'Ctrl+P', disabled: !app.active, run: () => void app.run('PLOT') },
+        { label: '모든 배치를 PDF로', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
         { separator: true },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
         { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },

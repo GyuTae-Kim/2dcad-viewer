@@ -5,9 +5,10 @@ import { registerDrawCommands } from './app/draw';
 import { registerBlockCommands } from './app/blocks';
 import { registerEditCommands } from './app/editcmds';
 import { registerTableCommands } from './app/tables';
+import { registerPlotCommands } from './app/plot';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
-import { baseName, download, exportPdf, exportPng, exportSvg } from './app/export';
+import { baseName, download, exportPng, exportSvg } from './app/export';
 
 const root = document.getElementById('app')!;
 const shell = new Shell(root);
@@ -34,6 +35,7 @@ registerDrawCommands(app);
 registerBlockCommands(app);
 registerEditCommands(app);
 registerTableCommands(app);
+registerPlotCommands(app);
 
 app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pickFiles() });
 app.register({
@@ -75,19 +77,6 @@ app.register({
     if (!b) return;
     download(b, `${baseName(app.active!.name)}.svg`);
     ctx.print(app.active!.isModel ? '지금 화면 범위를 SVG로 저장했습니다.' : '배치 용지를 SVG로 저장했습니다(단위 mm).');
-  },
-});
-app.register({
-  name: 'PLOT',
-  aliases: ['PRINT', 'EXPORTPDF', 'PUBLISH'],
-  title: 'PDF로 내보내기',
-  async run(ctx) {
-    const st = app.active!;
-    ctx.print('PDF를 만드는 중…');
-    const b = await exportPdf(app);
-    if (!b) return;
-    download(b, `${baseName(st.name)}${st.isModel ? '' : '-' + (st.layoutFor(st.space)?.name ?? 'layout')}.pdf`);
-    ctx.print(st.isModel ? '지금 화면을 A3 가로 폭의 PDF로 저장했습니다.' : '배치를 용지 크기 그대로 PDF로 저장했습니다.');
   },
 });
 app.register({
