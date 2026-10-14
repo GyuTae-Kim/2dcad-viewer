@@ -2,9 +2,10 @@
  * QDIM(빠른 치수), TOLERANCE(기하 공차), CENTERMARK(중심 표식), CENTERLINE(중심선).
  * 프롬프트는 AutoCAD 2026 한국어판을 따른다. 계산은 src/edit/annot(qdim·tolerance·center).
  */
-import type { BlockDef, CadDocument, Entity, InsertEntity, LineEntity, LwPolylineEntity, MTextEntity, ToleranceEntity, Vec3 } from '../core/model';
+import type { BlockDef, CadDocument, DimensionEntity, Entity, InsertEntity, LineEntity, LwPolylineEntity, MTextEntity, ToleranceEntity, Vec3 } from '../core/model';
 import { entityDefaults, tableKey } from '../core/model';
 import { dimVars } from '../edit/dim';
+import { OSNAP, type PointRef, assocKeys, findRefAt, tolFor } from '../edit/dim/assoc';
 import { type CenterSettings, centerLineSegment, centerMarkLines, defaultCenterSettings } from '../edit/annot/center';
 import { type QdimGeometry, type QdimMode, qdimCreate, qdimGeometry } from '../edit/annot/qdim';
 import { GDT_SYMBOLS, type MaterialCond, type TolSpec, buildToleranceText, emptySpec, toleranceLayout } from '../edit/annot/tolerance';
@@ -13,6 +14,7 @@ import { STANDARD_LINETYPES, makeLinetype } from '../edit/linetypes';
 import type { App, CommandContext, Keyword } from './app';
 import { addEntities, currentProps } from './draw';
 import { dimGhost } from './annot2-common';
+import { attachAssociation, finishNewDimension } from './dimassoc';
 import { unlockedOnly } from './layers';
 import { commitResults } from './modify';
 import { dialog, h } from './ui/dom';
@@ -26,6 +28,28 @@ const v3 = (p: Pt, z = 0): Vec3 => ({ x: p.x, y: p.y, z });
 
 const QDIM_LABEL: Record<QdimMode, string> = { C: '연속', S: '다중', B: '기준선', O: '세로좌표', R: '반지름', D: '지름' };
 const qdimMode = new WeakMap<CadDocument, QdimMode>();
+/** 연관 치수 우선순위: 끝점(E) 또는 교차(I) */
+const qdimPriority = new WeakMap<CadDocument, 'E' | 'I'>();
+
+/**
+ * QDIM 치수의 연관 참조: 정의점 자리에 스냅 점이 있는 고른 객체에 잇는다.
+ * 끝점(E): 끝점·중심·노드·삽입점, 교차(I): 그 점에서 만나는 두 고른 객체의 교차점(없으면 끝점). 반지름·지름은 그 원·호.
+ */
+function qdimRefs(doc: CadDocument, d: DimensionEntity, ents: readonly Entity[], pri: 'E' | 'I'): (PointRef | null)[] {
+  const t = d.dimType & 7;
+  const pointKinds = pri === 'I' ? [OSNAP.INT, OSNAP.END, OSNAP.CEN, OSNAP.NODE, OSNAP.INS] : [OSNAP.END, OSNAP.CEN, OSNAP.NODE, OSNAP.INS];
+  return assocKeys(d).map((k) => {
+    if (!k) return null;
+    const p = d[k];
+    const tol = tolFor(p) * 10;
+    if (t === 3 || t === 4) {
+      if (k === 'defPoint4' || (t === 3 && k === 'defPoint')) return findRefAt(doc, ents, p, { tol, kinds: [OSNAP.NEAR], nearTol: tol });
+      return findRefAt(doc, ents, p, { tol, kinds: [OSNAP.CEN] });
+    }
+    if (t === 6 && k === 'defPoint') return null;
+    return findRefAt(doc, ents, p, { tol, kinds: pointKinds });
+  });
+}
 
 function crossMarks(app: App, pts: readonly Pt[]): OverlayGeom {
   const s = 5 * app.view.pixelSize();
@@ -382,7 +406,13 @@ export function registerAnnot2Misc(app: App): void {
             continue;
           }
           qdimMode.set(doc, mode);
-          commitResults(app, ctx, [{ add: dims }], 'QDIM', { quiet: true });
+          const a = commitResults(app, ctx, [{ add: dims }], 'QDIM', { quiet: true });
+          const pri = qdimPriority.get(doc) ?? 'E';
+          for (const h of a.added) {
+            const d = doc.entityIndex.get(h);
+            if (d?.type === 'DIMENSION') attachAssociation(app, ctx, h, qdimRefs(doc, d, ents, pri), 'QDIM');
+          }
+          finishNewDimension(app, ctx, a.added, 'QDIM');
           return;
         }
         if (!('keyword' in r)) return;
@@ -392,13 +422,14 @@ export function registerAnnot2Misc(app: App): void {
           if ('point' in p) datum = p.point;
         } else if (k === 'E') await qdimEdit(app, ctx, g);
         else if (k === 'T') {
-          await ctx.getPoint('연관 치수 우선순위 [끝점(E)/교차(I)] <끝점>:', {
+          const cur = qdimPriority.get(doc) ?? 'E';
+          const pr = await ctx.getPoint(`연관 치수 우선순위 [끝점(E)/교차(I)] <${cur === 'I' ? '교차' : '끝점'}>:`, {
             keywords: [
               { key: 'E', label: '끝점' },
               { key: 'I', label: '교차' },
             ],
           });
-          ctx.print('참고: 이 뷰어의 QDIM 치수는 연관 치수가 아니므로 우선순위는 점 고르기에 영향을 주지 않습니다.');
+          if ('keyword' in pr) qdimPriority.set(doc, pr.keyword === 'I' ? 'I' : 'E');
         } else mode = k as QdimMode;
       }
     },

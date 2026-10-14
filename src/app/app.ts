@@ -39,7 +39,14 @@ export interface Keyword {
   label: string;
 }
 
-export type PointResult = { point: Pt } | { keyword: string } | { text: string } | { enter: true };
+/** 찍은 점의 객체 스냅(연관 치수 등). 결과의 snap이 null이면 스냅 없이 찍었거나 좌표를 입력한 것 */
+export interface PointSnap {
+  kind: SnapKind;
+  handle?: string;
+  handle2?: string;
+}
+
+export type PointResult = { point: Pt; snap?: PointSnap | null } | { keyword: string } | { text: string } | { enter: true };
 
 interface PointRequest {
   kind: 'point';
@@ -535,7 +542,7 @@ export class App {
         if (this.outsideLimits(p)) return;
         this.cmd.print(`${this.promptOf(r)} ${t}`);
         this.lastPoint = p;
-        r.resolve({ point: p });
+        r.resolve({ point: p, snap: null });
         return;
       }
       if (r.allowText) {
@@ -1033,14 +1040,14 @@ export class App {
   // -------------------------------------------------------------------------
 
   /** 스냅·추적·직교를 적용한 점 */
-  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind } | null; track?: TrackResult } {
+  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind; handle?: string; handle2?: string } | null; track?: TrackResult } {
     const r = this.request;
     if (r?.kind === 'point' || !r) {
       const pk = this.picker();
       if (pk && this.osnapOn && r?.kind === 'point') {
         const aperture = 10 * this.view.pixelSize();
         const s = findSnap(this.active!.doc, pk, w, aperture, this.snapModes, r.base);
-        if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind } };
+        if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind, handle: s.handle, handle2: s.handle2 } };
       }
       if (r?.kind === 'point') {
         const tol = 8 * this.view.pixelSize();
@@ -1194,10 +1201,10 @@ export class App {
     }
     const r = this.request;
     if (r?.kind === 'point') {
-      const { p } = this.resolvePoint(w);
+      const { p, snap } = this.resolvePoint(w);
       if (this.outsideLimits(p)) return;
       this.lastPoint = p;
-      r.resolve({ point: p });
+      r.resolve({ point: p, snap: snap ? { kind: snap.kind, handle: snap.handle, handle2: snap.handle2 } : null });
       return;
     }
     const pk = this.picker();

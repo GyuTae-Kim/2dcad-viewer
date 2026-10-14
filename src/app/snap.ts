@@ -10,6 +10,9 @@ export interface SnapPoint {
   x: number;
   y: number;
   kind: SnapKind;
+  /** 스냅 점을 준 객체(교차점·근처점처럼 선분에서 구한 것은 없음) */
+  handle?: string;
+  handle2?: string;
 }
 
 export const ALL_SNAPS: SnapKind[] = ['end', 'mid', 'cen', 'qua', 'int', 'ins', 'nod', 'per', 'nea'];
@@ -217,7 +220,7 @@ export function findSnap(doc: CadDocument, picker: Picker, p: Pt, aperture: numb
     if (!e) continue;
     const pts: SnapPoint[] = [];
     entitySnaps(doc, e, m, pts);
-    for (const s of pts) consider(s);
+    for (const s of pts) consider({ ...s, handle: c.handle });
   }
   const needSegs = modes.has('int') || modes.has('nea') || (modes.has('per') && base);
   if (needSegs) {

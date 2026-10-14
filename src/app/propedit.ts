@@ -9,6 +9,7 @@ import type { EditOp } from '../edit/session';
 import { cloneEntity } from '../edit/session';
 import type { App } from './app';
 import { colorText, lineweightText } from './inquiry';
+import { followOps } from './dimassoc';
 
 export type FieldKind = 'length' | 'angle' | 'number' | 'text' | 'multiline' | 'select' | 'color' | 'bool';
 
@@ -421,7 +422,13 @@ export function applyField(app: App, handles: string[], field: Field, value: unk
     ops.push({ kind: 'modify', block, before: e, after: c });
   }
   if (skipped) app.cmd.print(`잠긴 도면층의 객체 ${skipped}개는 바꾸지 않았습니다.`);
-  if (ops.length) st.session.commit({ label: 'PROPERTIES', ops });
+  if (ops.length) {
+    // 형상을 바꾸면 연관 치수가 따라간다
+    const f = followOps(st, new Map(ops.flatMap((o) => (o.kind === 'modify' ? [[o.before.handle, o.after] as const] : []))));
+    for (const o of ops) if (o.kind === 'modify') o.after = f.patched.get(o.before.handle) ?? o.after;
+    ops.push(...f.ops);
+    st.session.commit({ label: 'PROPERTIES', ops });
+  }
   return ops.length;
 }
 

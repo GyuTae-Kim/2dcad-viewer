@@ -16,6 +16,8 @@ import { DIM_VAR_BY_NAME, type Overrides, applyOverrides, formatVarValue, parseV
 import { intersectAll } from '../edit/geom/intersect';
 import type { Piece } from '../edit/geom/curve';
 import type { App, Keyword } from './app';
+import { OSNAP, circlePointRef } from '../edit/dim/assoc';
+import { attachAssociation, finishNewDimension, objectRef } from './dimassoc';
 import { textDialog } from './draw';
 import { unlockedOnly } from './layers';
 import { commitResults } from './modify';
@@ -396,7 +398,12 @@ export function registerAnnot2Commands(app: App): void {
       const tp0 = tp;
       const j = await ctx.getPoint('꺾기 위치 지정:', { ghost: dimGhost(app, (q) => build(tp0, q)) });
       if (!('point' in j)) return;
-      commitResults(app, ctx, [{ add: [build(tp0, j.point)] }], 'DIMJOGGED', { quiet: true });
+      const a = commitResults(app, ctx, [{ add: [build(tp0, j.point)] }], 'DIMJOGGED', { quiet: true });
+      // 연관: [15 현 위 점, 10 중심] — 재지정 중심·꺾기 점은 중심을 따라 옮긴다
+      const h = a.added[0];
+      const d = h ? doc.entityIndex.get(h) : undefined;
+      if (h && d?.type === 'DIMENSION') attachAssociation(app, ctx, h, [circlePointRef(e, d.defPoint4), objectRef(app, e, OSNAP.CEN, d.defPoint), null, null], 'DIMJOGGED');
+      if (h) finishNewDimension(app, ctx, h, 'DIMJOGGED');
     },
   });
 

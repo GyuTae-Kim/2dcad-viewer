@@ -1,6 +1,7 @@
 /**
  * 치수 작성: DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMRADIUS, DIMDIAMETER, DIMORDINATE, DIMARC
  * 치수 그림(익명 *D 블록)은 src/edit/dim의 생성기가 치수 스타일대로 만든다.
+ * DIMASSOC가 2이면 객체 스냅으로 찍은 점·고른 객체에 치수를 연관시킨다(dimassoc.ts), 0이면 분해된 치수를 만든다.
  * 프롬프트와 옵션은 AutoCAD 2026 한국어판을 따른다.
  */
 import type { BlockDef, BlockRecord, CadDocument, DimensionEntity, Entity, Layer, Vec3 } from '../core/model';
@@ -21,8 +22,10 @@ import {
   rawDimVars,
 } from '../edit/dim';
 import type { DimKindName } from '../edit/dim/format';
+import { OSNAP, type PointRef, circlePointRef } from '../edit/dim/assoc';
 import type { EditOp } from '../edit/session';
 import type { App, CommandContext, Keyword } from './app';
+import { finishNewDimension, inheritedRef, newDimensionAssocOps, objectRef, pointRef, snapNewDimension } from './dimassoc';
 import type { DocState } from './docstate';
 import { textDialog } from './draw';
 import type { OverlayGeom, Pt } from './view';
@@ -93,15 +96,30 @@ export function dimensionBlockOps(st: DocState, dim: DimensionEntity, reuse: boo
   return ops;
 }
 
-/** 새 치수를 지금 공간에 넣는다 */
-function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label: string): void {
+/**
+ * 새 치수를 지금 공간에 넣는다. refs는 점 참조 번호 차례의 연관 참조(DIMASSOC 2일 때만 쓴다).
+ * 넣은 작업 수를 돌려준다(명령 안의 명령 취소용).
+ */
+function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label: string, refs: readonly (PointRef | null)[] = []): number {
   const st = app.active!;
+  const assoc = snapNewDimension(app, dim, refs);
   const blockOps = dimensionBlockOps(st, dim, false);
   const space = st.doc.blocks.get(st.space);
   dim.handle = st.session.newHandle();
   if (space?.recordHandle) dim.owner = space.recordHandle;
   dim.paperSpace = /^\*PAPER_SPACE/i.test(st.space) ? true : undefined;
-  st.session.commit({ label, ops: [...blockOps, { kind: 'add', block: st.space, entity: dim }], group: ctx.group });
+  const assocOps = assoc ? newDimensionAssocOps(app, dim, refs) : [];
+  const ops: EditOp[] = [...blockOps, { kind: 'add', block: st.space, entity: dim }, ...assocOps];
+  st.session.commit({ label, ops, group: ctx.group });
+  const shownDim = { ...dim };
+  const n = ops.length + finishNewDimension(app, ctx, dim.handle, label);
+  printDimText(app, ctx, shownDim);
+  return n;
+}
+
+/** 치수 문자 안내 */
+function printDimText(app: App, ctx: CommandContext, dim: DimensionEntity): void {
+  const st = app.active!;
   const t = dim.dimType & 7;
   const kind: DimKindName = dim.subtype === 'ARC_DIMENSION' ? 'arc' : t === 2 || t === 5 ? 'angular' : t === 3 ? 'diameter' : t === 4 ? 'radius' : t === 6 ? 'ordinate' : 'linear';
   let shown: string;
@@ -111,6 +129,11 @@ function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label
     shown = formatLength(dim.measurement, st.units);
   }
   ctx.print(`치수 문자 = ${dim.text && dim.text !== '<>' ? dim.text.replace('<>', shown) : shown}`);
+}
+
+/** 원·호 객체(연관 참조용) */
+function circleEntity(e: Entity | undefined): Entity | undefined {
+  return e && (e.type === 'CIRCLE' || e.type === 'ARC') ? e : undefined;
 }
 
 /** 문서 기본 치수 스타일 옵션(문자 재지정) */
@@ -197,21 +220,26 @@ export function registerDimCommands(app: App): void {
     const doc = st.doc;
     let p1: Pt;
     let p2: Pt;
+    let refs: (PointRef | null)[] = [];
     const r1 = await ctx.getPoint('첫 번째 치수보조선 원점 지정 또는 <객체 선택>:');
     if ('enter' in r1) {
       const pick = await ctx.getEntity('치수기입할 객체 선택:');
       if (!('handle' in pick)) return;
-      const o = originsFromEntity(doc.entityIndex.get(pick.handle), pick.point);
+      const picked = doc.entityIndex.get(pick.handle);
+      const o = originsFromEntity(picked, pick.point);
       if (!o) {
         ctx.print('선, 호, 폴리선 세그먼트를 선택하십시오.', 'err');
         return;
       }
       [p1, p2] = o;
+      refs = [objectRef(app, picked, OSNAP.END, p1), objectRef(app, picked, OSNAP.END, p2)];
     } else if ('point' in r1) {
       p1 = r1.point;
+      const ref1 = pointRef(app, r1);
       const r2 = await ctx.getPoint('두 번째 치수보조선 원점 지정:', { base: p1 });
       if (!('point' in r2)) return;
       p2 = r2.point;
+      refs = [ref1, pointRef(app, r2)];
     } else return;
     const o: DimOpts = {};
     let rotation: number | undefined;
@@ -224,7 +252,7 @@ export function registerDimCommands(app: App): void {
       if (!aligned) kws.push({ key: 'H', label: '수평' }, { key: 'V', label: '수직' }, { key: 'R', label: '회전' });
       const r = await ctx.getPoint(`치수선의 위치 지정 또는 [${kws.map((k) => `${k.label}(${k.key})`).join('/')}]:`, { keywords: kws, ghost: preview(app, make) });
       if ('point' in r) {
-        addDimension(app, ctx, make(r.point), aligned ? 'DIMALIGNED' : 'DIMLINEAR');
+        addDimension(app, ctx, make(r.point), aligned ? 'DIMALIGNED' : 'DIMLINEAR', refs);
         return;
       }
       if (!('keyword' in r)) return;
@@ -250,14 +278,19 @@ export function registerDimCommands(app: App): void {
       const doc = st.doc;
       const o: DimOpts = {};
       let make: ((p: Pt) => DimensionEntity) | null = null;
+      // 점 참조 번호 차례: 3점 각도 [13, 14, 15(정점)], 두 선 각도 [13, 14, 15, 10]
+      let refs: (PointRef | null)[] = [];
       const r = await ctx.getEntity('호, 원, 선을 선택하거나 <정점 지정>:');
       if ('enter' in r) {
         const v = await ctx.getPoint('각도 정점 지정:');
         if (!('point' in v)) return;
+        const rv = pointRef(app, v);
         const a = await ctx.getPoint('첫 번째 각도 끝점 지정:', { base: v.point });
         if (!('point' in a)) return;
+        const ra = pointRef(app, a);
         const b = await ctx.getPoint('두 번째 각도 끝점 지정:', { base: v.point });
         if (!('point' in b)) return;
+        refs = [ra, pointRef(app, b), rv];
         make = (p) => createAngularDimension(doc, v3(v.point), v3(a.point), v3(b.point), v3(p), { text: o.text });
       } else if ('handle' in r) {
         const e = doc.entityIndex.get(r.handle);
@@ -269,15 +302,18 @@ export function registerDimCommands(app: App): void {
             ctx.print('선을 선택하십시오.', 'err');
             return;
           }
+          refs = [objectRef(app, e, OSNAP.END, e.start), objectRef(app, e, OSNAP.END, e.end), objectRef(app, e2, OSNAP.END, e2.start), objectRef(app, e2, OSNAP.END, e2.end)];
           make = (p) => createAngular2LineDimension(doc, e.start, e.end, e2.start, e2.end, v3(p), { text: o.text });
         } else if (e?.type === 'ARC') {
           const a = { x: e.center.x + e.radius * Math.cos(e.startAngle), y: e.center.y + e.radius * Math.sin(e.startAngle), z: 0 };
           const b = { x: e.center.x + e.radius * Math.cos(e.endAngle), y: e.center.y + e.radius * Math.sin(e.endAngle), z: 0 };
+          refs = [objectRef(app, e, OSNAP.END, a), objectRef(app, e, OSNAP.END, b), objectRef(app, e, OSNAP.CEN, e.center)];
           make = (p) => createAngularDimension(doc, e.center, a, b, v3(p), { text: o.text });
         } else if (e?.type === 'CIRCLE') {
           const first = r.point;
           const b = await ctx.getPoint('각도의 두 번째 끝점 지정:', { base: e.center });
           if (!('point' in b)) return;
+          refs = [circlePointRef(e, first), pointRef(app, b), objectRef(app, e, OSNAP.CEN, e.center)];
           make = (p) => createAngularDimension(doc, e.center, v3(first), v3(b.point), v3(p), { text: o.text });
         } else {
           ctx.print('호, 원, 선을 선택하십시오.', 'err');
@@ -288,7 +324,7 @@ export function registerDimCommands(app: App): void {
         const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }];
         const p = await ctx.getPoint('치수 호 선 위치 지정 또는 [여러 줄 문자(M)/문자(T)]:', { keywords: kws, ghost: preview(app, make) });
         if ('point' in p) {
-          addDimension(app, ctx, make(p.point), 'DIMANGULAR');
+          addDimension(app, ctx, make(p.point), 'DIMANGULAR', refs);
           return;
         }
         if (!('keyword' in p) || !(await textOption(ctx, p.keyword, o))) return;
@@ -302,7 +338,8 @@ export function registerDimCommands(app: App): void {
     const doc = st.doc;
     const r = await ctx.getEntity(kind === 'arc' ? '호 또는 폴리선 호 세그먼트 선택:' : '호 또는 원 선택:');
     if (!('handle' in r)) return;
-    const c = circleOf(doc.entityIndex.get(r.handle));
+    const picked = circleEntity(doc.entityIndex.get(r.handle));
+    const c = circleOf(picked);
     if (!c || (kind === 'arc' && c.a0 === undefined)) {
       ctx.print(kind === 'arc' ? '호를 선택하십시오.' : '호 또는 원을 선택하십시오.', 'err');
       return;
@@ -323,7 +360,15 @@ export function registerDimCommands(app: App): void {
     for (;;) {
       const p = await ctx.getPoint(`${what} 또는 [여러 줄 문자(M)/문자(T)]:`, { keywords: [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }], ghost: preview(app, make) });
       if ('point' in p) {
-        addDimension(app, ctx, make(p.point), kind === 'radius' ? 'DIMRADIUS' : kind === 'diameter' ? 'DIMDIAMETER' : 'DIMARC');
+        const d = make(p.point);
+        // 반지름 [15 현 위 점, 10 중심], 지름 [15, 10 반대쪽 현 위 점], 호 길이 [13 시작, 14 끝, 15 중심]
+        let refs: (PointRef | null)[] = [];
+        if (picked) {
+          if (kind === 'arc') refs = [objectRef(app, picked, OSNAP.END, d.defPoint2), objectRef(app, picked, OSNAP.END, d.defPoint3), objectRef(app, picked, OSNAP.CEN, d.defPoint4)];
+          else if (kind === 'radius') refs = [circlePointRef(picked, d.defPoint4), objectRef(app, picked, OSNAP.CEN, d.defPoint)];
+          else refs = [circlePointRef(picked, d.defPoint4), circlePointRef(picked, d.defPoint)];
+        }
+        addDimension(app, ctx, d, kind === 'radius' ? 'DIMRADIUS' : kind === 'diameter' ? 'DIMDIAMETER' : 'DIMARC', refs);
         return;
       }
       if (!('keyword' in p) || !(await textOption(ctx, p.keyword, o))) return;
@@ -394,14 +439,11 @@ export function registerDimCommands(app: App): void {
       });
       if ('point' in r) {
         const d = make(r.point);
-        const blockOps = dimensionBlockOps(st, d, false);
-        const space = st.doc.blocks.get(st.space);
-        d.handle = st.session.newHandle();
-        if (space?.recordHandle) d.owner = space.recordHandle;
-        d.paperSpace = /^\*PAPER_SPACE/i.test(st.space) ? true : undefined;
-        const ops = [...blockOps, { kind: 'add' as const, block: st.space, entity: d }];
-        st.session.commit({ label: baseline ? 'DIMBASELINE' : 'DIMCONTINUE', ops, group: ctx.group });
-        steps.push(ops.length);
+        // 연관: 원점은 기준 치수의 같은 점 연관을 이어받는다(세로좌표는 피쳐 위치만)
+        const refs: (PointRef | null)[] = (prev.dimType & 7) === 6 ? [null, pointRef(app, r)] : [baseline ? inheritedRef(app, base, 'defPoint2') : inheritedRef(app, prev, 'defPoint3'), pointRef(app, r)];
+        const label = baseline ? 'DIMBASELINE' : 'DIMCONTINUE';
+        const n = addDimension(app, ctx, d, label, refs);
+        steps.push(n);
         prev = d;
         if (!baseline) origin = d.defPoint3;
         continue;
@@ -436,6 +478,7 @@ export function registerDimCommands(app: App): void {
       const doc = st.doc;
       const f = await ctx.getPoint('피쳐 위치 지정:');
       if (!('point' in f)) return;
+      const fr = pointRef(app, f);
       const o: DimOpts = {};
       let xAxis: boolean | undefined;
       for (;;) {
@@ -446,7 +489,7 @@ export function registerDimCommands(app: App): void {
           ghost: preview(app, make),
         });
         if ('point' in p) {
-          addDimension(app, ctx, make(p.point), 'DIMORDINATE');
+          addDimension(app, ctx, make(p.point), 'DIMORDINATE', [null, fr]);
           return;
         }
         if (!('keyword' in p)) return;

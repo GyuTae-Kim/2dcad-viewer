@@ -33,6 +33,7 @@ import { entityPath } from '../edit/geom/path';
 import { associatedHatches, boundaryEntitiesOf, dissociate, reactorUnlinks, rebuildAssociative } from '../edit/hatch';
 import { pathLength } from '../edit/geom/curve';
 import { dimensionBlockOps } from './dimcmds';
+import { planFollow } from './dimassoc';
 import type { App, CommandContext, Keyword } from './app';
 import type { DocState } from './docstate';
 import type { OverlayGeom, Pt } from './view';
@@ -200,8 +201,11 @@ export interface Applied {
   ops: number;
 }
 
-/** 편집 결과들을 한 번에 적용한다 */
-export function commitResults(app: App, ctx: CommandContext, results: EditResult[], label: string, opt: { quiet?: boolean } = {}): Applied {
+/**
+ * 편집 결과들을 한 번에 적용한다.
+ * opt.transform: 바뀐 객체가 모두 같은 변환(이동·회전·축척·대칭)을 받았으면 그 행렬(연관 치수가 정확히 따라가게)
+ */
+export function commitResults(app: App, ctx: CommandContext, results: EditResult[], label: string, opt: { quiet?: boolean; transform?: Affine } = {}): Applied {
   const st = app.active!;
   const doc = st.doc;
   const ops: EditOp[] = [];
@@ -242,16 +246,41 @@ export function commitResults(app: App, ctx: CommandContext, results: EditResult
       const before = doc.entityIndex.get(e.handle);
       const block = st.session.ownerOf(e.handle);
       if (!before || !block) continue;
-      regen(e, before);
       const op = { kind: 'modify' as const, block, before, after: e };
       mod.set(e.handle, op);
-      ops.push(op);
       out.changed.push(e.handle);
     }
+  const userMod = new Set(mod.keys());
+  // 연관 치수: 형상을 따라 정의점을 옮기고, 지운 형상·벗어난 정의점의 연관을 끊는다(형상 반응자도 맞춘다)
+  const follow = (() => {
+    const changes = new Map<string, Entity | null>();
+    for (const [h, op] of mod) changes.set(h, op.after);
+    for (const r of results) for (const h of r.remove ?? []) changes.set(h, null);
+    return planFollow(st, changes, opt.transform);
+  })();
+  const noRegen = new Set<string>();
+  for (const [h, e] of follow.entities) {
+    const m = mod.get(h);
+    if (m) {
+      m.after = e;
+      continue;
+    }
+    const before = doc.entityIndex.get(h);
+    const block = st.session.ownerOf(h);
+    if (!before || !block) continue;
+    mod.set(h, { kind: 'modify', block, before, after: e });
+    if (!follow.moved.has(h)) noRegen.add(h);
+  }
+  for (const op of mod.values()) {
+    if (!noRegen.has(op.before.handle)) regen(op.after, op.before);
+    ops.push(op);
+  }
+  ops.push(...follow.objectOps);
   // 연관 해치: 경계 객체가 바뀌면 해치 영역을 다시 만들고, 영역이 깨지면 연관을 끊는다
   const touched = new Set(mod.keys());
   for (const r of results) for (const h of r.remove ?? []) touched.add(h);
   for (const op of [...mod.values()]) {
+    if (!userMod.has(op.before.handle)) continue;
     for (const hatch of associatedHatches(doc, op.before)) {
       if (touched.has(hatch.handle)) continue;
       touched.add(hatch.handle);
@@ -271,8 +300,14 @@ export function commitResults(app: App, ctx: CommandContext, results: EditResult
       ops.push({ kind: 'modify', block: owner, before: hatch, after: dissociate(hatch) });
       for (const l of reactorUnlinks(doc, hatch)) {
         const m = mod.get(l.before.handle);
-        if (m) m.after = { ...m.after, reactors: l.after.reactors } as Entity;
-        else {
+        if (m) {
+          // 같은 편집에서 바뀐 다른 반응자(연관 치수 등)는 두고 이 해치만 뺀다
+          const next = (m.after.reactors ?? []).filter((x) => x !== hatch.handle);
+          const after = { ...m.after } as Entity;
+          if (next.length) after.reactors = next;
+          else delete after.reactors;
+          m.after = after;
+        } else {
           const ob = st.session.ownerOf(l.before.handle);
           if (ob) ops.push({ kind: 'modify', block: ob, before: l.before, after: l.after });
         }
@@ -556,7 +591,8 @@ export function registerModifyCommands(app: App): void {
       m.moveY = r.disp.y;
       if (!r.disp.x && !r.disp.y) return;
       st.selection.clear();
-      const a = commitResults(app, ctx, transformAll(st, hs, translate(r.disp.x, r.disp.y), false), 'MOVE');
+      const mv = translate(r.disp.x, r.disp.y);
+      const a = commitResults(app, ctx, transformAll(st, hs, mv, false), 'MOVE', { transform: mv });
       app.refreshSelectionOverlay();
       ctx.print(`${a.changed.length + a.added.length}개를 옮겼습니다.`);
     },
@@ -714,7 +750,8 @@ export function registerModifyCommands(app: App): void {
       function finish(a: number): void {
         if (Math.abs(a % (2 * Math.PI)) < 1e-12 && !copy) return;
         st.selection.clear();
-        commitResults(app, ctx, transformAll(st, hs, rotateAbout(base, a), copy), 'ROTATE');
+        const m = rotateAbout(base, a);
+        commitResults(app, ctx, transformAll(st, hs, m, copy), 'ROTATE', { transform: m });
         app.refreshSelectionOverlay();
       }
     },
@@ -786,7 +823,8 @@ export function registerModifyCommands(app: App): void {
       function finish(k: number): void {
         if (Math.abs(k - 1) < 1e-15 && !copy) return;
         st.selection.clear();
-        commitResults(app, ctx, transformAll(st, hs, scaleAbout(base, k), copy), 'SCALE');
+        const m = scaleAbout(base, k);
+        commitResults(app, ctx, transformAll(st, hs, m, copy), 'SCALE', { transform: m });
         app.refreshSelectionOverlay();
       }
     },
@@ -820,7 +858,7 @@ export function registerModifyCommands(app: App): void {
       }
       const erase = await yesNo(ctx, '원본 객체를 지우시겠습니까?', false);
       st.selection.clear();
-      commitResults(app, ctx, transformAll(st, hs, mm, !erase), 'MIRROR');
+      commitResults(app, ctx, transformAll(st, hs, mm, !erase), 'MIRROR', { transform: mm });
       app.refreshSelectionOverlay();
     },
   });
@@ -1574,20 +1612,25 @@ export function registerModifyCommands(app: App): void {
           continue;
         }
         let results: EditResult[] = [];
+        let xform: Affine | undefined;
         if ('point' in r) {
           if (mode === 'stretch') results = stretchRes(r.point);
           else {
             const m = xf(mode, r.point);
-            if (m) results = transformAll(st, sel, m, copy);
+            if (m) {
+              results = transformAll(st, sel, m, copy);
+              xform = m;
+            }
           }
         } else if ('text' in r) {
           const v = num(r.text);
           if (v === null) continue;
-          if (mode === 'rotate') results = transformAll(st, sel, rotateAbout(base, (v * Math.PI) / 180), copy);
-          else if (mode === 'scale' && v > 0) results = transformAll(st, sel, scaleAbout(base, v), copy);
+          if (mode === 'rotate') xform = rotateAbout(base, (v * Math.PI) / 180);
+          else if (mode === 'scale' && v > 0) xform = scaleAbout(base, v);
+          if (xform) results = transformAll(st, sel, xform, copy);
         }
         if (!results.length) continue;
-        steps.push(commitResults(app, ctx, results, 'GRIP').ops);
+        steps.push(commitResults(app, ctx, results, 'GRIP', { transform: xform }).ops);
         if (!copy) break;
       }
       app.refreshSelectionOverlay();

@@ -361,6 +361,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DIMTEDIT', label: '문자 위치', icon: 'text', tip: '치수 문자 옮기기·정렬' },
             { cmd: 'TOLERANCE', label: '공차', icon: 'rect', tip: '기하 공차 (TOL)' },
           ],
+          [
+            { cmd: 'DIMREASSOCIATE', label: '다시 연관', icon: 'dimLinear', tip: '치수를 객체에 다시 연관 (DRE)' },
+            { cmd: 'DIMDISASSOCIATE', label: '연관 해제', icon: 'dimLinear', tip: '치수의 연관 끊기 (DDA)' },
+            { cmd: 'DIMREGEN', label: '치수 재생성', icon: 'redo', tip: '연관 치수를 다시 맞추기' },
+          ],
         ],
       },
       {
