@@ -74,8 +74,12 @@ export class DocState {
     return this.doc.layouts;
   }
 
+  /** 블록 편집기로 연 블록(그 블록을 공간처럼 보고 고친다) */
+  blockEdit: { name: string; key: string; back: string; depth: number } | null = null;
+
+  /** 모형처럼 그리는 공간(모형 공간, 블록 편집기) */
   get isModel(): boolean {
-    return this.space === MODEL_SPACE;
+    return this.space === MODEL_SPACE || this.blockEdit !== null;
   }
 
   layoutFor(space: string): Layout | undefined {

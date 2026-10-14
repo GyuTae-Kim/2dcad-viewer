@@ -79,11 +79,8 @@ function indexEntity(doc: CadDocument, e: Entity, on: boolean): void {
 export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: ChangeSummary): void {
   const space = (key: string) => {
     if (!summary) return null;
-    // 블록 정의 안의 객체가 바뀌면 그 블록을 참조하는 곳을 다시 그려야 한다
-    if (!isLayoutBlock(key)) {
-      summary.blocksChanged = true;
-      return null;
-    }
+    // 블록 정의 안의 객체가 바뀌면 그 블록을 참조하는 곳을 다시 그려야 한다(블록 편집기에서는 그 블록도 공간처럼 덧그린다)
+    if (!isLayoutBlock(key)) summary.blocksChanged = true;
     let s = summary.spaces.get(key);
     if (!s) {
       s = { removed: new Set(), changed: [] };
@@ -326,6 +323,11 @@ export class EditSession {
     this.ownerCache = null;
     this.onApply(tx, summary);
     return tx;
+  }
+
+  /** 명령 취소 기록 깊이(블록 편집기에서 변경을 버릴 때 쓴다) */
+  get depth(): number {
+    return this.undoStack.length;
   }
 
   markSaved(): void {

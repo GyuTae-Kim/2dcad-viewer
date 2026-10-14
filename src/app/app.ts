@@ -616,12 +616,62 @@ export class App {
     if (!st) return;
     const key = tableKey(space);
     if (st.space === key) return;
+    if (st.blockEdit) {
+      await this.closeBlockEditor(true);
+      if (st.space === key) return;
+    }
     this.cancel(true);
     await this.ensureScene(st, key);
     st.space = key;
     st.selection.clear();
     this.view.setState(st);
     if (!st.cameras.has(key)) this.view.zoomExtents(false);
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+  }
+
+  /** 블록 편집기 열기: 블록 정의를 공간처럼 열어 그리기·수정 명령으로 고친다 */
+  async openBlockEditor(name: string): Promise<boolean> {
+    const st = this.active;
+    if (!st) return false;
+    const key = tableKey(name);
+    const blk = st.doc.blocks.get(key);
+    if (!blk) return false;
+    if (st.blockEdit) await this.closeBlockEditor(true);
+    this.cancel(true);
+    st.blockEdit = { name: blk.name, key, back: st.space, depth: st.session.depth };
+    await this.ensureScene(st, key);
+    st.space = key;
+    st.selection.clear();
+    this.view.setState(st);
+    if (!st.cameras.has(key)) this.view.zoomExtents(false);
+    this.ui.refreshLayouts();
+    this.ui.refreshStatus();
+    this.ui.refreshPalette();
+    this.refreshSelectionOverlay();
+    return true;
+  }
+
+  /** 블록 편집기 닫기. save가 거짓이면 연 뒤의 변경을 되돌린다 */
+  async closeBlockEditor(save: boolean): Promise<void> {
+    const st = this.active;
+    const be = st?.blockEdit;
+    if (!st || !be) return;
+    this.cancel(true);
+    if (!save) while (st.session.depth > be.depth && st.session.undo());
+    await this.edits.flush(st);
+    st.blockEdit = null;
+    st.space = be.back;
+    st.scenes.get(be.key)?.dispose(this.view.renderer);
+    st.scenes.delete(be.key);
+    st.edits.get(be.key)?.overlay?.dispose(this.view.renderer);
+    st.edits.delete(be.key);
+    st.cameras.delete(be.key);
+    this.resetPicker(st, be.key);
+    st.selection.clear();
+    this.view.setState(st);
     this.ui.refreshLayouts();
     this.ui.refreshStatus();
     this.ui.refreshPalette();

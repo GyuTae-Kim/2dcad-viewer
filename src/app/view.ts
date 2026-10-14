@@ -480,6 +480,24 @@ export class CadView {
       g.strokeRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
     g.restore();
+    // 블록 편집기: 블록 기준점
+    const be = s?.blockEdit ? s.doc.blocks.get(s.blockEdit.key) : null;
+    if (be) {
+      const q = W(be.basePoint.x, be.basePoint.y);
+      g.save();
+      g.strokeStyle = dark ? 'rgba(255,120,120,0.95)' : 'rgba(200,40,40,0.95)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(q.x, q.y);
+      g.lineTo(q.x + 28, q.y);
+      g.moveTo(q.x, q.y);
+      g.lineTo(q.x, q.y - 28);
+      g.stroke();
+      g.fillStyle = g.strokeStyle;
+      g.font = '11px var(--font, sans-serif)';
+      g.fillText('기준점', q.x + 4, q.y + 13);
+      g.restore();
+    }
     // 추적 정렬선과 획득점
     if (o.tracks.length || o.acquired.length) {
       g.save();

@@ -680,6 +680,15 @@ export class Shell implements UiHooks {
     const st = app.active;
     this.layoutTabs.innerHTML = '';
     if (!st) return;
+    if (st.blockEdit) {
+      const be = st.blockEdit;
+      const close = h('button', { class: 'layouttab blockedit-close', title: '블록 편집기 닫기 (BCLOSE)' }, '블록 편집기 닫기');
+      close.addEventListener('click', () => void app.run('BCLOSE'));
+      const save = h('button', { class: 'layouttab', title: '블록 저장 (BSAVE)' }, '블록 저장');
+      save.addEventListener('click', () => void app.run('BSAVE'));
+      this.layoutTabs.append(h('span', { class: 'layouttab active blockedit-label' }, `블록 편집기: ${be.name}`), save, close);
+      return;
+    }
     for (const l of st.layouts) {
       const key = tableKey(l.blockName);
       const label = key === MODEL_SPACE ? '모형' : l.name;
@@ -777,7 +786,7 @@ export class Shell implements UiHooks {
     this.statusBtns.otrack?.classList.toggle('on', app.otrackOn);
     this.statusBtns.lw?.classList.toggle('on', app.view.lwDisplay);
     this.statusBtns.bg?.classList.toggle('on', app.view.modelBg === 0xffffff);
-    this.spaceLabel.textContent = st ? (st.isModel ? '모형' : `배치: ${st.layoutFor(st.space)?.name ?? ''}`) : '';
+    this.spaceLabel.textContent = st ? (st.blockEdit ? `블록 편집기: ${st.blockEdit.name}` : st.isModel ? '모형' : `배치: ${st.layoutFor(st.space)?.name ?? ''}`) : '';
     if (st) {
       const abbr = unitAbbr(st.units.insunits);
       this.unitLabel.textContent = abbr ? `단위: ${abbr}` : '단위 없음';

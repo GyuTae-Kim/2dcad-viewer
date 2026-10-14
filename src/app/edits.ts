@@ -6,7 +6,7 @@
 import type { Entity } from '../core/model';
 import { tableKey } from '../core/model';
 import { unitSettings } from '../core/units';
-import { type ChangeSummary, EditSession, type Transaction } from '../edit/session';
+import { type ChangeSummary, EditSession, type Transaction, isLayoutBlock } from '../edit/session';
 import type { App } from './app';
 import type { DocState } from './docstate';
 import { OverlayScene } from './scene';
@@ -48,6 +48,8 @@ export class EditManager {
     if (app.lastCreated.length > 50) app.lastCreated.splice(0, app.lastCreated.length - 50);
     const renderer = app.view.renderer;
     for (const [space, ch] of sum.spaces) {
+      // 블록 정의 안의 변경은 블록 편집기로 열려 있을 때만 덧그린다
+      if (!isLayoutBlock(space) && !st.scenes.has(space)) continue;
       const ed = st.spaceEdits(space);
       const base = st.scenes.get(space);
       const dead = this.deadOf(st, space);

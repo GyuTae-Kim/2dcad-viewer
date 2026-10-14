@@ -1367,3 +1367,12 @@ button.aci.on {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 블록 편집기 표시 */
+.layouttab.blockedit-label {
+  color: var(--accent, #4c9bff);
+  cursor: default;
+}
+.layouttab.blockedit-close {
+  color: #ffb44c;
+}
