@@ -4,6 +4,7 @@ import { formatAngle, formatLength, unitAbbr, unitName } from '../core/units';
 import { ccwSweep } from '../geom/curves';
 import type { App, CommandContext, PointResult } from './app';
 import { CancelError } from './app';
+import { type LayerPatch, patchLayers } from './layers';
 import { entityLength, entityProperties, hatchArea, polyArea, ringArea, ringPerimeter, typeName } from './inquiry';
 import type { Pt } from './view';
 import { dialog, h } from './ui/dom';
@@ -315,8 +316,7 @@ export function registerCommands(app: App): void {
     name: 'LAYON',
     title: '모든 도면층 켜기',
     run: (ctx) => {
-      for (const l of app.active!.layers.values()) l.on = true;
-      changedLayers(app);
+      patchLayers(app, 'LAYON', [...app.active!.doc.layers.values()].map((l) => [l.name, { off: false }]));
       ctx.print('모든 도면층을 켰습니다.');
     },
   });
@@ -324,8 +324,7 @@ export function registerCommands(app: App): void {
     name: 'LAYTHW',
     title: '모든 도면층 동결 해제',
     run: (ctx) => {
-      for (const l of app.active!.layers.values()) l.frozen = false;
-      changedLayers(app);
+      patchLayers(app, 'LAYTHW', [...app.active!.doc.layers.values()].map((l) => [l.name, { frozen: false }]));
       ctx.print('모든 도면층의 동결을 풀었습니다.');
     },
   });
@@ -336,9 +335,8 @@ export function registerCommands(app: App): void {
       const hs = await app.selectedOrPick(ctx, '격리할 도면층의 객체 선택:');
       const keep = new Set(hs.map((x) => tableKey(app.entity(x)?.layer ?? '')));
       const st = app.active!;
-      isoSaved.set(st.docId, new Map([...st.layers].map(([k, l]) => [k, l.on])));
-      for (const [k, l] of st.layers) l.on = keep.has(k);
-      changedLayers(app);
+      isoSaved.set(st.docId, new Map([...st.doc.layers].map(([k, l]) => [k, !l.off])));
+      patchLayers(app, 'LAYISO', [...st.doc.layers].map(([k, l]) => [l.name, { off: !keep.has(k) }]));
       app.clearSelection();
       ctx.print(`도면층 ${keep.size}개만 남기고 껐습니다. LAYUNISO로 되돌립니다.`);
     },
@@ -353,12 +351,8 @@ export function registerCommands(app: App): void {
         ctx.print('격리한 도면층이 없습니다.');
         return;
       }
-      for (const [k, on] of saved) {
-        const l = st.layers.get(k);
-        if (l) l.on = on;
-      }
+      patchLayers(app, 'LAYUNISO', [...saved].filter(([k]) => st.doc.layers.has(k)).map(([k, on]) => [st.doc.layers.get(k)!.name, { off: !on }]));
       isoSaved.delete(st.docId);
-      changedLayers(app);
       ctx.print('도면층 격리를 풀었습니다.');
     },
   });
@@ -409,12 +403,12 @@ export function changedLayers(app: App): void {
   app.ui.refreshPalette();
 }
 
-export function setLayer(app: App, name: string, change: { on?: boolean; frozen?: boolean }): void {
-  const l = app.active?.layers.get(tableKey(name));
-  if (!l) return;
-  if (change.on !== undefined) l.on = change.on;
-  if (change.frozen !== undefined) l.frozen = change.frozen;
-  changedLayers(app);
+export function setLayer(app: App, name: string, change: { on?: boolean; frozen?: boolean; locked?: boolean }): void {
+  const patch: LayerPatch = {};
+  if (change.on !== undefined) patch.off = !change.on;
+  if (change.frozen !== undefined) patch.frozen = change.frozen;
+  if (change.locked !== undefined) patch.locked = change.locked;
+  patchLayers(app, 'LAYER', [[name, patch]]);
 }
 
 export function zoomToHandles(app: App, hs: string[]): void {

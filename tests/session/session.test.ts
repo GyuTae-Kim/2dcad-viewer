@@ -94,12 +94,31 @@ describe('EditSession', () => {
         { kind: 'header', name: '$CLAYER', before: doc.header.get('$CLAYER'), after: 'WALL' },
       ],
     });
-    expect(log.at(-1)!.sum.tablesChanged).toBe(true);
+    // 도면층 상태만 바뀌면 다시 그리지 않고 스타일 표만 바꾼다
+    expect(log.at(-1)!.sum.layersChanged).toBe(true);
+    expect(log.at(-1)!.sum.tablesChanged).toBe(false);
     expect(doc.layers.get('0')!.frozen).toBe(true);
     expect(doc.header.get('$CLAYER')).toBe('WALL');
     s.undo();
     expect(doc.layers.get('0')).toBe(before);
     expect(doc.header.get('$CLAYER')).not.toBe('WALL');
+  });
+
+  it('도면층 선종류를 바꾸거나 새로 만들면 다시 그린다', () => {
+    const { doc, s, log } = setup();
+    const before = doc.layers.get('0')!;
+    s.commit({ label: 'L', ops: [{ kind: 'layer', key: '0', before, after: { ...before, linetype: 'DASHED' } }] });
+    expect(log.at(-1)!.sum.tablesChanged).toBe(true);
+    s.commit({ label: 'L', ops: [{ kind: 'layer', key: 'NEW', before: null, after: { ...before, name: 'NEW' } }] });
+    expect(log.at(-1)!.sum.tablesChanged).toBe(true);
+  });
+
+  it('블록 정의 안의 객체가 바뀌면 블록 변경으로 알린다', () => {
+    const { doc, s, log, line } = setup();
+    doc.blocks.set('B1', { ...doc.blocks.get('*MODEL_SPACE')!, name: 'B1', entities: [] });
+    s.commit({ label: 'B', ops: [{ kind: 'add', block: 'B1', entity: line(0) }] });
+    expect(log.at(-1)!.sum.blocksChanged).toBe(true);
+    expect(log.at(-1)!.sum.spaces.size).toBe(0);
   });
 
   it('객체가 들어 있는 블록을 찾는다', () => {

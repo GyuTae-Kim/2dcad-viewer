@@ -3,7 +3,13 @@ import type { App, UiHooks } from '../app';
 import { MODEL_SPACE, tableKey } from '../../core/model';
 import { unitAbbr } from '../../core/units';
 import { ALL_SNAPS, SNAP_NAMES } from '../snap';
-import { Palette } from './palettes';
+import { Palette, colorToHeader, currentColor } from './palettes';
+import type { CadColor, Entity } from '../../core/model';
+import { aciToRgb, rgbToCss } from '../../core/color';
+import { colorText } from '../inquiry';
+import { type Field, GENERAL_FIELDS, applyField, commonValue } from '../propedit';
+import { currentLayer, setCurrentLayer } from '../layers';
+import { pickColor } from './colorpick';
 import { dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
 import { icon } from './icons';
 import { RecentStore } from '../recent';
@@ -22,6 +28,8 @@ interface Panel {
   title: string;
   large?: Btn[];
   cols?: Btn[][];
+  /** 리본 안의 고르기 상자(현재 도면층, 색·선종류·선가중치) */
+  custom?: 'layer' | 'props';
 }
 
 const RIBBON: { tab: string; panels: Panel[] }[] = [
@@ -29,8 +37,104 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
     tab: '홈',
     panels: [
       {
+        title: '그리기',
+        large: [
+          { cmd: 'LINE', label: '선', icon: 'line', tip: '선 (L)' },
+          { cmd: 'PLINE', label: '폴리선', icon: 'pline', tip: '폴리선 (PL)' },
+          {
+            cmd: 'CIRCLE',
+            label: '원',
+            icon: 'circle',
+            tip: '원 (C)',
+            menu: [
+              { label: '중심, 반지름', cmd: 'CIRCLE', icon: 'circle' },
+              { label: '3점', cmd: 'CIRCLE 3P', icon: 'circle' },
+              { label: '2점', cmd: 'CIRCLE 2P', icon: 'circle' },
+            ],
+          },
+          {
+            cmd: 'ARC',
+            label: '호',
+            icon: 'arc',
+            tip: '호 (A)',
+            menu: [
+              { label: '3점', cmd: 'ARC', icon: 'arc' },
+              { label: '중심, 시작점, 끝점', cmd: 'ARC C', icon: 'arc' },
+            ],
+          },
+        ],
+        cols: [
+          [
+            { cmd: 'RECTANG', label: '직사각형', icon: 'rect', tip: '직사각형 (REC)' },
+            { cmd: 'POLYGON', label: '폴리곤', icon: 'polygon', tip: '정다각형 (POL)' },
+            { cmd: 'ELLIPSE', label: '타원', icon: 'ellipse', tip: '타원 (EL)' },
+          ],
+          [
+            { cmd: 'SPLINE', label: '스플라인', icon: 'spline', tip: '스플라인 (SPL)' },
+            { cmd: 'HATCH', label: '해치', icon: 'hatch', tip: '해치 (H)' },
+            { cmd: 'POINT', label: '점', icon: 'point', tip: '점 (PO)' },
+          ],
+          [
+            { cmd: 'XLINE', label: '구성선', icon: 'xline', tip: '구성선 (XL)' },
+            { cmd: 'RAY', label: '광선', icon: 'ray' },
+            { cmd: 'DONUT', label: '도넛', icon: 'donut', tip: '도넛 (DO)' },
+          ],
+        ],
+      },
+      {
+        title: '수정',
+        cols: [
+          [
+            { cmd: 'MOVE', label: '이동', icon: 'move', tip: '이동 (M)' },
+            { cmd: 'COPY', label: '복사', icon: 'copy', tip: '복사 (CO)' },
+            { cmd: 'STRETCH', label: '신축', icon: 'stretch', tip: '신축 (S)' },
+          ],
+          [
+            { cmd: 'ROTATE', label: '회전', icon: 'rotate', tip: '회전 (RO)' },
+            { cmd: 'MIRROR', label: '대칭', icon: 'mirror', tip: '대칭 (MI)' },
+            { cmd: 'SCALE', label: '축척', icon: 'scale', tip: '축척 (SC)' },
+          ],
+          [
+            { cmd: 'TRIM', label: '자르기', icon: 'trim', tip: '자르기 (TR)' },
+            { cmd: 'EXTEND', label: '연장', icon: 'extend', tip: '연장 (EX)' },
+            { cmd: 'OFFSET', label: '간격띄우기', icon: 'offset', tip: '간격띄우기 (O)' },
+          ],
+          [
+            { cmd: 'FILLET', label: '모깎기', icon: 'fillet', tip: '모깎기 (F)' },
+            { cmd: 'CHAMFER', label: '모따기', icon: 'chamfer', tip: '모따기 (CHA)' },
+            {
+              cmd: 'ARRAYRECT',
+              label: '배열',
+              icon: 'arrayRect',
+              tip: '배열 (AR)',
+              menu: [
+                { label: '직사각형 배열', cmd: 'ARRAYRECT', icon: 'arrayRect' },
+                { label: '원형 배열', cmd: 'ARRAYPOLAR', icon: 'arrayPolar' },
+              ],
+            },
+          ],
+          [
+            { cmd: 'ERASE', label: '지우기', icon: 'erase', tip: '지우기 (E, Delete)' },
+            { cmd: 'EXPLODE', label: '분해', icon: 'explode', tip: '분해 (X)' },
+            { cmd: 'JOIN', label: '결합', icon: 'join', tip: '결합 (J)' },
+          ],
+        ],
+      },
+      {
+        title: '주석',
+        large: [{ cmd: 'MTEXT', label: '문자', icon: 'mtext', tip: '여러 줄 문자 (MT)' }],
+        cols: [
+          [
+            { cmd: 'DIMLINEAR', label: '선형 치수', icon: 'dimLinear', tip: '선형 치수 (DLI)' },
+            { cmd: 'MLEADER', label: '지시선', icon: 'leader', tip: '다중 지시선 (MLD)' },
+            { cmd: 'TEXT', label: '단일 행', icon: 'text', tip: '단일 행 문자 (DT)' },
+          ],
+        ],
+      },
+      {
         title: '도면층',
-        large: [{ cmd: 'LAYER', label: '도면층 특성', icon: 'layers', tip: '도면층 목록에서 켜기·끄기·동결을 바꿉니다 (LA)' }],
+        large: [{ cmd: 'LAYER', label: '도면층 특성', icon: 'layers', tip: '도면층 목록에서 켜기·동결·잠금·색을 바꿉니다 (LA)' }],
+        custom: 'layer',
         cols: [
           [
             { cmd: 'LAYOFF', label: '끄기', icon: 'layerOff', tip: '고른 객체의 도면층을 끕니다' },
@@ -43,6 +147,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'LAYUNISO', label: '격리 해제', icon: 'layers' },
           ],
         ],
+      },
+      {
+        title: '특성',
+        large: [{ cmd: 'MATCHPROP', label: '특성 일치', icon: 'matchprop', tip: '한 객체의 특성을 다른 객체에 복사합니다 (MA)' }],
+        custom: 'props',
       },
       {
         title: '유틸리티',
@@ -68,25 +177,42 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           ],
         ],
       },
-      { title: '특성', large: [{ cmd: 'PROPERTIES', label: '특성', icon: 'props', tip: 'Ctrl+1' }] },
-      {
-        title: '뷰',
-        large: [{ cmd: 'ZOOMEXTENTS', label: '범위', icon: 'extents', tip: '도면 전체 보기 (휠 두 번 클릭)' }],
-        cols: [
-          [
-            { cmd: 'ZOOM W', label: '윈도우', icon: 'zoomWindow' },
-            { cmd: 'ZOOMPREVIOUS', label: '이전', icon: 'zoomPrev' },
-            { cmd: 'PAN', label: '초점이동', icon: 'pan' },
-          ],
-        ],
-      },
     ],
   },
   {
     tab: '주석',
     panels: [
-      { title: '치수', large: [{ cmd: 'DIMLIST', label: '치수 목록', icon: 'dimlist', tip: '도면의 치수와 실제 측정값을 비교합니다' }] },
-      { title: '문자', large: [{ cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' }] },
+      {
+        title: '문자',
+        large: [{ cmd: 'MTEXT', label: '여러 줄 문자', icon: 'mtext', tip: '여러 줄 문자 (MT)' }],
+        cols: [
+          [
+            { cmd: 'TEXT', label: '단일 행', icon: 'text', tip: '단일 행 문자 (DT)' },
+            { cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' },
+            { cmd: 'STYLE', label: '문자 스타일', icon: 'text', tip: '문자 스타일 (ST)' },
+          ],
+        ],
+      },
+      {
+        title: '치수',
+        large: [{ cmd: 'DIMLINEAR', label: '선형', icon: 'dimLinear', tip: '선형 치수 (DLI)' }],
+        cols: [
+          [
+            { cmd: 'DIMALIGNED', label: '정렬', icon: 'dimAligned', tip: '정렬 치수 (DAL)' },
+            { cmd: 'DIMANGULAR', label: '각도', icon: 'dimAngular', tip: '각도 치수 (DAN)' },
+            { cmd: 'DIMRADIUS', label: '반지름', icon: 'dimRadius', tip: '반지름 치수 (DRA)' },
+          ],
+          [
+            { cmd: 'DIMDIAMETER', label: '지름', icon: 'dimDiameter', tip: '지름 치수 (DDI)' },
+            { cmd: 'DIMSTYLE', label: '치수 스타일', icon: 'dimLinear', tip: '치수 스타일 (D)' },
+            { cmd: 'DIMLIST', label: '치수 목록', icon: 'dimlist', tip: '도면의 치수와 실제 측정값을 비교합니다' },
+          ],
+        ],
+      },
+      {
+        title: '지시선',
+        large: [{ cmd: 'MLEADER', label: '다중 지시선', icon: 'leader', tip: '다중 지시선 (MLD)' }],
+      },
     ],
   },
   {
@@ -208,6 +334,11 @@ export class Shell implements UiHooks {
     this.app = app;
     // 좁은 화면에서는 리본을 접어 두고 탭을 누르면 펼친다
     if (window.innerWidth < 760) this.ribbon.classList.add('collapsed');
+    let rt = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(rt);
+      rt = window.setTimeout(() => this.buildRibbon(), 150);
+    });
     this.palette = new Palette(app, this.workspace);
     this.buildTitle();
     this.buildRibbon();
@@ -242,8 +373,12 @@ export class Shell implements UiHooks {
     appBtn.addEventListener('click', () => {
       const r = appBtn.getBoundingClientRect();
       showMenu(r.left, r.bottom + 2, [
+        { label: '새로 만들기', icon: 'new', kbd: 'Ctrl+N', run: () => void app.run('NEW') },
         { label: '열기…', icon: 'open', kbd: 'Ctrl+O', run: () => this.pickFiles() },
         { label: '예제 도면 열기', icon: 'sample', run: () => void this.openSample() },
+        { separator: true },
+        { label: '저장', icon: 'save', kbd: 'Ctrl+S', disabled: !app.active, run: () => void app.run('QSAVE') },
+        { label: '다른 이름으로 저장…', icon: 'save', kbd: 'Ctrl+Shift+S', disabled: !app.active, run: () => void app.run('SAVEAS') },
         { separator: true },
         { label: 'PNG로 내보내기', icon: 'exportPng', disabled: !app.active, run: () => void app.run('PNGOUT') },
         { label: 'SVG로 내보내기', icon: 'exportSvg', disabled: !app.active, run: () => void app.run('SVGOUT') },
@@ -259,8 +394,11 @@ export class Shell implements UiHooks {
     const qat = h(
       'div',
       { class: 'qat' },
+      this.iconBtn('new', '새 도면 (Ctrl+N)', () => void app.run('NEW')),
       this.iconBtn('open', '열기 (Ctrl+O)', () => this.pickFiles()),
-      this.iconBtn('exportPng', 'PNG로 저장', () => void app.run('PNGOUT')),
+      this.iconBtn('save', '저장 (Ctrl+S)', () => void app.run('QSAVE')),
+      this.iconBtn('undo', '명령 취소 (Ctrl+Z)', () => void app.run('U')),
+      this.iconBtn('redo', '다시 실행 (Ctrl+Y)', () => void app.run('REDO')),
       this.iconBtn('print', 'PDF로 인쇄 (Ctrl+P)', () => void app.run('PLOT')),
     );
     const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' 2D 뷰어');
@@ -292,13 +430,177 @@ export class Shell implements UiHooks {
     });
     this.ribbon.innerHTML = '';
     const tab = RIBBON[this.activeTab]!;
-    for (const p of tab.panels) {
-      const body = h('div', { class: 'rpanel-body' });
-      for (const b of p.large ?? []) body.append(this.ribbonButton(b, true));
-      for (const col of p.cols ?? []) body.append(h('div', { class: 'rbtn-col' }, ...col.map((b) => this.ribbonButton(b, false))));
-      this.ribbon.append(h('div', { class: 'rpanel' }, body, h('div', { class: 'rpanel-title' }, p.title)));
+    this.combos = null;
+    const els = tab.panels.map((p) => {
+      const el = this.panelElement(p);
+      this.ribbon.append(el);
+      return el;
+    });
+    // 자리가 모자라면 오른쪽 패널부터 단추 하나로 접는다
+    for (let i = tab.panels.length - 1; i > 0 && this.ribbon.scrollWidth > this.ribbon.clientWidth + 1; i--) {
+      const p = tab.panels[i]!;
+      const folded = this.foldedPanel(p);
+      els[i]!.replaceWith(folded);
+      // 접힌 패널의 고르기 상자는 펼칠 때 다시 만든다
+      const cb = this.combos as Shell['combos'];
+      if (cb && p.custom === 'layer') delete cb.layer;
+      if (cb && p.custom === 'props') {
+        delete cb.color;
+        delete cb.linetype;
+        delete cb.lineweight;
+      }
     }
     this.refreshRibbonState();
+  }
+
+  private panelBody(p: Panel): HTMLDivElement {
+    const body = h('div', { class: 'rpanel-body' });
+    for (const b of p.large ?? []) body.append(this.ribbonButton(b, true));
+    if (p.custom === 'layer') body.append(this.layerCombo());
+    if (p.custom === 'props') body.append(this.propCombos());
+    for (const col of p.cols ?? []) body.append(h('div', { class: 'rbtn-col' }, ...col.map((b) => this.ribbonButton(b, false))));
+    return body;
+  }
+
+  private panelElement(p: Panel): HTMLDivElement {
+    return h('div', { class: 'rpanel' }, this.panelBody(p), h('div', { class: 'rpanel-title' }, p.title));
+  }
+
+  /** 접힌 패널: 누르면 패널 내용을 아래로 펼친다 */
+  private foldedPanel(p: Panel): HTMLDivElement {
+    const ic = p.large?.[0]?.icon ?? p.cols?.[0]?.[0]?.icon ?? 'menu';
+    const btn = h('button', { class: 'rbtn-lg folded', title: `${p.title} 패널 펼치기`, 'aria-haspopup': 'true' }, iconSpan(ic), h('span', {}, `${p.title} ▾`));
+    btn.addEventListener('click', () => {
+      document.querySelector('.ribbon-pop')?.remove();
+      const pop = h('div', { class: 'ribbon-pop', role: 'dialog', 'aria-label': p.title }, this.panelBody(p), h('div', { class: 'rpanel-title' }, p.title));
+      document.body.append(pop);
+      const r = btn.getBoundingClientRect();
+      const pr = pop.getBoundingClientRect();
+      pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - pr.width - 4))}px`;
+      pop.style.top = `${r.bottom + 2}px`;
+      this.refreshRibbonState();
+      const off = (ev: Event) => {
+        const t = ev.target as Node;
+        if (pop.contains(t) && !(t as HTMLElement).closest?.('button.rbtn-lg, button.rbtn-sm')) return;
+        if (btn.contains(t)) return;
+        setTimeout(() => pop.remove(), 0);
+        window.removeEventListener('pointerdown', off, true);
+        window.removeEventListener('click', off, true);
+      };
+      setTimeout(() => {
+        window.addEventListener('pointerdown', off, true);
+        window.addEventListener('click', off, true);
+      });
+    });
+    return h('div', { class: 'rpanel' }, h('div', { class: 'rpanel-body' }, btn), h('div', { class: 'rpanel-title' }, p.title));
+  }
+
+  /** 리본의 고르기 상자들 */
+  combos: { layer?: HTMLSelectElement; color?: HTMLButtonElement; linetype?: HTMLSelectElement; lineweight?: HTMLSelectElement } | null = null;
+
+  private layerCombo(): HTMLElement {
+    const sel = h('select', { 'aria-label': '도면층', title: '현재 도면층 (객체를 고르면 그 객체의 도면층)' }) as HTMLSelectElement;
+    sel.addEventListener('change', () => {
+      const app = this.app;
+      const st = app.active;
+      if (!st || !sel.value) return;
+      if (st.selection.size) applyField(app, [...st.selection], GENERAL_FIELDS[0]!, sel.value);
+      else setCurrentLayer(app, sel.value);
+      this.refreshRibbonState();
+    });
+    this.combos = { ...(this.combos ?? {}), layer: sel };
+    return h('div', { class: 'rprop-col' }, h('label', { class: 'rprop' }, iconSpan('layers'), sel));
+  }
+
+  private propCombos(): HTMLElement {
+    const app = this.app;
+    const color = h('button', { class: 'rprop-color', 'aria-label': '색', title: '색 (객체를 고르면 그 객체의 색)' }) as HTMLButtonElement;
+    color.addEventListener('click', async () => {
+      const st = app.active;
+      if (!st) return;
+      const sel = [...st.selection].map((x) => st.doc.entityIndex.get(x)).filter((e): e is Entity => !!e);
+      const cur = sel.length ? commonValue(GENERAL_FIELDS[1]!, sel).value as CadColor | undefined : currentColor(st.doc);
+      const c = await pickColor(cur ?? { aci: 256 }, { allowBy: true });
+      if (!c) return;
+      if (sel.length) applyField(app, sel.map((e) => e.handle), GENERAL_FIELDS[1]!, c);
+      else this.setHeader('$CECOLOR', colorToHeader(c));
+      this.refreshRibbonState();
+    });
+    const lt = h('select', { 'aria-label': '선종류', title: '선종류' }) as HTMLSelectElement;
+    lt.addEventListener('change', () => {
+      const st = app.active;
+      if (!st || !lt.value) return;
+      if (st.selection.size) applyField(app, [...st.selection], GENERAL_FIELDS[2]!, lt.value);
+      else this.setHeader('$CELTYPE', lt.value);
+    });
+    const lw = h('select', { 'aria-label': '선가중치', title: '선가중치' }) as HTMLSelectElement;
+    lw.addEventListener('change', () => {
+      const st = app.active;
+      if (!st || !lw.value) return;
+      if (st.selection.size) applyField(app, [...st.selection], GENERAL_FIELDS[4]!, lw.value);
+      else this.setHeader('$CELWEIGHT', Number(lw.value));
+    });
+    this.combos = { ...(this.combos ?? {}), color, linetype: lt, lineweight: lw };
+    return h(
+      'div',
+      { class: 'rprop-col' },
+      h('div', { class: 'rprop' }, iconSpan('background'), color),
+      h('label', { class: 'rprop' }, iconSpan('dimlist'), lt),
+      h('label', { class: 'rprop' }, iconSpan('lineweight'), lw),
+    );
+  }
+
+  private setHeader(name: string, after: string | number): void {
+    const st = this.app.active;
+    if (!st) return;
+    const before = st.doc.header.get(name);
+    if (before === after) return;
+    st.session.commit({ label: 'SETVAR', ops: [{ kind: 'header', name, before, after }] });
+  }
+
+  /** 리본 고르기 상자에 지금 값(고른 객체가 있으면 그 값)을 보인다 */
+  private refreshCombos(): void {
+    const c = this.combos;
+    const st = this.app?.active;
+    if (!c) return;
+    const fill = (sel: HTMLSelectElement, opts: { value: string; label: string }[], value: string | undefined, varies: boolean) => {
+      const key = JSON.stringify(opts) + String(varies);
+      if (sel.dataset.key !== key) {
+        sel.innerHTML = '';
+        if (varies) sel.append(h('option', { value: '' }, '*여러 개*'));
+        for (const o of opts) sel.append(h('option', { value: o.value }, o.label));
+        sel.dataset.key = key;
+      }
+      const m = opts.find((o) => o.value.toUpperCase() === (value ?? '').toUpperCase());
+      sel.value = varies ? '' : (m?.value ?? '');
+    };
+    for (const el of [c.layer, c.color, c.linetype, c.lineweight]) if (el) el.disabled = !st;
+    if (!st) {
+      if (c.color) c.color.textContent = '';
+      return;
+    }
+    const sel = [...st.selection].map((x) => st.doc.entityIndex.get(x)).filter((e): e is Entity => !!e);
+    const pick = (f: Field, cur: unknown) => (sel.length ? commonValue(f, sel) : { value: cur, varies: false });
+    const hdr = st.doc.header;
+    if (c.layer) {
+      const v = pick(GENERAL_FIELDS[0]!, currentLayer(this.app));
+      fill(c.layer, GENERAL_FIELDS[0]!.options!(st.doc), v.value as string | undefined, v.varies);
+    }
+    if (c.color) {
+      const v = pick(GENERAL_FIELDS[1]!, currentColor(st.doc));
+      const col = v.value as CadColor | undefined;
+      const rgb = col ? (col.rgb !== undefined && col.aci !== 0 && col.aci !== 256 ? col.rgb : col.aci > 0 && col.aci < 256 ? aciToRgb(col.aci, true) : null) : null;
+      c.color.innerHTML = '';
+      c.color.append(h('span', { class: 'swatch', style: rgb === null ? 'background:transparent' : `background:${rgbToCss(rgb)}` }), v.varies ? '*여러 개*' : col ? colorText(col) : '');
+    }
+    if (c.linetype) {
+      const v = pick(GENERAL_FIELDS[2]!, String(hdr.get('$CELTYPE') ?? 'ByLayer'));
+      fill(c.linetype, GENERAL_FIELDS[2]!.options!(st.doc), v.value as string | undefined, v.varies);
+    }
+    if (c.lineweight) {
+      const v = pick(GENERAL_FIELDS[4]!, String(hdr.get('$CELWEIGHT') ?? -1));
+      fill(c.lineweight, GENERAL_FIELDS[4]!.options!(st.doc), v.value as string | undefined, v.varies);
+    }
   }
 
   private ribbonButton(b: Btn, large: boolean): HTMLButtonElement {
@@ -326,11 +628,14 @@ export class Shell implements UiHooks {
 
   private refreshRibbonState(): void {
     const has = !!this.app?.active;
-    for (const el of this.ribbon.querySelectorAll<HTMLButtonElement>('button[data-cmd]')) {
-      el.disabled = !has && !el.dataset.nodoc;
-      const c = el.dataset.cmd;
+    for (const el of document.querySelectorAll<HTMLButtonElement>('.ribbon button[data-cmd], .ribbon-pop button[data-cmd]')) {
+      const c = el.dataset.cmd ?? '';
+      const known = !c || !!this.app?.findCommand(c.split(' ')[0]!);
+      el.disabled = (!has && !el.dataset.nodoc) || !known;
+      if (!known) el.title = `${el.title.replace(/ — 준비 중$/, '')} — 준비 중`;
       if (c === 'LWDISPLAY') el.classList.toggle('on', this.app.view.lwDisplay);
     }
+    this.refreshCombos();
   }
 
   // -------------------------------------------------------------------------
@@ -349,7 +654,8 @@ export class Shell implements UiHooks {
         ev.stopPropagation();
         app.close(d);
       });
-      const t = h('div', { class: `filetab ${app.active === d ? 'active' : ''}`, role: 'tab', title: `${d.name} (${formatBytes(d.size)})` }, h('span', {}, d.name), x);
+      const dirty = d.session?.dirty;
+      const t = h('div', { class: `filetab ${app.active === d ? 'active' : ''}`, role: 'tab', title: `${d.saveName}${d.size ? ` (${formatBytes(d.size)})` : ''}${dirty ? ' · 저장하지 않은 변경 있음' : ''}` }, h('span', {}, `${d.saveName}${dirty ? ' *' : ''}`), x);
       t.addEventListener('click', () => app.activate(d));
       t.addEventListener('auxclick', (ev) => {
         if ((ev as MouseEvent).button === 1) app.close(d);

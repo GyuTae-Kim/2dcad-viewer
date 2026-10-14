@@ -195,3 +195,62 @@ export function unitAbbr(insunits: number): string {
 export function unitName(insunits: number): string {
   return INSUNITS_NAMES[insunits]?.name ?? `코드 ${insunits}`;
 }
+
+/**
+ * 길이 입력 읽기: 소수(12.5, 1.25E+01), 분수(12 1/2), 피트-인치(1'-2.5", 1'2-1/2", 3', 4").
+ * 읽지 못하면 null.
+ */
+export function parseLength(s: string): number | null {
+  const t = s.trim().replace(/\s+/g, ' ');
+  if (!t) return null;
+  if (/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) return Number(t);
+  const frac = (x: string): number | null => {
+    const m = /^(\d+(?:\.\d+)?)?(?:[ -]?(\d+)\/(\d+))?$/.exec(x.trim());
+    if (!m || (!m[1] && !m[2])) return null;
+    const whole = m[1] ? Number(m[1]) : 0;
+    const f = m[2] ? Number(m[2]) / Number(m[3]) : 0;
+    return Number.isFinite(f) ? whole + f : null;
+  };
+  let neg = false;
+  let body = t;
+  if (body.startsWith('-')) {
+    neg = true;
+    body = body.slice(1).trim();
+  }
+  const ft = /^(\d+(?:\.\d+)?)'\s*-?\s*(.*?)"?$/.exec(body);
+  if (ft) {
+    const feet = Number(ft[1]);
+    const inch = ft[2] ? frac(ft[2]) : 0;
+    if (inch === null) return null;
+    const v = feet * 12 + inch;
+    return neg ? -v : v;
+  }
+  const inch = /^(.*?)"$/.exec(body);
+  const v = frac(inch ? inch[1]! : body);
+  if (v === null) return null;
+  return neg ? -v : v;
+}
+
+/**
+ * 각도 입력 읽기(라디안으로). 단위 표시가 없으면 aunits를 따른다(0·1·4 도, 2 그라드, 3 라디안).
+ * 45, 45d30'15", 45°, 50g, 0.7854r 형식.
+ */
+export function parseAngle(s: string, aunits = 0): number | null {
+  const t = s.trim().replace(/\s+/g, '');
+  if (!t) return null;
+  const DEG = Math.PI / 180;
+  let m = /^([-+]?\d*\.?\d+)(g|r)$/i.exec(t);
+  if (m) return m[2]!.toLowerCase() === 'g' ? (Number(m[1]) * Math.PI) / 200 : Number(m[1]);
+  m = /^([-+])?(\d*\.?\d+)(?:d|°)(?:(\d*\.?\d+)')?(?:(\d*\.?\d+)")?$/i.exec(t);
+  if (m) {
+    const v = Number(m[2]) + (m[3] ? Number(m[3]) / 60 : 0) + (m[4] ? Number(m[4]) / 3600 : 0);
+    return (m[1] === '-' ? -v : v) * DEG;
+  }
+  if (/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) {
+    const v = Number(t);
+    if (aunits === 2) return (v * Math.PI) / 200;
+    if (aunits === 3) return v;
+    return v * DEG;
+  }
+  return null;
+}

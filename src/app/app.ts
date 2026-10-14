@@ -16,7 +16,7 @@ import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, entitySnaps, findSnap } from './snap';
 import { identity } from '../geom/matrix';
-import { closeMenu, showMenu, toast } from './ui/dom';
+import { ask, closeMenu, showMenu, toast } from './ui/dom';
 import { EditManager } from './edits';
 import type { EditOp } from '../edit/session';
 
@@ -160,7 +160,9 @@ export class App {
       for (const d of this.docs) for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
     };
     window.addEventListener('keydown', (ev) => this.onKey(ev));
-    window.addEventListener('beforeunload', () => undefined);
+    window.addEventListener('beforeunload', (ev) => {
+      if (this.docs.some((d) => d.session?.dirty)) ev.preventDefault();
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -537,7 +539,26 @@ export class App {
     document.title = st ? `${st.name} - OpenCAD 2D 뷰어` : 'OpenCAD 2D 뷰어';
   }
 
-  close(st: DocState): void {
+  /** 문서 닫기(저장하지 않은 변경이 있으면 먼저 묻는다) */
+  async close(st: DocState, force = false): Promise<boolean> {
+    if (!force && st.session?.dirty) {
+      const answer = await ask(`${st.saveName}`, '저장하지 않은 변경이 있습니다. 닫기 전에 저장할까요?', [
+        { label: '저장', value: 'save', primary: true },
+        { label: '저장 안 함', value: 'discard' },
+        { label: '취소', value: 'cancel' },
+      ]);
+      if (answer === 'cancel' || answer === null) return false;
+      if (answer === 'save') {
+        this.activate(st);
+        await this.run('QSAVE');
+        if (st.session.dirty) return false;
+      }
+    }
+    this.closeNow(st);
+    return true;
+  }
+
+  private closeNow(st: DocState): void {
     const i = this.docs.indexOf(st);
     if (i < 0) return;
     this.docs.splice(i, 1);
@@ -928,6 +949,19 @@ export class App {
         this.toggleOrtho();
         return;
     }
+    if (mod && ev.shiftKey && !ev.altKey) {
+      const k = ev.key.toLowerCase();
+      if (k === 'z' && !typing) {
+        ev.preventDefault();
+        void this.run('REDO');
+        return;
+      }
+      if (k === 's') {
+        ev.preventDefault();
+        void this.run('SAVEAS');
+        return;
+      }
+    }
     if (mod && !ev.shiftKey && !ev.altKey) {
       const k = ev.key.toLowerCase();
       if (k === 'o') {
@@ -948,6 +982,21 @@ export class App {
       if (k === 'y' && !typing) {
         ev.preventDefault();
         void this.run('REDO');
+        return;
+      }
+      if (k === 'n') {
+        ev.preventDefault();
+        void this.run('NEW');
+        return;
+      }
+      if ((k === 'c' || k === 'x') && !typing && this.active?.selection.size) {
+        ev.preventDefault();
+        void this.run(k === 'c' ? 'COPYCLIP' : 'CUTCLIP');
+        return;
+      }
+      if (k === 'v' && !typing) {
+        ev.preventDefault();
+        void this.run('PASTECLIP');
         return;
       }
       if (k === 's') {
@@ -994,7 +1043,11 @@ export class App {
       else if (this.lastCommand) void this.run(this.lastCommand);
       return;
     }
-    if (ev.key === 'Delete' && !this.request) return;
+    if (ev.key === 'Delete' || (ev.key === 'Backspace' && !this.request)) {
+      ev.preventDefault();
+      if (!this.request && this.active?.selection.size) void this.run('ERASE');
+      return;
+    }
     // 글자는 명령행으로
     if (ev.key.length === 1 && !mod && !ev.altKey && ev.key !== ' ') {
       ev.preventDefault();

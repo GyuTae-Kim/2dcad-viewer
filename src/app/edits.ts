@@ -14,6 +14,8 @@ const REBUILD_DELAY = 1200;
 
 export class EditManager {
   private timers = new Map<DocState, number>();
+  /** 다음 다시 그리기 때 모든 공간을 다시 그릴 문서 */
+  private readonly rebuildAll = new Set<DocState>();
   /** 공간별 지운 객체 → 지운 세대(다시 그리기 사이에 지운 것을 가리기 위해) */
   private readonly dead = new WeakMap<DocState, Map<string, Map<string, number>>>();
 
@@ -62,10 +64,10 @@ export class EditManager {
       }
       this.rebuildOverlay(st, space, [...ch.removed, ...ch.changed.map((e) => e.handle)]);
     }
-    if (sum.tablesChanged) this.syncLayers(st);
+    if (sum.tablesChanged || sum.layersChanged) this.syncLayers(st);
     // 지워진 객체는 선택에서 뺀다
     for (const h of [...st.selection]) if (!st.doc.entityIndex.has(h)) st.selection.delete(h);
-    this.schedule(st, sum.blocksChanged || sum.tablesChanged);
+    if (sum.spaces.size || sum.blocksChanged || sum.tablesChanged) this.schedule(st, sum.blocksChanged || sum.tablesChanged);
     app.view.requestRender();
     app.refreshSelectionOverlay();
     app.ui.refreshPalette();
@@ -113,11 +115,13 @@ export class EditManager {
   /** 편집이 멈추면 바뀐 공간을 다시 그린다 */
   private schedule(st: DocState, all: boolean): void {
     clearTimeout(this.timers.get(st));
+    if (all) this.rebuildAll.add(st);
     this.timers.set(
       st,
       window.setTimeout(() => {
         this.timers.delete(st);
-        const spaces = all ? [...st.scenes.keys()] : [...st.edits.entries()].filter(([, e]) => e.live.size || e.hidden.size).map(([k]) => k);
+        const everything = this.rebuildAll.delete(st);
+        const spaces = everything ? [...st.scenes.keys()] : [...st.edits.entries()].filter(([, e]) => e.live.size || e.hidden.size).map(([k]) => k);
         for (const sp of spaces) void this.rebuild(st, sp);
       }, REBUILD_DELAY),
     );
@@ -157,6 +161,7 @@ export class EditManager {
   detach(st: DocState): void {
     clearTimeout(this.timers.get(st));
     this.timers.delete(st);
+    this.rebuildAll.delete(st);
     this.app.engine.closeDoc(st.docId);
   }
 }

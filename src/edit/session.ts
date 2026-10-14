@@ -35,8 +35,10 @@ export interface ChangeSummary {
   spaces: Map<string, { removed: Set<string>; changed: Entity[] }>;
   /** 블록 정의가 바뀌었으면(블록 참조 다시 그리기 필요) */
   blocksChanged: boolean;
-  /** 도면층·선종류·스타일이 바뀌었으면 */
+  /** 선종류·문자 스타일·치수 스타일이 바뀌었거나 도면층이 생기고 없어졌으면(다시 그리기 필요) */
   tablesChanged: boolean;
+  /** 도면층 상태(켜기·동결·색 등)가 바뀌었으면(스타일 표만 다시 만들면 된다) */
+  layersChanged: boolean;
 }
 
 function invert(op: EditOp): EditOp {
@@ -72,6 +74,11 @@ function indexEntity(doc: CadDocument, e: Entity, on: boolean): void {
 export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: ChangeSummary): void {
   const space = (key: string) => {
     if (!summary) return null;
+    // 블록 정의 안의 객체가 바뀌면 그 블록을 참조하는 곳을 다시 그려야 한다
+    if (!isLayoutBlock(key)) {
+      summary.blocksChanged = true;
+      return null;
+    }
     let s = summary.spaces.get(key);
     if (!s) {
       s = { removed: new Set(), changed: [] };
@@ -117,7 +124,11 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
       case 'layer':
         if (op.after) doc.layers.set(op.key, op.after);
         else doc.layers.delete(op.key);
-        if (summary) summary.tablesChanged = true;
+        if (summary) {
+          summary.layersChanged = true;
+          // 선종류가 바뀌거나 도면층이 생기고 없어지면 선 무늬를 다시 만들어야 한다
+          if (!op.before || !op.after || op.before.linetype !== op.after.linetype) summary.tablesChanged = true;
+        }
         break;
       case 'linetype':
         if (op.after) doc.linetypes.set(op.key, op.after);
@@ -151,8 +162,13 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
   }
 }
 
+/** 모형·배치 공간 블록인지 */
+export function isLayoutBlock(key: string): boolean {
+  return /^\*(MODEL|PAPER)_SPACE/i.test(key);
+}
+
 export function emptySummary(): ChangeSummary {
-  return { spaces: new Map(), blocksChanged: false, tablesChanged: false };
+  return { spaces: new Map(), blocksChanged: false, tablesChanged: false, layersChanged: false };
 }
 
 /** 객체가 들어 있는 블록 키 */

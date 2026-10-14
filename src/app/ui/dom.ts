@@ -149,3 +149,29 @@ export function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** 버튼을 고르게 하는 질문 상자(닫으면 null) */
+export function ask<T extends string>(title: string, text: string, buttons: { label: string; value: T; primary?: boolean }[]): Promise<T | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const back = dialog(
+      title,
+      h('div', {}, text),
+      buttons.map((b) => ({
+        label: b.label,
+        primary: b.primary,
+        run: () => {
+          done = true;
+          resolve(b.value);
+        },
+      })),
+    );
+    const obs = new MutationObserver(() => {
+      if (!back.isConnected) {
+        obs.disconnect();
+        if (!done) resolve(null);
+      }
+    });
+    obs.observe(document.body, { childList: true });
+  });
+}

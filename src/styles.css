@@ -1058,3 +1058,245 @@ kbd {
     text-align: left;
   }
 }
+
+/* ---------------------------------------------------------------- 특성 편집 */
+.prop-title {
+  margin: 0 0 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg-input);
+  font-weight: 600;
+}
+.prop-row.edit {
+  align-items: center;
+  padding: 1px 6px;
+}
+.prop-row.edit input,
+.prop-row.edit select,
+.prop-row.edit textarea,
+.prop-color {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.prop-row.edit textarea {
+  height: auto;
+  padding: 3px 5px;
+  resize: vertical;
+}
+.prop-row.edit select {
+  font-family: inherit;
+}
+.prop-row.edit input:hover,
+.prop-row.edit select:hover,
+.prop-row.edit textarea:hover,
+.prop-color:hover {
+  border-color: var(--border-soft);
+  background: var(--bg-input);
+}
+.prop-row.edit input:focus,
+.prop-row.edit select:focus,
+.prop-row.edit textarea:focus {
+  border-color: var(--accent);
+  background: var(--bg-input);
+  outline: 0;
+}
+.prop-row.edit select option {
+  background: var(--bg-input);
+}
+.prop-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* ---------------------------------------------------------------- 도면층 표 */
+.layer-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.layer-bar .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.layer-bar .icon-btn:disabled {
+  opacity: 0.35;
+}
+.layer-table {
+  overflow-x: auto;
+}
+table.grid tr.selected td {
+  background: var(--accent-soft);
+}
+table.grid td.cur {
+  width: 14px;
+  color: var(--accent);
+  font-weight: 700;
+}
+table.grid td.layer-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-select {
+  max-width: 96px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+}
+.cell-select:hover,
+.cell-select:focus {
+  border-color: var(--border-soft);
+  background: var(--bg-input);
+  outline: 0;
+}
+.cell-select option {
+  background: var(--bg-input);
+  color: var(--text);
+}
+.cell-input {
+  width: 100%;
+  min-width: 90px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  outline: 0;
+}
+
+/* ---------------------------------------------------------------- 색 고르기 */
+.colorpick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.aci-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.aci-big {
+  display: grid;
+  grid-template-columns: repeat(24, 13px);
+  gap: 1px;
+}
+.aci-row {
+  display: flex;
+  gap: 3px;
+}
+button.aci {
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 0;
+  cursor: pointer;
+}
+button.aci:hover {
+  outline: 1px solid #fff;
+  z-index: 1;
+}
+button.aci.on {
+  outline: 2px solid #fff;
+  outline-offset: 0;
+  z-index: 2;
+}
+.colorpick input[type='color'] {
+  width: 48px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+}
+.colorpick input[type='text'] {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- 리본 속성 막대 */
+.rprop-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+}
+.rprop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+}
+.rprop .ic {
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+}
+.rprop select,
+.rprop button.rprop-color {
+  width: 150px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 2px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+}
+.rprop button.rprop-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.rprop select:disabled,
+.rprop button:disabled {
+  opacity: 0.45;
+}
+@media (max-width: 760px) {
+  .rprop select,
+  .rprop button.rprop-color {
+    width: 110px;
+  }
+}
+
+/* 접힌 리본 패널 */
+.rbtn-lg.folded span:last-child {
+  white-space: nowrap;
+}
+.ribbon-pop {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-ribbon);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
