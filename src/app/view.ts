@@ -6,7 +6,7 @@ import type { XrefPlacement } from './refs';
 import type { ViewportModel } from './psltscale';
 import { MODEL_SPACE, type ViewportEntity, tableKey } from '../core/model';
 import earcut from 'earcut';
-import { GLRenderer, type ViewXf } from '../render/webgl';
+import { GLRenderer, type GpuScene, type ViewXf } from '../render/webgl';
 import type { Camera, DocState, Tile } from './docstate';
 import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 import type { DisplayList } from '../render/displaylist';
@@ -549,16 +549,35 @@ export class CadView {
     // 외부 참조(밑그림)
     const toScreenM = (x: number, y: number): [number, number] => [((x - cam.cx) * cam.scale + a.x + a.w / 2) * this.dpr, (-(y - cam.cy) * cam.scale + a.y + a.h / 2) * this.dpr];
     this.drawXrefs(useDetail ? d!.scene.source : scene.source, xf, 3.78 * this.dpr, dark, bg, scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay), toScreenM);
+    const recolor = this.modelStyleOverride?.(s) ?? null;
     if (useDetail && d) {
       // 깊이 확대: 보이는 영역을 지금 확대에 맞게 다시 나눈 세부 장면
-      r.setStyles(d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay));
+      const sd = d.scene.styleData((k) => s.layers.get(k), dark, bg, this.lwDisplay);
+      r.setStyles(recolor ? recolor(sd) : sd);
       r.draw(d.scene.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
     } else {
-      r.setStyles(scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay));
+      const sd = scene.styleData(s.sceneLayers(s.space), 'model', dark, bg, this.lwDisplay);
+      r.setStyles(recolor ? recolor(sd) : sd);
       r.draw(scene.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
     }
     this.drawOverlayScene(s.space, xf, 3.78 * this.dpr, dark, bg, undefined, vis);
+    // 덧그릴 장면(도면 비교 등)
+    if (this.modelExtras) {
+      for (const x of this.modelExtras(s)) {
+        r.clearDepth();
+        r.setStyles(x.styles(dark, bg, this.lwDisplay));
+        r.draw(x.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
+      }
+    }
   }
+
+  /**
+   * 모형 공간 기본 장면의 스타일 자료를 바꾸는 함수(도면 비교의 회색 등). null이면 그대로.
+   * 받은 배열(항목마다 8칸: r, g, b, a, 선가중치, 보임, …)을 바꿔 돌려준다(사본을 만들어 바꿀 것).
+   */
+  modelStyleOverride: ((s: DocState) => ((data: Float32Array) => Float32Array) | null) | null = null;
+  /** 모형 공간 위에 덧그릴 장면들(도면 비교의 "비교 도면에서만" 객체 등) */
+  modelExtras: ((s: DocState) => { gpu: GpuScene; styles: (dark: boolean, bg: number, lwDisplay: boolean) => Float32Array }[]) | null = null;
 
   /** 배치(용지, 뷰포트, 종이 공간 객체). MSPACE여도 배치를 그린다 */
   private renderLayout(s: DocState): void {
