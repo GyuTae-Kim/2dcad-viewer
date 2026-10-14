@@ -113,12 +113,31 @@ describe('EditSession', () => {
     expect(log.at(-1)!.sum.tablesChanged).toBe(true);
   });
 
-  it('블록 정의 안의 객체가 바뀌면 블록 변경으로 알린다', () => {
+  it('블록 정의 안의 객체가 바뀌면 블록 변경으로 알리고, 블록 편집기용으로 그 블록의 변경도 담는다', () => {
     const { doc, s, log, line } = setup();
     doc.blocks.set('B1', { ...doc.blocks.get('*MODEL_SPACE')!, name: 'B1', entities: [] });
     s.commit({ label: 'B', ops: [{ kind: 'add', block: 'B1', entity: line(0) }] });
     expect(log.at(-1)!.sum.blocksChanged).toBe(true);
-    expect(log.at(-1)!.sum.spaces.size).toBe(0);
+    expect([...log.at(-1)!.sum.spaces.keys()]).toEqual(['B1']);
+    expect(log.at(-1)!.sum.spaces.get('B1')!.changed).toHaveLength(1);
+  });
+
+  it('배치 작업은 배치 목록과 LAYOUT 객체를 함께 바꾸고 되돌린다', () => {
+    const { doc, s, log } = setup();
+    const lay = { name: 'L1', handle: 'A1', tabOrder: 1, blockRecord: 'A2', blockName: '*Paper_Space', flags: 0, limitsMin: { x: 0, y: 0 }, limitsMax: { x: 0, y: 0 }, insertionBase: { x: 0, y: 0, z: 0 }, extMin: { x: 0, y: 0, z: 0 }, extMax: { x: 0, y: 0, z: 0 }, elevation: 0, ucsOrigin: { x: 0, y: 0, z: 0 }, ucsXAxis: { x: 1, y: 0, z: 0 }, ucsYAxis: { x: 0, y: 1, z: 0 }, plot: {} as never };
+    const n0 = doc.layouts.length;
+    s.commit({ label: 'LAYOUT', ops: [{ kind: 'object', key: 'A1', before: null, after: { type: 'LAYOUT', handle: 'A1', layout: lay } }, { kind: 'layout', key: '*PAPER_SPACE', before: null, after: lay }] });
+    expect(doc.layouts.length).toBe(n0 + 1);
+    expect(log.at(-1)!.sum.layoutsChanged).toBe(true);
+    const renamed = { ...lay, name: 'L2' };
+    s.commit({ label: 'LAYOUT', ops: [{ kind: 'layout', key: '*PAPER_SPACE', before: lay, after: renamed }] });
+    expect(doc.layouts.find((l) => l.handle === 'A1')!.name).toBe('L2');
+    expect((doc.objects.get('A1') as { layout: { name: string } }).layout.name).toBe('L2');
+    s.undo();
+    expect((doc.objects.get('A1') as { layout: { name: string } }).layout.name).toBe('L1');
+    s.undo();
+    expect(doc.layouts.length).toBe(n0);
+    expect(doc.objects.has('A1')).toBe(false);
   });
 
   it('객체가 들어 있는 블록을 찾는다', () => {
