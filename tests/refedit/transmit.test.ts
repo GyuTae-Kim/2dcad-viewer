@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { MSG_ZIP_TOO_LARGE, buildZip, crc32, zipName } from '../../src/edit/transmit/zip';
 import { type TransmitItem, DEFAULT_SETTINGS, drawingName, planPackage, relativePath, transmitReport } from '../../src/edit/transmit/plan';
 
-const PY = '/opt/homebrew/Caskroom/miniconda/base/envs/prisme-engine314/bin/python';
+import { PYTHON as PY } from '../oracle/ezdxf';
 const TMP = join(process.cwd(), '.runtime/refedit/tmp');
 
 const enc = new TextEncoder();
