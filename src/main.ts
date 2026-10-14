@@ -26,7 +26,8 @@ import { registerUtil2Commands } from './app/util2';
 import { registerModify2Commands } from './app/modify2';
 import { registerAnnot2Commands } from './app/annot2';
 import { registerTableEditCommands } from './app/tablecmds';
-import { registerFieldCommands } from './app/fieldcmds';
+import { fieldDisplay, onFieldDisplayChange, registerFieldCommands } from './app/fieldcmds';
+import { displayFlags } from './render/styles';
 import { registerMLineCommands } from './app/mlinecmds';
 import { registerVportCommands } from './app/vports';
 import { Shell } from './app/ui/shell';
@@ -83,6 +84,12 @@ registerTableEditCommands(app);
 registerFieldCommands(app);
 registerMLineCommands(app);
 registerVportCommands(app);
+// 필드 회색 배경(FIELDDISPLAY): 화면 표시 설정만 바꾸고 다시 그린다
+displayFlags.fieldBackground = fieldDisplay() === 1;
+onFieldDisplayChange((v) => {
+  displayFlags.fieldBackground = v === 1;
+  app.view.requestRender();
+});
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);

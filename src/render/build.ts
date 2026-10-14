@@ -49,7 +49,7 @@ import {
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
 import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist';
-import { ColorKind, type LayerState, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
+import { ColorKind, type LayerState, STYLE_FLAG_FIELD, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
@@ -246,6 +246,28 @@ export class SceneBuilder {
   /** IMAGEFRAME·WIPEOUTFRAME(한 번만 찾는다) */
   private frame(kind: FrameKind): number {
     return (this.frames[kind] ??= frameSetting(this.doc, kind));
+  }
+
+  /** 필드가 든 문자(이 앱의 OPENCAD_FIELD 확장 자료, AutoCAD의 확장 사전 ACAD_FIELD) */
+  private hasField(e: Entity): boolean {
+    if (e.xdata?.some((x) => x.app.toUpperCase() === 'OPENCAD_FIELD')) return true;
+    if (!e.xdict) return false;
+    const d = this.doc.objects.get(e.xdict);
+    return d?.type === 'DICTIONARY' && [...(d as DictionaryObject).entries.keys()].some((k) => k.toUpperCase() === 'ACAD_FIELD');
+  }
+
+  /** 필드 회색 배경(FIELDDISPLAY): 문자 범위 뒤에, 화면에만 */
+  private fieldBackground(e: Entity, lay: TextLayout, world: Affine, r: Resolved): void {
+    if (!this.hasField(e) || !(lay.maxX > lay.minX) || !(lay.maxY > lay.minY)) return;
+    const pad = (lay.maxY - lay.minY) * 0.08;
+    const [x0, y0, x1, y1] = [lay.minX - pad, lay.minY - pad, lay.maxX + pad, lay.maxY + pad];
+    const q = [x0, y0, x1, y0, x1, y1, x0, y1];
+    const w: number[] = [];
+    for (let i = 0; i < 8; i += 2) w.push(world[0] * q[i]! + world[2] * q[i + 1]! + world[4], world[1] * q[i]! + world[3] * q[i + 1]! + world[5]);
+    const spec = this.styles.specs[r.style]!;
+    const st = this.styles.intern({ ...spec, colorKind: ColorKind.Rgb, color: 0x808080, alpha: 110, flags: spec.flags | STYLE_FLAG_FIELD | STYLE_FLAG_NO_PLOT });
+    this.out.triangle(w[0]!, w[1]!, w[2]!, w[3]!, w[4]!, w[5]!, st);
+    this.out.triangle(w[0]!, w[1]!, w[4]!, w[5]!, w[6]!, w[7]!, st);
   }
 
   /** 화면에는 보이고 출력에서는 빠지는 스타일(IMAGEFRAME·WIPEOUTFRAME 2) */
@@ -1165,7 +1187,9 @@ export class SceneBuilder {
       style,
     });
     const m = this.ocsM(ctx, e.extrusion);
-    this.emitText(lay, this.planar(m, e.insert.z), r, ctx);
+    const world = this.planar(m, e.insert.z);
+    this.fieldBackground(e, lay, world, r);
+    this.emitText(lay, world, r, ctx);
   }
 
   private mtext(e: Extract<Entity, { type: 'MTEXT' }>, ctx: Ctx): void {
@@ -1210,6 +1234,7 @@ export class SceneBuilder {
       this.out.triangle(w[0]!, w[1]!, w[4]!, w[5]!, w[6]!, w[7]!, bgStyle);
       if (lay.frame) this.out.polyline(w, true, r.style);
     }
+    this.fieldBackground(e, lay, world, r);
     this.emitText(lay, world, r, ctx);
   }
 

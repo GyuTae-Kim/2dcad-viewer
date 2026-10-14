@@ -173,3 +173,37 @@ describe('폴리선 그리기', () => {
     ]);
   });
 });
+
+describe('필드 회색 배경(FIELDDISPLAY)', () => {
+  it('필드가 든 문자 뒤에 화면용 배경을 넣고, 끄거나 출력하면 숨긴다', async () => {
+    const { displayFlags, STYLE_FLAG_FIELD } = await import('../../src/render/styles');
+    const doc = newDoc();
+    const t: Entity = {
+      type: 'TEXT',
+      ...entityDefaults(),
+      handle: H(),
+      insert: P(0, 0),
+      height: 5,
+      text: '2026',
+      rotation: 0,
+      widthFactor: 1,
+      oblique: 0,
+      style: 'Standard',
+      generation: 0,
+      halign: 0,
+      valign: 0,
+      xdata: [{ app: 'OPENCAD_FIELD', items: [{ code: 1000, value: '%<\\AcVar Date>%' }] }],
+    } as Entity;
+    add(doc, t);
+    const s = build(doc);
+    const fi = s.styles.specs.findIndex((sp) => (sp.flags & STYLE_FLAG_FIELD) !== 0);
+    expect(fi).toBeGreaterThan(0);
+    const vis = (plot: boolean) => resolveStyles(s.styles, s.layers, { darkBackground: true, backgroundRgb: 0, showLineweight: false, defaultLineweight: 25, plot: plot ? { style: 'mono' } : undefined })[fi * 8 + 5];
+    displayFlags.fieldBackground = true;
+    expect(vis(false)).toBe(1);
+    expect(vis(true)).toBe(0);
+    displayFlags.fieldBackground = false;
+    expect(vis(false)).toBe(0);
+    displayFlags.fieldBackground = true;
+  });
+});

@@ -46,6 +46,11 @@ export const STYLE_FLAG_NO_PLOT = 1;
 export const STYLE_FLAG_TEXT = 2;
 /** 숨김 스타일(편집으로 지운·바꾼 객체의 옛 그림). 스타일 표의 0번이다 */
 export const STYLE_FLAG_HIDDEN = 4;
+/** 필드 회색 배경(FIELDDISPLAY): 화면에서 켰을 때만, 출력에서는 늘 숨긴다 */
+export const STYLE_FLAG_FIELD = 8;
+
+/** 화면 표시 설정(앱이 바꾼다). 바꾸면 styleData 캐시 열쇠도 달라진다 */
+export const displayFlags = { fieldBackground: true };
 export const HIDDEN_STYLE = 0;
 
 export function hiddenStyleSpec(): StyleSpec {
@@ -198,6 +203,7 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
     let visible = L ? L.on && !L.frozen : true;
     if (opt.plot && L && (L.plot === false || L.name.toUpperCase() === 'DEFPOINTS')) visible = false;
     if (opt.plot && s.flags & STYLE_FLAG_NO_PLOT) visible = false;
+    if (s.flags & STYLE_FLAG_FIELD && (opt.plot || !displayFlags.fieldBackground)) visible = false;
     if (visible && opt.viewportFrozen?.has(s.layer)) visible = false;
     if (visible)
       for (const f of s.freezeLayers) {
