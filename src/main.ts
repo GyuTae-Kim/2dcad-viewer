@@ -36,6 +36,7 @@ import { registerCompareCommands } from './app/compare';
 import { registerSketchCommands } from './app/sketch';
 import { registerCountCommands } from './app/count';
 import { registerImageClipCommands } from './app/imageclip';
+import { registerExportCommands } from './app/exportcmd';
 import { registerTableEditCommands } from './app/tablecmds';
 import { fieldDisplay, onFieldDisplayChange, registerFieldCommands } from './app/fieldcmds';
 import { displayFlags } from './render/styles';
@@ -52,7 +53,7 @@ import { registerExportLayoutCommands } from './app/exportlayout';
 import { registerPdfImportCommands } from './app/pdfimport';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
-import { baseName, download, exportPng, exportSvg } from './app/export';
+import { baseName, download, exportRaster, exportSvg } from './app/export';
 
 const root = document.getElementById('app')!;
 const shell = new Shell(root);
@@ -110,6 +111,7 @@ registerCompareCommands(app);
 registerSketchCommands(app);
 registerCountCommands(app);
 registerImageClipCommands(app);
+registerExportCommands(app);
 app.view.extraOverlay = (g, W, dark) => drawConstraintOverlay(app, g, W, dark);
 registerTableEditCommands(app);
 registerFieldCommands(app);
@@ -157,17 +159,23 @@ app.register({
     else void document.documentElement.requestFullscreen?.().catch(() => toast('전체 화면을 쓸 수 없습니다.', 'warn'));
   },
 });
-app.register({
-  name: 'PNGOUT',
-  aliases: ['JPGOUT', 'BMPOUT'],
-  title: 'PNG로 내보내기',
-  async run(ctx) {
-    const b = await exportPng(app);
-    if (!b) return;
-    download(b, `${baseName(app.active!.name)}.png`);
-    ctx.print('지금 화면을 PNG로 저장했습니다.');
-  },
-});
+for (const [name, kind, label] of [
+  ['PNGOUT', 'png', 'PNG'],
+  ['JPGOUT', 'jpg', 'JPEG'],
+  ['BMPOUT', 'bmp', 'BMP'],
+] as const) {
+  app.register({
+    name,
+    aliases: name === 'BMPOUT' ? ['BMP'] : name === 'JPGOUT' ? ['JPEG'] : [],
+    title: `${label}로 내보내기`,
+    async run(ctx) {
+      const b = await exportRaster(app, kind);
+      if (!b) return;
+      download(b, `${baseName(app.active!.name)}.${kind}`);
+      ctx.print(`지금 화면을 ${label}로 저장했습니다.`);
+    },
+  });
+}
 app.register({
   name: 'SVGOUT',
   aliases: ['EXPORTSVG'],

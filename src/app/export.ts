@@ -559,12 +559,60 @@ function buildPdf(pages: { w: number; h: number; content: Uint8Array; flate: boo
 }
 
 export async function exportPng(app: App, scale = 2): Promise<Blob | null> {
+  void scale;
+  return exportRaster(app, 'png');
+}
+
+/** 24비트 BMP(아래에서 위로, 줄마다 4바이트 맞춤) */
+export function encodeBmp(w: number, h: number, rgba: Uint8ClampedArray): Uint8Array<ArrayBuffer> {
+  const row = (w * 3 + 3) & ~3;
+  const size = 54 + row * h;
+  const out = new Uint8Array(size);
+  const dv = new DataView(out.buffer);
+  out[0] = 0x42;
+  out[1] = 0x4d;
+  dv.setUint32(2, size, true);
+  dv.setUint32(10, 54, true);
+  dv.setUint32(14, 40, true);
+  dv.setInt32(18, w, true);
+  dv.setInt32(22, h, true);
+  dv.setUint16(26, 1, true);
+  dv.setUint16(28, 24, true);
+  dv.setUint32(34, row * h, true);
+  // 72 dpi
+  dv.setInt32(38, 2835, true);
+  dv.setInt32(42, 2835, true);
+  for (let y = 0; y < h; y++) {
+    const src = (h - 1 - y) * w * 4;
+    let o = 54 + y * row;
+    for (let x = 0; x < w; x++) {
+      const i = src + x * 4;
+      out[o++] = rgba[i + 2]!;
+      out[o++] = rgba[i + 1]!;
+      out[o++] = rgba[i]!;
+    }
+  }
+  return out;
+}
+
+/** 지금 화면을 장치 픽셀 그대로 다시 그려 이미지로(오버레이 제외) */
+export async function exportRaster(app: App, kind: 'png' | 'jpg' | 'bmp'): Promise<Blob | null> {
   const v = app.view;
   if (!app.active) return null;
-  // 지금 화면을 장치 픽셀 그대로 다시 그려 저장한다(오버레이 제외)
-  void scale;
   v.renderGL();
-  return new Promise((resolve) => v.glCanvas.toBlob((b) => resolve(b), 'image/png'));
+  if (kind === 'png') return new Promise((resolve) => v.glCanvas.toBlob((b) => resolve(b), 'image/png'));
+  // JPEG·BMP는 알파가 없으므로 화면 배경 위에 옮겨 그린다
+  const c = document.createElement('canvas');
+  c.width = v.glCanvas.width;
+  c.height = v.glCanvas.height;
+  const g = c.getContext('2d');
+  if (!g) return null;
+  g.fillStyle = getComputedStyle(v.glCanvas).backgroundColor || '#000';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(v.glCanvas, 0, 0);
+  if (kind === 'jpg') return new Promise((resolve) => c.toBlob((b) => resolve(b), 'image/jpeg', 0.92));
+  const data = g.getImageData(0, 0, c.width, c.height).data;
+  return new Blob([encodeBmp(c.width, c.height, data)], { type: 'image/bmp' });
 }
 
 export function download(blob: Blob, name: string): void {

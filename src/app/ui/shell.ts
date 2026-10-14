@@ -634,8 +634,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       {
         title: '내보내기',
         large: [
+          { cmd: 'EXPORT', label: '내보내기', icon: 'save', tip: '형식을 골라 내보내기 (EXP)' },
           { cmd: 'PNGOUT', label: 'PNG', icon: 'exportPng', tip: '지금 화면을 이미지로 저장' },
           { cmd: 'SVGOUT', label: 'SVG', icon: 'exportSvg', tip: '지금 공간을 벡터 그림으로 저장' },
+        ],
+        cols: [
+          [
+            { cmd: 'JPGOUT', label: 'JPEG', icon: 'exportPng', tip: '지금 화면을 JPEG로 저장' },
+            { cmd: 'BMPOUT', label: 'BMP', icon: 'exportPng', tip: '지금 화면을 비트맵으로 저장' },
+          ],
         ],
       },
     ],
