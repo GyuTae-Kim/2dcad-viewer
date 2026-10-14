@@ -55,7 +55,8 @@
 - [x] 객체 격리·숨기기(ISOLATEOBJECTS·HIDEOBJECTS·UNISOLATEOBJECTS)
 - [x] 도면층 도구(LAYLCK·LAYULK·LAYMCUR·LAYMCH·LAYCUR·LAYDEL·LAYMRG)
 - [x] 특성 변경(CHPROP·CHANGE·COLOR·DDPTYPE·ATTDISP), 2D 솔리드(SOLID), TIME
-- [ ] 모형 타일 뷰포트(VPORTS)
+- [x] 모형 타일 뷰포트(VPORTS·-VPORTS: 나누기·결합·이름 있는 구성, 저장하면 같은 타일로 열림)
+- [x] 선택 순환(SELECTIONCYCLING), 밝은 화면 테마(COLORTHEME)
 
 ## 4단계: 저장 형식과 참조
 
@@ -66,7 +67,11 @@
 - [x] 중첩 외부 참조(덮어씌우기 제외, 순환 차단), 외부 참조 도면층 재지정(`참조|도면층`, VISRETAIN, 뷰포트 동결)
 - [ ] 연관 치수, 기하 구속, 동적 블록, 주석 축척
 - [ ] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬 그룹 코드, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(지금은 DWG에서 블록 참조로 저장)
-- [ ] 필드 회색 배경 표시(FIELDDISPLAY), AutoCAD FIELD 객체 읽기
+- [x] 필드 회색 배경 표시(FIELDDISPLAY)
+- [ ] AutoCAD FIELD 객체 읽기
+- [x] 해치 편집(HATCHEDIT), 블록 자르기(XCLIP), 하이퍼링크(HYPERLINK), 데이터 추출(DATAEXTRACTION, 표·CSV)
+- [x] 자동 저장과 도면 복구(SAVETIME·DRAWINGRECOVERY·RECOVER, 이 브라우저에만)
+- [x] 배치를 모형으로 내보내기(EXPORTLAYOUT)
 
 ## 품질 과제
 
