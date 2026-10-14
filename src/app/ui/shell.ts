@@ -302,6 +302,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'DYNPROPS', label: '동적 특성', icon: 'props', tip: '동적 블록 참조의 매개변수 값' },
             { cmd: 'RESETBLOCK', label: '블록 재설정', icon: 'redo', tip: '동적 블록 참조를 정의 기본값으로' },
+            { cmd: 'COUNT', label: '개수', icon: 'list', tip: '블록별 개수, 누르면 참조를 고르고 확대 (COUNT)' },
           ],
         ],
       },
