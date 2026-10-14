@@ -1,6 +1,6 @@
 /** 엔진 워커 클라이언트 */
 import type { CadDocument } from '../core/model';
-import type { FromWorker, SceneMessage, ToWorker } from '../worker/protocol';
+import type { FromWorker, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
 import type { EditOp } from '../edit/session';
 
 export interface OpenResult {
@@ -8,6 +8,12 @@ export interface OpenResult {
   doc: CadDocument;
   readMs: number;
   model: SceneMessage;
+}
+
+export interface SaveResult {
+  data: Uint8Array;
+  warnings: { code: string; message: string; count?: number }[];
+  ms: number;
 }
 
 export class EngineError extends Error {
@@ -57,6 +63,10 @@ export class EngineClient {
         if (p.doc) p.resolve({ ...p.doc, model: m.scene } satisfies OpenResult);
         else p.resolve(m.scene);
         break;
+      case 'saved':
+        this.pending.delete(m.id);
+        p.resolve({ data: new Uint8Array(m.data), warnings: m.warnings, ms: m.ms } satisfies SaveResult);
+        break;
       case 'error':
         this.pending.delete(m.id);
         p.reject(new EngineError(m.code, m.message));
@@ -93,6 +103,15 @@ export class EngineClient {
 
   closeDoc(docId: number): void {
     this.post({ type: 'close', docId });
+  }
+
+  /** 워커 문서를 DXF·DWG로 쓴다 */
+  save(docId: number, format: SaveFormat, version: string, binary = false): Promise<SaveResult> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.post({ type: 'save', id, docId, format, version, binary });
+    });
   }
 
   build(docId: number, space: string): Promise<SceneMessage> {

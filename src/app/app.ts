@@ -9,7 +9,7 @@ import { formatLength } from '../core/units';
 import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
 import { collectTextUsage } from '../text/collect';
-import { EngineClient, EngineError } from './engine';
+import { EngineClient, EngineError, type OpenResult } from './engine';
 import { DocState } from './docstate';
 import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
@@ -501,17 +501,11 @@ export class App {
         const label = stage === 'read' ? '도면 읽는 중' : stage === 'fonts' ? '글꼴 받는 중' : stage === 'build' || stage === 'document' ? '화면 그리는 중' : '처리 중';
         this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.7 : stage === 'fonts' ? 0.75 : 0.85);
       });
-      const st = new DocState(res.docId, res.doc, name, size, res.readMs);
-      st.addScene(this.view.renderer, res.model, MODEL_SPACE);
-      this.edits.attach(st);
-      this.docs.push(st);
-      this.activate(st);
-      this.initialView(st);
+      const st = this.addDocument(res, name, size);
       const w = st.warnings.filter((x) => x.code !== 'entity.not_drawn' || (x.count ?? 0) > 0);
       this.cmd.print(`${name}: ${res.doc.format.toUpperCase()} ${res.doc.version}, 객체 ${res.doc.entityIndex.size.toLocaleString()}개, 읽기 ${Math.round(res.readMs)}ms, 그리기 ${Math.round(res.model.ms)}ms`);
       for (const x of w.slice(0, 6)) this.cmd.print(`참고: ${x.message}${x.count ? ` (${x.count})` : ''}`);
       this.onOpened?.(st);
-      this.loadFonts(st);
       return st;
     } catch (e) {
       const code = e instanceof EngineError ? e.code : 'internal';
@@ -522,6 +516,18 @@ export class App {
     } finally {
       this.ui.setBusy(null);
     }
+  }
+
+  /** 워커가 읽었거나 받아 둔 문서를 탭으로 연다 */
+  addDocument(res: OpenResult, name: string, size: number): DocState {
+    const st = new DocState(res.docId, res.doc, name, size, res.readMs);
+    st.addScene(this.view.renderer, res.model, MODEL_SPACE);
+    this.edits.attach(st);
+    this.docs.push(st);
+    this.activate(st);
+    this.initialView(st);
+    void this.loadFonts(st);
+    return st;
   }
 
   private loadFonts(st: DocState): Promise<void> {
