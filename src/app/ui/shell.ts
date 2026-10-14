@@ -768,6 +768,7 @@ export class Shell implements UiHooks {
       mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()),
       polar,
       mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()),
+      mk('dyn', 'dyn', '동적 입력 (F12) · 커서 옆에 프롬프트·거리·입력 중인 값', () => app.toggleDyn()),
       mk('lw', 'lineweight', '선가중치 표시', () => void app.run('LWDISPLAY')),
       mk('bg', 'background', '배경색 전환', () => void app.run('BACKGROUND')),
       h('span', { class: 'status-sep' }),
@@ -806,6 +807,7 @@ export class Shell implements UiHooks {
     this.statusBtns.ortho?.classList.toggle('on', app.orthoOn);
     this.statusBtns.polar?.classList.toggle('on', app.polarOn);
     this.statusBtns.otrack?.classList.toggle('on', app.otrackOn);
+    this.statusBtns.dyn?.classList.toggle('on', app.dynOn);
     this.statusBtns.lw?.classList.toggle('on', app.view.lwDisplay);
     this.statusBtns.bg?.classList.toggle('on', app.view.modelBg === 0xffffff);
     this.spaceLabel.textContent = st ? (st.blockEdit ? `블록 편집기: ${st.blockEdit.name}` : st.isModel ? '모형' : `배치: ${st.layoutFor(st.space)?.name ?? ''}`) : '';

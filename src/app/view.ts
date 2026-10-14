@@ -41,6 +41,8 @@ export interface OverlayState {
   acquired: Pt[];
   /** 누른 그립(빨강) */
   hotGrip: Pt | null;
+  /** 동적 입력: 커서 옆에 보이는 입력 중인 글자 */
+  dynInput: string | null;
   marks: { p: Pt; text?: string }[];
   /** 커서 옆 동적 입력 문구 */
   tip: string | null;
@@ -703,18 +705,33 @@ export class CadView {
       g.strokeRect(x - o.pickbox, y - o.pickbox, o.pickbox * 2, o.pickbox * 2);
       g.restore();
     }
-    if (o.tip && o.cursor) {
+    if ((o.tip || o.dynInput) && o.cursor) {
       g.save();
       g.font = '11.5px ui-monospace, Menlo, monospace';
-      const tw = g.measureText(o.tip).width;
+      const tip = o.tip ?? '';
+      const typed = o.dynInput ? `${o.dynInput}▏` : '';
+      const tw = Math.max(tip ? g.measureText(tip).width : 0, typed ? g.measureText(typed).width + 8 : 0);
+      const hgt = (tip ? 20 : 0) + (typed ? 22 : 0);
       const x = Math.min(o.cursor.x + 18, this.w - tw - 14);
-      const y = Math.min(o.cursor.y + 22, this.h - 24);
-      g.fillStyle = 'rgba(37,44,54,0.95)';
-      g.strokeStyle = '#5b6a7e';
-      g.fillRect(x, y, tw + 12, 20);
-      g.strokeRect(x + 0.5, y + 0.5, tw + 11, 19);
-      g.fillStyle = '#e8ebf0';
-      g.fillText(o.tip, x + 6, y + 14);
+      const y = Math.min(o.cursor.y + 22, this.h - hgt - 4);
+      if (tip) {
+        g.fillStyle = 'rgba(37,44,54,0.95)';
+        g.strokeStyle = '#5b6a7e';
+        g.fillRect(x, y, tw + 12, 20);
+        g.strokeRect(x + 0.5, y + 0.5, tw + 11, 19);
+        g.fillStyle = '#e8ebf0';
+        g.fillText(tip, x + 6, y + 14);
+      }
+      if (typed) {
+        // 입력 칸(동적 입력)
+        const yy = y + (tip ? 22 : 0);
+        g.fillStyle = 'rgba(20,24,30,0.96)';
+        g.strokeStyle = '#4c9bff';
+        g.fillRect(x, yy, tw + 12, 20);
+        g.strokeRect(x + 0.5, yy + 0.5, tw + 11, 19);
+        g.fillStyle = '#ffffff';
+        g.fillText(typed, x + 6, yy + 14);
+      }
       g.restore();
     }
   }
@@ -910,7 +927,7 @@ function isTyping(ev: KeyboardEvent): boolean {
 }
 
 export function emptyOverlay(): OverlayState {
-  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], hotGrip: null, marks: [], tip: null };
+  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], hotGrip: null, dynInput: null, marks: [], tip: null };
 }
 
 /** AutoCAD 스냅 표지 모양 */

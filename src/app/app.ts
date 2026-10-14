@@ -123,6 +123,8 @@ export class App {
   polarInc = Math.PI / 2;
   /** 객체 스냅 추적(F11)과 획득점 */
   otrackOn = false;
+  /** 동적 입력(F12): 커서 옆에 프롬프트·거리·입력 중인 값 */
+  dynOn = true;
   private acquired: Acquired[] = [];
   private acqCandidate: { p: Pt; timer: number } | null = null;
   private request: Request | null = null;
@@ -171,6 +173,10 @@ export class App {
         this.scheduleDetail();
       },
     });
+    this.cmd.onChange = (t) => {
+      this.view.overlay.dynInput = this.dynOn && t ? t : null;
+      this.view.requestOverlay();
+    };
     this.view.onRestore = () => {
       for (const d of this.docs) for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
     };
@@ -954,6 +960,7 @@ export class App {
       o.ghost = r.ghost ? r.ghost(p) : [];
       if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
       else if (track) o.tip = track.tip;
+      else if (!this.dynOn) o.tip = null;
       else if (r.base) {
         const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);
         let a = (Math.atan2(p.y - r.base.y, p.x - r.base.x) * 180) / Math.PI;
@@ -1196,6 +1203,10 @@ export class App {
         ev.preventDefault();
         this.toggleOtrack();
         return;
+      case 'F12':
+        ev.preventDefault();
+        this.toggleDyn();
+        return;
     }
     if (mod && ev.shiftKey && !ev.altKey) {
       const k = ev.key.toLowerCase();
@@ -1321,6 +1332,16 @@ export class App {
     this.polarOn = !this.polarOn;
     if (this.polarOn) this.orthoOn = false;
     this.cmd.print(`<극좌표 ${this.polarOn ? '켜기' : '끄기'}>`);
+    this.ui.refreshStatus();
+  }
+
+  toggleDyn(): void {
+    this.dynOn = !this.dynOn;
+    if (!this.dynOn) {
+      this.view.overlay.dynInput = null;
+      this.view.requestOverlay();
+    }
+    this.cmd.print(`<동적 입력 ${this.dynOn ? '켜기' : '끄기'}>`);
     this.ui.refreshStatus();
   }
 

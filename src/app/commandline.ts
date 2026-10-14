@@ -116,7 +116,11 @@ export class CommandLine {
     this.updateSuggest();
   }
 
+  /** 입력란 글자가 바뀔 때(동적 입력 표시) */
+  onChange: ((text: string) => void) | null = null;
+
   private updateSuggest(): void {
+    this.onChange?.(this.input.value);
     const v = this.input.value.trim();
     if (!v || this.promptEl.hidden === false) {
       this.sugg.hidden = true;
@@ -135,6 +139,7 @@ export class CommandLine {
       d.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
         this.input.value = '';
+        this.onChange?.('');
         this.sugg.hidden = true;
         this.submit(it.name);
       });
@@ -156,6 +161,7 @@ export class CommandLine {
     if (ev.key === 'Escape') {
       ev.preventDefault();
       this.input.value = '';
+      this.onChange?.('');
       this.sugg.hidden = true;
       this.host.cancel();
       return;
@@ -183,6 +189,7 @@ export class CommandLine {
         if (ev.key === 'Tab' || !exact) v = this.items[this.selIdx]!.name;
       }
       this.input.value = '';
+      this.onChange?.('');
       this.sugg.hidden = true;
       if (!v && this.promptEl.hidden) {
         this.host.repeat();
