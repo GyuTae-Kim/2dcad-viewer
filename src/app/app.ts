@@ -1,6 +1,7 @@
 /**
  * 앱 컨트롤러: 문서·화면·명령·선택·스냅을 묶는다.
  */
+import { currentUcs, dirToUcs, isWorld, toUcs, toWcs } from './ucs';
 import { viewportModel } from './psltscale';
 import type { Entity, ViewportEntity } from '../core/model';
 import { MODEL_SPACE, tableKey } from '../core/model';
@@ -200,7 +201,7 @@ export class App {
           limits = [p.minX, p.minY, p.maxX, p.maxY];
         }
       }
-      return { x: st.grid.x, y: st.grid.y, major: st.grid.major, baseX: st.snap.baseX, baseY: st.snap.baseY, limits };
+      return { x: st.grid.x, y: st.grid.y, major: st.grid.major, baseX: st.snap.baseX, baseY: st.snap.baseY, limits, ucs: currentUcs(st) };
     };
     window.addEventListener('keydown', (ev) => this.onKey(ev));
     window.addEventListener('beforeunload', (ev) => {
@@ -507,7 +508,13 @@ export class App {
         return;
       }
       const dir = this.cursorWorld && r.base ? { x: this.cursorWorld.x - r.base.x, y: this.cursorWorld.y - r.base.y } : null;
-      const p = parsePointInput(t, r.base ?? this.lastPoint, dir);
+      // 좌표는 현재 UCS로 읽는다(* 로 시작하면 WCS)
+      const u = currentUcs(this.active);
+      const wcs = t.startsWith('*');
+      const conv = !wcs && !isWorld(u);
+      const lastW = r.base ?? this.lastPoint;
+      const pu = parsePointInput(wcs ? t.slice(1) : t, lastW && conv ? toUcs(u, lastW) : lastW, dir && conv ? dirToUcs(u, dir) : dir);
+      const p = pu && conv ? toWcs(u, pu) : pu;
       if (p) {
         this.cmd.print(`${this.promptOf(r)} ${t}`);
         this.lastPoint = p;
@@ -1010,10 +1017,13 @@ export class App {
         const tol = 8 * this.view.pixelSize();
         const st = this.active!;
         const fmt = (v: number) => formatLength(v, st.units);
-        const pa = this.polarOn ? polarAngles(this.polarInc) : null;
+        // 극좌표 각도는 UCS X축 기준
+        const ua = currentUcs(st).angle;
+        const norm = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        const pa = this.polarOn ? polarAngles(this.polarInc).map((a) => norm(a + ua)) : null;
         if (this.otrackOn && this.acquired.length) {
           // 획득점에서는 수평·수직(극좌표가 켜져 있으면 그 각도들도)
-          const t = objectTrack(this.acquired, w, pa ?? polarAngles(Math.PI / 2), tol, r.base, pa, fmt);
+          const t = objectTrack(this.acquired, w, pa ?? polarAngles(Math.PI / 2).map((a) => norm(a + ua)), tol, r.base, pa, fmt);
           if (t) return { p: t.p, snap: null, track: t };
         }
         if (r.base && pa && !this.orthoOn) {
@@ -1024,9 +1034,13 @@ export class App {
       // 격자 스냅(객체 스냅·추적이 먼저)
       if (r?.kind === 'point' && this.snapOn) w = this.snapToGrid(w);
       if (r?.kind === 'point' && r.base && this.orthoOn) {
-        const dx = w.x - r.base.x;
-        const dy = w.y - r.base.y;
-        return { p: Math.abs(dx) >= Math.abs(dy) ? { x: w.x, y: r.base.y } : { x: r.base.x, y: w.y }, snap: null };
+        // 직교는 UCS 축 방향
+        const u = currentUcs(this.active);
+        const d = dirToUcs(u, { x: w.x - r.base.x, y: w.y - r.base.y });
+        const keep = Math.abs(d.x) >= Math.abs(d.y) ? { x: d.x, y: 0 } : { x: 0, y: d.y };
+        const c = Math.cos(u.angle);
+        const sn = Math.sin(u.angle);
+        return { p: { x: r.base.x + keep.x * c - keep.y * sn, y: r.base.y + keep.x * sn + keep.y * c }, snap: null };
       }
     }
     return { p: w, snap: null };
@@ -1094,7 +1108,8 @@ export class App {
     if (this.windowStart) {
       o.windowRect = { a: this.windowStart.screen, b: s };
     }
-    this.ui.setCoords(`${formatLength(p.x, st.units)}, ${formatLength(p.y, st.units)}, ${formatLength(0, st.units)}`);
+    const pu = toUcs(currentUcs(st), p);
+    this.ui.setCoords(`${formatLength(pu.x, st.units)}, ${formatLength(pu.y, st.units)}, ${formatLength(0, st.units)}`);
     // 선택 미리보기(가만히 있을 때)
     if (!r && !this.windowStart && ev.pointerType !== 'touch') {
       clearTimeout(this.hoverTimer);
@@ -1514,7 +1529,9 @@ export class App {
     const st = this.active;
     if (!st || st.msVp) return w;
     const s = st.snap;
-    return { x: s.baseX + Math.round((w.x - s.baseX) / s.x) * s.x, y: s.baseY + Math.round((w.y - s.baseY) / s.y) * s.y };
+    const u = currentUcs(st);
+    const q = toUcs(u, w);
+    return toWcs(u, { x: s.baseX + Math.round((q.x - s.baseX) / s.x) * s.x, y: s.baseY + Math.round((q.y - s.baseY) / s.y) * s.y });
   }
 
   toggleOrtho(): void {

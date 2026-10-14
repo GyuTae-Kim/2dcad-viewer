@@ -1,6 +1,7 @@
 /**
  * 도면 영역: 카메라(확대·이동), WebGL 그리기, 배치·뷰포트, 오버레이(커서·선택·스냅·고무줄).
  */
+import { type Ucs, currentUcs, isWorld, toUcs, toWcs } from './ucs';
 import type { XrefPlacement } from './refs';
 import type { ViewportModel } from './psltscale';
 import { MODEL_SPACE, type ViewportEntity, tableKey } from '../core/model';
@@ -56,6 +57,8 @@ export interface GridInfo {
   baseX: number;
   baseY: number;
   limits?: [number, number, number, number];
+  /** UCS에 맞춘 격자 */
+  ucs: Ucs;
 }
 
 export interface ViewEvents {
@@ -590,10 +593,14 @@ export class CadView {
   gridInfo: (() => GridInfo | null) | null = null;
 
   private drawGrid(g: CanvasRenderingContext2D, grid: GridInfo, dark: boolean): void {
-    const a = this.screenToWorld(0, this.h);
-    const b = this.screenToWorld(this.w, 0);
-    let [x0, y0, x1, y1] = [a.x, a.y, b.x, b.y];
-    if (grid.limits) {
+    // 보이는 영역(과 한계)을 UCS 좌표로 바꿔 그 범위의 격자선을 긋는다
+    const u = grid.ucs;
+    const corners = [this.screenToWorld(0, 0), this.screenToWorld(this.w, 0), this.screenToWorld(this.w, this.h), this.screenToWorld(0, this.h)].map((p) => toUcs(u, p));
+    let x0 = Math.min(...corners.map((p) => p.x));
+    let x1 = Math.max(...corners.map((p) => p.x));
+    let y0 = Math.min(...corners.map((p) => p.y));
+    let y1 = Math.max(...corners.map((p) => p.y));
+    if (grid.limits && isWorld(u)) {
       x0 = Math.max(x0, grid.limits[0]);
       y0 = Math.max(y0, grid.limits[1]);
       x1 = Math.min(x1, grid.limits[2]);
@@ -609,6 +616,11 @@ export class CadView {
       sy *= major > 1 ? major : 2;
     }
     if (Math.min(sx, sy) * px < 4 || (x1 - x0) / sx > 2000 || (y1 - y0) / sy > 2000) return;
+    const S = (x: number, y: number) => {
+      const w = toWcs(u, { x, y });
+      return this.worldToScreen(w.x, w.y);
+    };
+    const axisAligned = Math.abs(Math.sin(u.angle * 2)) < 1e-9;
     const line = (minor: boolean, horiz: boolean) => {
       g.beginPath();
       const step = horiz ? sy : sx;
@@ -620,17 +632,18 @@ export class CadView {
       for (let k = k0; k <= k1; k++) {
         if ((k % major === 0) === minor && major > 1) continue;
         const v = base + k * step;
-        if (horiz) {
-          const p = this.worldToScreen(x0, v);
-          const q = this.worldToScreen(x1, v);
-          g.moveTo(p.x, Math.round(p.y) + 0.5);
-          g.lineTo(q.x, Math.round(q.y) + 0.5);
-        } else {
-          const p = this.worldToScreen(v, y0);
-          const q = this.worldToScreen(v, y1);
-          g.moveTo(Math.round(p.x) + 0.5, p.y);
-          g.lineTo(Math.round(q.x) + 0.5, q.y);
+        const p = horiz ? S(x0, v) : S(v, y0);
+        const q = horiz ? S(x1, v) : S(v, y1);
+        if (axisAligned) {
+          // 화면 화소에 맞춰 선명하게
+          if (Math.abs(p.y - q.y) < 0.5) {
+            p.y = q.y = Math.round(p.y) + 0.5;
+          } else {
+            p.x = q.x = Math.round(p.x) + 0.5;
+          }
         }
+        g.moveTo(p.x, p.y);
+        g.lineTo(q.x, q.y);
       }
       g.stroke();
     };
@@ -642,6 +655,45 @@ export class CadView {
     g.strokeStyle = dark ? 'rgba(255,255,255,0.13)' : 'rgba(0,0,0,0.15)';
     line(false, false);
     line(false, true);
+    g.restore();
+  }
+
+  /** UCS 아이콘 표시(UCSICON) */
+  readonly ucsIcon = { on: true, origin: true };
+
+  /** UCS 아이콘: 원점이 화면 안이면 원점에, 아니면 왼쪽 아래 */
+  private drawUcsIcon(g: CanvasRenderingContext2D, s: DocState, dark: boolean): void {
+    const u = currentUcs(s);
+    let o = this.worldToScreen(u.ox, u.oy);
+    const pad = 36;
+    if (!this.ucsIcon.origin || o.x < pad || o.y < pad || o.x > this.w - pad || o.y > this.h - pad) o = { x: 28, y: this.h - 28 };
+    const c = Math.cos(u.angle);
+    const sn = Math.sin(u.angle);
+    const L = 30;
+    const ax = (dx: number, dy: number) => ({ x: o.x + dx, y: o.y - dy });
+    const xe = ax(L * c, L * sn);
+    const ye = ax(-L * sn, L * c);
+    g.save();
+    g.lineWidth = 1.6;
+    g.font = '10px var(--font, sans-serif)';
+    g.strokeStyle = g.fillStyle = dark ? 'rgba(240,90,90,0.95)' : 'rgba(190,30,30,0.95)';
+    g.beginPath();
+    g.moveTo(o.x, o.y);
+    g.lineTo(xe.x, xe.y);
+    g.stroke();
+    g.fillText('X', xe.x + 3 * c - 3, xe.y - 3 * sn + 4);
+    g.strokeStyle = g.fillStyle = dark ? 'rgba(90,220,120,0.95)' : 'rgba(20,140,60,0.95)';
+    g.beginPath();
+    g.moveTo(o.x, o.y);
+    g.lineTo(ye.x, ye.y);
+    g.stroke();
+    g.fillText('Y', ye.x - 3 * sn - 3, ye.y - 3 * c);
+    // 표준 좌표계면 원점에 네모
+    if (isWorld(u)) {
+      g.strokeStyle = dark ? 'rgba(200,200,200,0.8)' : 'rgba(60,60,60,0.8)';
+      g.lineWidth = 1;
+      g.strokeRect(o.x - 3.5, o.y - 3.5, 7, 7);
+    }
     g.restore();
   }
 
@@ -721,6 +773,7 @@ export class CadView {
     // 격자
     const gi = s && !s.msVp ? this.gridInfo?.() : null;
     if (gi) this.drawGrid(g, gi, dark);
+    if (s && this.ucsIcon.on && !s.blockEdit) this.drawUcsIcon(g, s, dark);
     // MSPACE: 강조·선택·그립은 활성 뷰포트 안만
     if (vpRect) {
       g.save();

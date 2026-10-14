@@ -18,6 +18,7 @@ import { registerIsolateCommands } from './app/isolate';
 import { registerViewportCommands } from './app/vpcmds';
 import { registerViewCommands } from './app/viewcmds';
 import { registerDraftingCommands } from './app/drafting';
+import { registerUcsCommands } from './app/ucs';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -60,6 +61,7 @@ registerIsolateCommands(app);
 registerViewportCommands(app);
 registerViewCommands(app);
 registerDraftingCommands(app);
+registerUcsCommands(app);
 app.onOpened = (st) => {
   noteMissingShx(app, st);
   void noteMissingRefs(app, st);
