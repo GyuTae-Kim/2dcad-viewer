@@ -6,6 +6,7 @@ import { registerBlockCommands } from './app/blocks';
 import { registerEditCommands } from './app/editcmds';
 import { registerTableCommands } from './app/tables';
 import { registerPlotCommands } from './app/plot';
+import { registerAnnotateCommands } from './app/annotate';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportPng, exportSvg } from './app/export';
@@ -36,6 +37,7 @@ registerBlockCommands(app);
 registerEditCommands(app);
 registerTableCommands(app);
 registerPlotCommands(app);
+registerAnnotateCommands(app);
 
 app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pickFiles() });
 app.register({
