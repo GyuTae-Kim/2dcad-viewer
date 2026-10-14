@@ -17,20 +17,24 @@
 - [x] 측정: DIST, MEASUREGEOM(거리·반지름·각도·면적), AREA, ID, LIST, 객체 스냅, 직교
 - [x] 내보내기: PNG, SVG, PDF
 
-## 2단계: 편집과 저장
+## 2단계: 편집과 저장 (완료)
 
-- [ ] 그리기: LINE, PLINE, CIRCLE, ARC, RECTANG, POLYGON, ELLIPSE, SPLINE, POINT, XLINE, TEXT, MTEXT
-- [ ] 수정: MOVE, COPY, ROTATE, SCALE, MIRROR, OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK, JOIN, EXPLODE, ERASE, STRETCH, LENGTHEN
-- [ ] 그립 편집, 명령 취소·복구(U, REDO), 특성 팔레트에서 값 바꾸기, MATCHPROP
-- [ ] DXF 저장(원본에 편집 기록을 적용해 알 수 없는 자료·핸들·확장 자료 유지), 새 도면(acadiso 기준)
-- [ ] 극좌표 추적, 객체 스냅 추적, 동적 입력
+- [x] 그리기: LINE, PLINE, CIRCLE, ARC, RECTANG, POLYGON, ELLIPSE, SPLINE, POINT, XLINE, RAY, DONUT, TEXT, MTEXT
+- [x] 수정: MOVE, COPY, ROTATE, SCALE, MIRROR, OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK, JOIN, EXPLODE, ERASE, STRETCH, LENGTHEN, ARRAY
+- [x] 그립 편집, 명령 취소·복구(U, REDO), 특성 팔레트에서 값 바꾸기, MATCHPROP, 클립보드(Ctrl+C·X·V)
+- [x] DXF 저장(R12~R2018, ASCII·이진, 모델이 해석하지 않는 자료는 원본 태그로), 새 도면(acadiso·acad)
+- [x] 극좌표 추적, 객체 스냅 추적
+- [ ] 동적 입력(커서 옆 입력 칸)
 
 ## 3단계: 주석·블록·출력
 
-- [ ] 치수 작성(DIMLINEAR·DIMALIGNED·DIMRADIUS·DIMDIAMETER·DIMANGULAR·DIMORDINATE·DIMARC) — 치수 스타일대로 치수 블록 생성
-- [ ] 해치 작성(무늬 정의, 경계 찾기), 지시선·다중 지시선 작성
-- [ ] 블록 삽입·정의, 속성 편집, 블록 편집기
-- [ ] 페이지 설정, 플롯 스타일(CTB·STB), 여러 배치를 한 PDF로
+- [x] 치수 작성(DIMLINEAR·DIMALIGNED·DIMANGULAR·DIMRADIUS·DIMDIAMETER·DIMORDINATE·DIMARC) — 치수 스타일대로 치수 블록 생성
+- [ ] 해치 작성(무늬 정의, 경계 찾기)
+- [x] 다중 지시선 작성(MLEADER)
+- [x] 블록 삽입·정의, 속성 편집, 블록 편집기(BEDIT)
+- [x] 페이지 설정, 배치 만들기·복사·이름 바꾸기·삭제, 흑백·회색조 플롯, 여러 배치를 한 PDF로
+- [x] 치수 연속·기준선(DIMCONTINUE·DIMBASELINE)
+- [ ] 플롯 스타일 표(CTB·STB) 파일 읽기
 
 ## 4단계: 저장 형식과 참조
 
@@ -40,9 +44,10 @@
 
 ## 품질 과제
 
-- [ ] Arial·Times와 글자 폭이 같은 OFL 글꼴(Liberation)로 트루타입 문자 배치 맞추기
-- [ ] 사용자 컴퓨터의 SHX 글꼴 불러오기(로컬 폴더 고르기)
-- [ ] 프록시 그림(사용자 객체), XCLIP 블록 자르기, 다각형 뷰포트 자르기(스텐실)
+- [x] Arial·Times와 글자 폭이 같은 OFL 글꼴(Liberation)로 트루타입 문자 배치 맞추기
+- [x] 사용자 컴퓨터의 SHX 글꼴 불러오기(SHXFONTS, 일반·큰 글꼴·유니코드, 복합 선종류 도형과 SHAPE 객체)
+- [x] 다각형·원 뷰포트 자르기(화면 스텐실, PDF·SVG 자르기 경로)
+- [ ] 프록시 그림(사용자 객체), XCLIP 블록 자르기
 - [ ] PSLTSCALE, 아주 깊이 확대했을 때 곡선 다시 나누기
 - [ ] 아주 큰 도면(수백만 객체) 읽기·메모리 최적화
 

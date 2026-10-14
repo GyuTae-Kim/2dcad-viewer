@@ -110,13 +110,16 @@ app.register({
       ['오른쪽 클릭', '바로가기 메뉴(명령 중에는 Enter·옵션·스냅 재지정)'],
       ['Esc', '명령 취소, 선택 해제'],
       ['Enter · Space', '입력 마침, 빈 입력이면 직전 명령 반복'],
-      ['F1 · F2 · F3 · F8', '도움말 · 명령 기록 펼치기 · 객체 스냅 · 직교'],
-      ['Ctrl+O · Ctrl+1 · Ctrl+A · Ctrl+P · Ctrl+9', '열기 · 특성 · 모두 선택 · PDF · 명령행 숨기기'],
+      ['선택한 객체의 파란 그립 누르기', '그립 편집: 신축(Enter로 이동 → 회전 → 축척 → 대칭)'],
+      ['F1 · F2 · F3 · F8 · F10 · F11', '도움말 · 명령 기록 펼치기 · 객체 스냅 · 직교 · 극좌표 추적 · 객체 스냅 추적'],
+      ['Ctrl+N · Ctrl+O · Ctrl+S · Ctrl+Shift+S', '새 도면 · 열기 · 저장 · 다른 이름으로 저장'],
+      ['Ctrl+Z · Ctrl+Y · Ctrl+C · Ctrl+X · Ctrl+V', '명령 취소 · 복구 · 복사 · 잘라내기 · 붙여넣기'],
+      ['Ctrl+1 · Ctrl+A · Ctrl+P · Ctrl+9', '특성 · 모두 선택 · 플롯 · 명령행 숨기기'],
       ['Ctrl+Tab · Ctrl+PgUp/PgDn', '다음 도면 · 배치 전환'],
       ['터치', '한 손가락 = 이동, 두 손가락 = 확대·축소, 탭 = 선택'],
     ];
     const cmds = [...app.commands.values()]
-      .filter((c) => !['MEASURERADIUS', 'ZOOMIN', 'ZOOMOUT'].includes(c.name))
+      .filter((c) => !['MEASURERADIUS', 'ZOOMIN', 'ZOOMOUT', 'GRIPEDIT'].includes(c.name))
       .sort((a, b) => a.name.localeCompare(b.name));
     dialog(
       '도움말',
