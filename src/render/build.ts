@@ -1299,6 +1299,8 @@ export class SceneBuilder {
     const sf = sh ? this.doc.objects.get(sh) : undefined;
     if (!sf || sf.type !== 'SPATIAL_FILTER') return null;
     const f = sf as SpatialFilterObject;
+    // 그룹 71(displayBoundary)은 자르기 사용 여부다(XCLIP 켜기·끄기). 틀 표시는 $XCLIPFRAME
+    if (!f.displayBoundary) return null;
     let pts = f.boundary;
     if (pts.length === 2) {
       const [a, b] = pts as [{ x: number; y: number }, { x: number; y: number }];
@@ -1321,7 +1323,7 @@ export class SceneBuilder {
       poly.push(q.x, q.y);
     }
     if (!poly.every(Number.isFinite)) return null;
-    return { poly, inverted: !!f.inverted, frame: f.displayBoundary };
+    return { poly, inverted: !!f.inverted, frame: true };
   }
 
   private childCtx(parent: Entity, ctx: Ctx, r: Resolved, m: Mat): Ctx {
