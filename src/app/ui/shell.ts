@@ -320,7 +320,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
             { cmd: 'BLOCKREPLACE', label: '블록 대치', icon: 'insert' },
           ],
-          [{ cmd: 'ADCENTER', label: '디자인센터', icon: 'blocks', tip: '다른 도면의 블록·도면층·스타일 가져오기 (Ctrl+2)' }],
+          [
+            { cmd: 'ADCENTER', label: '디자인센터', icon: 'blocks', tip: '다른 도면의 블록·도면층·스타일 가져오기 (Ctrl+2)' },
+            { cmd: 'BLOCKSPALETTE', label: '블록 팔레트', icon: 'blocks', tip: '현재 도면·최근·라이브러리 블록을 미리보기로 삽입 (BLOCKSPALETTE)' },
+          ],
+          [
+            { cmd: 'ATTOUT', label: '속성 내보내기', icon: 'list', tip: '블록 속성을 탭 구분 파일로 (ATTOUT)' },
+            { cmd: 'ATTIN', label: '속성 가져오기', icon: 'list', tip: '고친 속성 파일을 읽어 값 바꾸기 (ATTIN)' },
+            { cmd: 'ATTEXT', label: '속성 추출', icon: 'table', tip: 'CDF·SDF·DXF로 속성 추출 (ATTEXT)' },
+          ],
           [
             { cmd: 'DYNPROPS', label: '동적 특성', icon: 'props', tip: '동적 블록 참조의 매개변수 값' },
             { cmd: 'RESETBLOCK', label: '블록 재설정', icon: 'redo', tip: '동적 블록 참조를 정의 기본값으로' },
@@ -336,6 +344,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'CLIP', label: '자르기', icon: 'trim', tip: '블록·외부 참조·이미지·언더레이·뷰포트를 경계로 자르기 (CLIP)' },
             { cmd: 'IMAGECLIP', label: '이미지 자르기', icon: 'trim', tip: '래스터 이미지 자르기 (ICL)' },
             { cmd: 'PDFCLIP', label: 'PDF 자르기', icon: 'trim', tip: 'PDF 언더레이 자르기' },
+          ],
+          [
+            { cmd: 'XATTACH', label: 'DWG 부착', icon: 'folder', tip: 'DWG·DXF를 외부 참조로 부착 (XA)' },
+            { cmd: 'IMAGEATTACH', label: '이미지 부착', icon: 'sample', tip: '래스터 이미지 부착 (IAT)' },
+            { cmd: 'PDFATTACH', label: 'PDF 부착', icon: 'exportPdf', tip: 'PDF 페이지를 언더레이로 부착' },
+          ],
+          [
+            { cmd: 'XBIND', label: '기호 결합', icon: 'layers', tip: '외부 참조의 도면층·블록·스타일을 이 도면에 결합 (XB)' },
+            { cmd: 'XOPEN', label: '참조 열기', icon: 'open', tip: '외부 참조를 새 탭으로 열기 (XOPEN)' },
           ],
           [
             { cmd: 'REFEDIT', label: '참조 편집', icon: 'block', tip: '블록·외부 참조를 제자리에서 고치기 (REFEDIT)' },

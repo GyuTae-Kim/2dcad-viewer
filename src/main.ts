@@ -64,6 +64,7 @@ import { registerLayerFilterCommands } from './app/layerfilter';
 import { registerDashCommands } from './app/dashcmds';
 import { registerEditCmds2 } from './app/editcmds2';
 import { registerFileCommands } from './app/filecmds';
+import { registerBlkCommands } from './app/blkcmds';
 import { registerLispCommands } from './app/lisp';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
@@ -155,6 +156,7 @@ registerAssocArrayCommands(app);
 registerLayerFilterCommands(app);
 registerEditCmds2(app);
 registerFileCommands(app);
+registerBlkCommands(app);
 // 명령행 버전 명령은 이미 등록된 이름을 건너뛰므로 맨 뒤에 둔다
 registerDashCommands(app);
 registerLispCommands(app);

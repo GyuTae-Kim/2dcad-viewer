@@ -649,3 +649,9 @@ export function registerDesignCenterCommands(app: App): void {
 export function designCenterOpen(): boolean {
   return panel !== null;
 }
+
+/** 다른 도면(또는 지금 도면)의 블록 하나를 디자인센터와 같은 방법으로 삽입한다(ADCADD 명령, 블록 팔레트가 쓴다) */
+export function insertBlockFrom(app: App, doc: CadDocument, label: string, name: string): Promise<void> {
+  pending = { doc, label, kind: 'block', names: [name], insert: true };
+  return app.run('ADCADD');
+}

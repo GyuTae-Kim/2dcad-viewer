@@ -510,6 +510,11 @@ interface Clip {
 }
 let clipboard: Clip | null = null;
 
+/** 이 앱 클립보드(선택하여 붙여넣기 PASTESPEC가 형식을 고르고 그림으로 붙일 때 읽는다). 비었으면 null */
+export function clipboardContent(): { readonly doc: CadDocument; readonly entities: readonly Entity[]; readonly base: Pt } | null {
+  return clipboard?.entities.length ? clipboard : null;
+}
+
 function extentsOf(app: App, hs: readonly string[]): [number, number, number, number] | null {
   const pk = app.picker();
   if (!pk) return null;
