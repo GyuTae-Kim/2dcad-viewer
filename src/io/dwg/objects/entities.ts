@@ -1639,12 +1639,13 @@ function readHatch(or: ObjectReader, b: Omit<EntityBase, 'type'>, type: 'HATCH')
       const bulges = r.B() === 1;
       const closed = r.B() === 1;
       const nv = r.checkCount(r.BL(), 128);
-      const vertices: { x: number; y: number; bulge: number }[] = [];
+      // 정점 평탄 좌표 [x, y, 볼록, …]
+      const verts: number[] = [];
       for (let i = 0; i < nv; i++) {
         const p = r.RD2();
-        vertices.push({ x: p.x, y: p.y, bulge: bulges ? r.BD() : 0 });
+        verts.push(p.x, p.y, bulges ? r.BD() : 0);
       }
-      path.polyline = { closed, vertices };
+      path.polyline = { closed, verts: verts.slice() };
     }
     boundaryCounts.push(r.BL());
     e.paths.push(path);

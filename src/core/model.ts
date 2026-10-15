@@ -551,11 +551,17 @@ export interface HatchSplineEdge {
 
 export type HatchEdge = HatchLineEdge | HatchArcEdge | HatchEllipseEdge | HatchSplineEdge;
 
+/** 해치 폴리선 경계. verts = 정점 평탄 좌표 [x0, y0, 볼록0, x1, y1, 볼록1, …](OCS, 큰 도면의 문서 메모리를 줄이려고 수만 이어 둔다) */
+export interface HatchPolyline {
+  closed: boolean;
+  verts: number[];
+}
+
 export interface HatchPath {
   /** 92: 1 외부, 2 폴리선, 4 파생, 8 텍스트 상자, 16 가장 바깥 */
   flags: number;
   /** 폴리선 경계(flags & 2) */
-  polyline?: { closed: boolean; vertices: { x: number; y: number; bulge: number }[] };
+  polyline?: HatchPolyline;
   edges?: HatchEdge[];
   /** 연관 경계 객체 핸들 */
   sources?: string[];

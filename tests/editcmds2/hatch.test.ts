@@ -4,18 +4,18 @@ import { MODEL_SPACE, entityDefaults } from '../../src/core/model';
 import { PATTERNS, boundaryFromEntities, createHatch, reactorLinks } from '../../src/edit/hatch';
 import { hasPatternOrigin, hatchBoundaryEntities, hatchOrigin, hatchWithBoundary, relinkReactors, withHatchOrigin } from '../../src/edit/editcmds2/hatch';
 import { circle, line, put, setup } from '../util2/helpers';
-import { lwVertices } from '../../src/core/lwpoly';
+import { lwVertices, packBulge } from '../../src/core/lwpoly';
 
 const square = (x0: number, y0: number, s: number): HatchPath => ({
   flags: 3,
   polyline: {
     closed: true,
-    vertices: [
+    verts: packBulge([
       { x: x0, y: y0, bulge: 0 },
       { x: x0 + s, y: y0, bulge: 0 },
       { x: x0 + s, y: y0 + s, bulge: 0 },
       { x: x0, y: y0 + s, bulge: 0 },
-    ],
+    ]),
   },
 });
 

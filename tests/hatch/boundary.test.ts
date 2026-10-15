@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Entity, HatchEntity, HatchPath, LineEntity } from '../../src/core/model';
 import { boundaryFromEntities, createHatch, detectBoundary, pathsFillPoint, rebuildAssociative } from '../../src/edit/hatch';
 import { P, add, arc, area, circle, defineBlock, ellipse, insert, insideHatch, line, lw, newDoc, rect, spline } from './helpers';
+import { bulgeVertices } from '../../src/core/lwpoly';
 
 const PI = Math.PI;
 const near = (a: number, b: number, tol = 1e-6) => expect(Math.abs(a - b), `${a} ≈ ${b}`).toBeLessThan(tol);
@@ -22,8 +23,8 @@ describe('점 선택: 섬', () => {
     expect(outer!.flags & 4).toBe(4);
     expect(island!.flags & 16).toBe(16);
     // 폴리선이 원래 경계 → 폴리선 경로, 원 섬은 볼록도 1 두 마디
-    expect(outer!.polyline?.vertices.length).toBe(4);
-    expect(island!.polyline?.vertices.map((v) => Math.abs(v.bulge))).toEqual([1, 1].map(() => expect.closeTo(1, 12)));
+    expect(bulgeVertices(outer!.polyline!.verts).length).toBe(4);
+    expect(bulgeVertices(island!.polyline!.verts).map((v) => Math.abs(v.bulge))).toEqual([1, 1].map(() => expect.closeTo(1, 12)));
     expect(got.boundaryHandles.sort()).toEqual([r!.handle, c!.handle].sort());
     expect(outer!.sources).toEqual([r!.handle]);
     expect(insideHatch(got.paths, { x: 1, y: 1 })).toBe(true);
@@ -106,7 +107,7 @@ describe('점 선택: 겹친 도형과 곡선', () => {
     const got = detectBoundary(doc, list, { x: 3, y: 0.3 })!;
     const lens = 2 * 25 * Math.acos(0.6) - 3 * 8;
     near(area(got.paths[0]!), lens, 1e-3);
-    const vs = got.paths[0]!.polyline!.vertices;
+    const vs = bulgeVertices(got.paths[0]!.polyline!.verts);
     expect(vs.length).toBe(2);
     for (const v of vs) expect(Math.abs(v.bulge)).toBeGreaterThan(0.1);
     // 초승달 쪽
@@ -118,7 +119,7 @@ describe('점 선택: 겹친 도형과 곡선', () => {
     const list = add(doc, line(0, 0, 10, 0), arc(5, 0, 5, 0, 180));
     const got = detectBoundary(doc, list, { x: 5, y: 2 })!;
     near(area(got.paths[0]!), 12.5 * PI, 1e-3);
-    const b = got.paths[0]!.polyline!.vertices.map((v) => Math.abs(v.bulge)).sort();
+    const b = bulgeVertices(got.paths[0]!.polyline!.verts).map((v) => Math.abs(v.bulge)).sort();
     near(b[1]!, 1, 1e-12);
   });
 
@@ -268,7 +269,7 @@ describe('객체 선택', () => {
     const paths = boundaryFromEntities(doc, [c!, r!, e!]);
     expect(paths.length).toBe(3);
     expect(paths[0]!.flags).toBe(1 | 2);
-    expect(paths[0]!.polyline!.vertices.length).toBe(4);
+    expect(bulgeVertices(paths[0]!.polyline!.verts).length).toBe(4);
     expect(paths[0]!.sources).toEqual([r!.handle]);
     const circ = paths.find((p) => p.sources![0] === c!.handle)!;
     expect(circ.flags & 16).toBe(16);

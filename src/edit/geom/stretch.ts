@@ -9,7 +9,7 @@
  */
 import type { BlockDef, CadDocument, DimensionEntity, Entity, HatchEntity, MLineEntity, SplineEntity, Vec2, Vec3 } from '../../core/model';
 import { tableKey } from '../../core/model';
-import { lwPoints, lwVertices, setLwVertices } from '../../core/lwpoly';
+import { bulgeVertices, lwPoints, lwVertices, packBulge, setLwVertices } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
 import { type Affine, add, affApply, affInv, affTranslate, ccwSweep, dist, norm, normAngle, pointInPolygon, rot90, sub } from './math';
 import { cloneEntity, freshEntity, makeArc } from './path';
@@ -484,7 +484,7 @@ function hatchPoints(e: HatchEntity): Vec2[] {
   const pr = planProj(e.extrusion, e.elevation);
   const out: Vec2[] = [];
   for (const p of e.paths) {
-    if (p.polyline) for (const v of p.polyline.vertices) out.push(affApply(pr, v));
+    if (p.polyline) for (const v of bulgeVertices(p.polyline.verts)) out.push(affApply(pr, v));
     for (const ed of p.edges ?? []) {
       if (ed.type === 'line') out.push(affApply(pr, ed.start), affApply(pr, ed.end));
       else if (ed.type === 'arc' || ed.type === 'ellipse') out.push(affApply(pr, ed.center));
@@ -503,7 +503,7 @@ function stretchHatch(e: HatchEntity, inside: (p: Vec2) => boolean, d: Vec2): Ha
     return inside(w) ? affApply(inv, add(w, d)) : { ...q };
   };
   for (const p of r.paths) {
-    if (p.polyline) p.polyline.vertices = p.polyline.vertices.map((v) => ({ ...v, ...mvp(v) }));
+    if (p.polyline) p.polyline.verts = packBulge(bulgeVertices(p.polyline.verts).map((v) => ({ ...v, ...mvp(v) })));
     if (p.edges)
       p.edges = p.edges.map((ed) => {
         if (ed.type === 'line') return { ...ed, start: mvp(ed.start), end: mvp(ed.end) };

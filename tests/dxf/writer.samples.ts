@@ -5,7 +5,7 @@
 import type { AttribEntity, BlockDef, CadDocument, DictionaryObject, Entity, HatchEntity, ImageDefObject, MLeaderEntity } from '../../src/core/model';
 import { entityDefaults, tableKey } from '../../src/core/model';
 import { finalizeDocument } from '../../src/core/finalize';
-import { packLw } from '../../src/core/lwpoly';
+import { packBulge, packLw } from '../../src/core/lwpoly';
 
 /** 문서의 $HANDSEED에서 핸들을 하나씩(편집 세션과 같은 방식) */
 function handles(doc: CadDocument): () => string {
@@ -245,7 +245,7 @@ export function addSampleEntities(doc: CadDocument): void {
     patternName: 'SOLID',
     solid: true,
     patternLines: [],
-    paths: [{ flags: 3, polyline: { closed: true, vertices: [ { x: 0, y: 0, bulge: 0 }, { x: 10, y: 0, bulge: 1 }, { x: 10, y: 10, bulge: 0 } ] } }],
+    paths: [{ flags: 3, polyline: { closed: true, verts: packBulge([ { x: 0, y: 0, bulge: 0 }, { x: 10, y: 0, bulge: 1 }, { x: 10, y: 10, bulge: 0 } ]) } }],
   } as HatchEntity);
   push({
     ...base('HATCH'),
@@ -287,7 +287,7 @@ export function addSampleEntities(doc: CadDocument): void {
     solid: true,
     patternLines: [],
     gradient: { enabled: true, name: 'LINEAR', color1: { aci: 5, rgb: 0x0000ff }, color2: { aci: 2, rgb: 0xffff00 }, singleColor: false, tint: 0, angle: 0, shift: 0 },
-    paths: [{ flags: 1, polyline: { closed: true, vertices: [ { x: 50, y: 0, bulge: 0 }, { x: 60, y: 0, bulge: 0 }, { x: 60, y: 10, bulge: 0 } ] } }],
+    paths: [{ flags: 1, polyline: { closed: true, verts: packBulge([ { x: 50, y: 0, bulge: 0 }, { x: 60, y: 0, bulge: 0 }, { x: 60, y: 10, bulge: 0 } ]) } }],
   } as HatchEntity);
 
   // 이미지·와이프아웃

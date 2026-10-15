@@ -143,6 +143,21 @@ export function bulgePolylinePoints(vs: readonly BulgeVertex[], closed: boolean,
   return out;
 }
 
+/** bulgePolylinePoints와 같다. 정점은 평탄 좌표 [x, y, 볼록, …] */
+export function bulgeFlatPoints(vs: readonly number[], closed: boolean, tol: number): number[] {
+  const out: number[] = [];
+  const n = (vs.length / 3) | 0;
+  if (!n) return out;
+  out.push(vs[0]!, vs[1]!);
+  const last = closed ? n : n - 1;
+  for (let i = 0; i < last; i++) {
+    const a = i * 3;
+    const b = ((i + 1) % n) * 3;
+    bulgePoints(vs[a]!, vs[a + 1]!, vs[b]!, vs[b + 1]!, vs[a + 2]!, tol, out);
+  }
+  return out;
+}
+
 /** 볼록도 → 호 정의 */
 export function bulgeArc(x0: number, y0: number, x1: number, y1: number, bulge: number): { cx: number; cy: number; r: number; a0: number; sweep: number } | null {
   if (Math.abs(bulge) < 1e-12) return null;

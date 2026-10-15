@@ -6,7 +6,7 @@ import { buildSpace } from '../../src/render/build';
 import { boundaryEdges, contourSegments, stripOutline, textLineBoxes } from '../../src/render/fillmode';
 import { TextEngine } from '../../src/text/layout';
 import { P, add, newDoc } from '../hatch/helpers';
-import { packLw } from '../../src/core/lwpoly';
+import { packBulge, packLw } from '../../src/core/lwpoly';
 
 let serial = 0x700;
 const H = () => (serial++).toString(16).toUpperCase();
@@ -30,12 +30,12 @@ function solidHatch(x: number, y: number, w: number, h: number, pattern = 'SOLID
         flags: 3,
         polyline: {
           closed: true,
-          vertices: [
+          verts: packBulge([
             { x, y, bulge: 0 },
             { x: x + w, y, bulge: 0 },
             { x: x + w, y: y + h, bulge: 0 },
             { x, y: y + h, bulge: 0 },
-          ],
+          ]),
         },
       },
     ],

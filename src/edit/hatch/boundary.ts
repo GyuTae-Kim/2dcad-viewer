@@ -9,7 +9,7 @@ import { ocsMatrix } from '../../geom/matrix';
 import { pathLoop } from '../../render/hatch';
 import { type Box, type Curve, TAU, clipXLines, entitiesToCurves, isCircle, pointAt, reverseNurbs, roughBox, splineSub } from './curves';
 import { Graph, buildGraph, pointInRing, signedArea } from './graph';
-import { lwCount, lwVertices } from '../../core/lwpoly';
+import { bulgeVertices, lwCount, lwVertices, packBulge } from '../../core/lwpoly';
 
 export type IslandStyle = 'normal' | 'outer' | 'ignore';
 
@@ -438,7 +438,7 @@ function loopToPath(g: Graph, walk: readonly number[], flags: number, preferPoly
         vertices.push({ x: p.x, y: p.y, bulge });
       }
     }
-    return { flags: flags | F_POLYLINE, polyline: { closed: true, vertices }, sources };
+    return { flags: flags | F_POLYLINE, polyline: { closed: true, verts: packBulge(vertices) }, sources };
   }
   const edges: HatchEdge[] = [];
   for (const r of rs) {
@@ -727,14 +727,14 @@ interface PathCand {
 /** 경로 방향 바꾸기 */
 function reversePath(p: HatchPath): HatchPath {
   if (p.polyline) {
-    const v = p.polyline.vertices;
+    const v = bulgeVertices(p.polyline.verts);
     const n = v.length;
     const out = v.map((_, k) => {
       const i = (n - k) % n; // 새 k번째 = 옛 i번째 점
       const prev = v[(i - 1 + n) % n]!; // 옛 i−1 → i 마디의 볼록도를 뒤집어 쓴다
       return { x: v[i]!.x, y: v[i]!.y, bulge: -prev.bulge };
     });
-    return { ...p, polyline: { closed: p.polyline.closed, vertices: out } };
+    return { ...p, polyline: { closed: p.polyline.closed, verts: packBulge(out) } };
   }
   const edges: HatchEdge[] = (p.edges ?? []).map((e): HatchEdge => {
     switch (e.type) {
@@ -811,7 +811,7 @@ function directPath(doc: CadDocument, e: Entity): HatchPath | null {
   const sources = e.handle ? [e.handle] : [];
   if (e.type === 'LWPOLYLINE' || e.type === 'POLYLINE' || e.type === 'SOLID' || e.type === 'TRACE') {
     const vertices = polyVertices(e);
-    return vertices ? { flags: F_EXTERNAL | F_POLYLINE, polyline: { closed: true, vertices }, sources } : null;
+    return vertices ? { flags: F_EXTERNAL | F_POLYLINE, polyline: { closed: true, verts: packBulge(vertices) }, sources } : null;
   }
   const { curves } = entitiesToCurves(doc, [e]);
   if (curves.length !== 1) return null;

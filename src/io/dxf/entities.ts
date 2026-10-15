@@ -1173,7 +1173,8 @@ function hatch(c: Common, type: 'HATCH' | 'MPOLYGON', version: string): HatchEnt
           else if (codes[i] === 93) nv = int(at(i));
           else break;
         }
-        const vs: { x: number; y: number; bulge: number }[] = [];
+        // 정점 평탄 좌표 [x, y, 볼록, …]
+        const vs: number[] = [];
         for (let k = 0; k < nv && i < n; k++) {
           if (codes[i] !== 10) break;
           const q = p2At(i);
@@ -1183,9 +1184,9 @@ function hatch(c: Common, type: 'HATCH' | 'MPOLYGON', version: string): HatchEnt
             bulge = num(at(i));
             i++;
           }
-          vs.push({ x: q.x, y: q.y, bulge });
+          vs.push(q.x, q.y, bulge);
         }
-        path.polyline = { closed, vertices: vs };
+        path.polyline = { closed, verts: vs.slice() };
       } else {
         let ne = 0;
         if (codes[i] === 93) {

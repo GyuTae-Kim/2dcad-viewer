@@ -1,12 +1,20 @@
 /**
- * 경량 폴리선(LWPOLYLINE) 정점 평탄 좌표 도우미.
+ * 정점 평탄 좌표 도우미: 경량 폴리선(LWPOLYLINE)과 해치 폴리선 경계(HatchPolyline).
  *
  * 문서는 정점을 객체 배열 대신 수 배열 두 개로 둔다(큰 도면의 문서 메모리·GC를 줄인다).
  * - verts: [x0, y0, 볼록0, x1, y1, 볼록1, …] — 정점 수 = verts.length / 3
  * - widths: [시작 폭0, 끝 폭0, 시작 폭1, 끝 폭1, …] — 모두 +0이면 없다(undefined)
- * 그리기·읽기·쓰기처럼 많이 도는 곳은 배열을 바로 읽고, 편집 계산은 lwVertices로 풀어 쓴 뒤 packLw·setLwVertices로 되돌린다.
+ * 해치 폴리선 경계는 verts만 둔다(폭 없음).
+ * 그리기·읽기·쓰기처럼 많이 도는 곳은 배열을 바로 읽고, 편집 계산은 lwVertices·bulgeVertices로 풀어 쓴 뒤 packLw·packBulge로 되돌린다.
  */
 import type { LwPolylineEntity, LwVertex, Vec2 } from './model';
+
+/** 볼록이 있는 정점 하나를 풀어 쓴 모양 */
+export interface BulgeVertex {
+  x: number;
+  y: number;
+  bulge: number;
+}
 
 /** 평탄 정점 자료(객체 리터럴에 펼쳐 넣는다: `{ ...packLw(vs) }` — widths가 없어도 키를 남겨 앞 값을 덮는다) */
 export interface LwPacked {
@@ -161,3 +169,25 @@ export function setLwVertex(e: LwPolylineEntity, i: number, v: Partial<LwVertex>
 export function cloneLwArrays<T extends Pick<LwPolylineEntity, 'verts' | 'widths'>>(e: T): T {
   return { ...e, verts: e.verts.slice(), widths: e.widths?.slice() };
 }
+
+// ---------------------------------------------------------------------------
+// 볼록 정점 평탄 좌표(해치 폴리선 경계 등): [x, y, 볼록, …]
+// ---------------------------------------------------------------------------
+
+/** 볼록 정점들을 평탄 좌표로(bulge가 없으면 0) */
+export function packBulge(vs: readonly { x: number; y: number; bulge?: number }[]): number[] {
+  const out: number[] = [];
+  for (const v of vs) out.push(v.x, v.y, v.bulge ?? 0);
+  return out.slice();
+}
+
+/** 평탄 좌표를 볼록 정점들로 풀어 쓴다(새 객체) */
+export function bulgeVertices(verts: readonly number[]): BulgeVertex[] {
+  const n = (verts.length / 3) | 0;
+  const out = new Array<BulgeVertex>(n);
+  for (let i = 0; i < n; i++) out[i] = { x: verts[i * 3]!, y: verts[i * 3 + 1]!, bulge: verts[i * 3 + 2]! };
+  return out;
+}
+
+/** 평탄 좌표의 정점 수 */
+export const vertCount = (verts: readonly number[]): number => (verts.length / 3) | 0;

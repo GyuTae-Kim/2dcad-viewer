@@ -26,7 +26,7 @@ import type {
   Vec3,
 } from '../../core/model';
 import { tableKey } from '../../core/model';
-import { lwVertices, setLwVertices } from '../../core/lwpoly';
+import { bulgeVertices, lwVertices, numArray, setLwVertices, vertCount } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
 import { type EllPiece, pieceAt } from './curve';
 import { type Affine, TAU, add, affApply, affInv, affLin, affTranslate, angleOf, ccwFrom, dist, mid, normAngle, sub } from './math';
@@ -226,7 +226,7 @@ function hatchGrips(e: HatchEntity, doc: CadDocument): GripPoint[] {
   let maxY = -Infinity;
   e.paths.forEach((p, k) => {
     const pts: Vec2[] = [];
-    if (p.polyline) for (const v of p.polyline.vertices) pts.push(v);
+    if (p.polyline) for (const v of bulgeVertices(p.polyline.verts)) pts.push(v);
     else for (const ed of p.edges ?? []) if (ed.type === 'line') pts.push(ed.start);
     pts.forEach((q, i) => {
       const w = affApply(P, q);
@@ -590,11 +590,12 @@ function hatchGrip(e: HatchEntity, id: string, d: Vec2): HatchEntity {
   const P = planProj(e.extrusion, e.elevation);
   const dl = affLin(affInv(P)!, d);
   if (p.polyline) {
-    const v = p.polyline.vertices[i];
-    if (v) {
-      v.x += dl.x;
-      v.y += dl.y;
+    const vs = numArray(p.polyline.verts);
+    if (Number.isInteger(i) && i >= 0 && i < vertCount(vs)) {
+      vs[i * 3] = vs[i * 3]! + dl.x;
+      vs[i * 3 + 1] = vs[i * 3 + 1]! + dl.y;
     }
+    p.polyline.verts = vs;
   } else if (p.edges) {
     const lines = p.edges.map((ed, j) => (ed.type === 'line' ? j : -1)).filter((j) => j >= 0);
     const j = lines[i];

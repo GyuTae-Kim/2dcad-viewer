@@ -31,7 +31,7 @@ import type {
   XData,
 } from '../../core/model';
 import { tableKey } from '../../core/model';
-import { lwCount, lwHasWidths } from '../../core/lwpoly';
+import { lwCount, lwHasWidths, vertCount } from '../../core/lwpoly';
 import { clampedKnots } from '../../geom/curves';
 import { CollectSink, kindOf, rawTagValid, rawTagsValid, type TagSink } from './tagwriter';
 import type { WriteContext } from './wcontext';
@@ -997,7 +997,10 @@ function writePath(w: TagOut, p: HatchPath, mpolygon: boolean): void {
   const ctx = w.ctx;
   if (p.polyline) {
     w.t(92, p.flags | 2);
-    const bulge = p.polyline.vertices.some((v) => v.bulge);
+    const vs = p.polyline.verts;
+    const nv = vertCount(vs);
+    let bulge = false;
+    for (let i = 0; i < nv && !bulge; i++) bulge = !!vs[i * 3 + 2];
     if (mpolygon) {
       w.t(73, p.polyline.closed ? 1 : 0);
       w.t(72, bulge ? 1 : 0);
@@ -1005,10 +1008,10 @@ function writePath(w: TagOut, p: HatchPath, mpolygon: boolean): void {
       w.t(72, bulge ? 1 : 0);
       w.t(73, p.polyline.closed ? 1 : 0);
     }
-    w.t(93, p.polyline.vertices.length);
-    for (const v of p.polyline.vertices) {
-      w.p2(10, v);
-      if (bulge) w.t(42, v.bulge);
+    w.t(93, nv);
+    for (let i = 0; i < nv; i++) {
+      w.p2(10, { x: vs[i * 3]!, y: vs[i * 3 + 1]! });
+      if (bulge) w.t(42, vs[i * 3 + 2]!);
     }
   } else {
     w.t(92, p.flags & ~2);

@@ -13,7 +13,7 @@ import { readDwg } from '../../src/io/dwg';
 import { readDxf } from '../../src/io/dxf/reader';
 import { FIXTURES } from '../oracle/ezdxf';
 import { dwgFixtures } from './oracle';
-import { packLw } from '../../src/core/lwpoly';
+import { packBulge, packLw } from '../../src/core/lwpoly';
 
 export const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
 export const WRITE_VERSIONS = ['AC1015', 'AC1018', 'AC1024', 'AC1027', 'AC1032'] as const;
@@ -149,7 +149,7 @@ export function syntheticDocument(): CadDocument {
     patternDouble: false,
     elevation: 0,
     paths: [
-      { flags: 3, polyline: { closed: true, vertices: [{ x: 0, y: 0, bulge: 0 }, { x: 5, y: 0, bulge: 0.4 }, { x: 5, y: 5, bulge: 0 }] } },
+      { flags: 3, polyline: { closed: true, verts: packBulge([{ x: 0, y: 0, bulge: 0 }, { x: 5, y: 0, bulge: 0.4 }, { x: 5, y: 5, bulge: 0 }]) } },
       {
         flags: 0,
         edges: [

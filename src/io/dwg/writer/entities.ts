@@ -29,7 +29,7 @@ import { HARD_OWNER, HARD_PTR, SOFT_PTR, type EntCommonOut, type ObjWriter } fro
 import { eedOf, wcolor } from './common';
 import { lwIndex } from './util';
 import { tableKey } from '../../../core/model';
-import { lwCount, lwHasBulge } from '../../../core/lwpoly';
+import { lwCount, lwHasBulge, vertCount } from '../../../core/lwpoly';
 import { tableCellsOut } from '../../tablecells';
 import { tableOld, tableR24, writeIO } from '../tablecodec';
 import { tableToOld, tableToR24 } from '../tablemodel';
@@ -1276,14 +1276,17 @@ export class EntityWriter {
         }
       } else {
         const pl = p.polyline!;
-        const bulges = pl.vertices.some((v) => v.bulge !== 0);
+        const vs = pl.verts;
+        const nv = vertCount(vs);
+        let bulges = false;
+        for (let i = 0; i < nv && !bulges; i++) bulges = vs[i * 3 + 2] !== 0;
         d.B(bulges);
         d.B(pl.closed);
-        d.BL(pl.vertices.length);
-        for (const v of pl.vertices) {
-          d.RD(v.x);
-          d.RD(v.y);
-          if (bulges) d.BD(v.bulge);
+        d.BL(nv);
+        for (let i = 0; i < nv; i++) {
+          d.RD(vs[i * 3]!);
+          d.RD(vs[i * 3 + 1]!);
+          if (bulges) d.BD(vs[i * 3 + 2]!);
         }
       }
       const s = this.ctx.refs(p.sources);

@@ -23,6 +23,7 @@ import { explodeEntity } from '../../src/edit/geom/explode';
 import { entityPath } from '../../src/edit/geom/path';
 import { flattenPath, pathNearest, pathSize } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, line, lw, mtext, near, newDoc, poly2d, renders, text } from './helpers';
+import { packBulge } from '../../src/core/lwpoly';
 
 const base = (h = '') => ({ ...entityDefaults(), handle: h });
 
@@ -299,7 +300,7 @@ describe('explodeEntity — 주석·문자·해치', () => {
       patternScale: 1,
       patternDouble: false,
       elevation: 0,
-      paths: [{ flags: 3, polyline: { closed: true, vertices: [V(0, 0), V(10, 0), V(10, 10), V(0, 10)].map((p) => ({ ...p, bulge: 0 })) } }],
+      paths: [{ flags: 3, polyline: { closed: true, verts: packBulge([V(0, 0), V(10, 0), V(10, 10), V(0, 10)].map((p) => ({ ...p, bulge: 0 }))) } }],
       patternLines: [{ angle: deg(45), base: V(0, 0), offset: V(-2.245, 2.245), dashes: [] }],
       pixelSize: 0,
       seedPoints: [],

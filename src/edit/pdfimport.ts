@@ -8,7 +8,7 @@ import { entityDefaults } from '../core/model';
 import type { CadDocument } from '../core/model';
 import { createHatch } from './hatch';
 import { nearestAci } from '../core/color';
-import { packLwPoints } from '../core/lwpoly';
+import { packBulge, packLwPoints } from '../core/lwpoly';
 
 export type PdfSeg = { k: 'L'; x: number; y: number } | { k: 'C'; x1: number; y1: number; x2: number; y2: number; x: number; y: number };
 
@@ -132,7 +132,7 @@ export function pdfToEntities(doc: CadDocument, page: PdfPageData, opt: PdfImpor
           const q = P(pts[i]!, pts[i + 1]!);
           vs.push({ x: q.x, y: q.y, bulge: 0 });
         }
-        paths.push({ flags: 1 | 2, polyline: { closed: true, vertices: vs } });
+        paths.push({ flags: 1 | 2, polyline: { closed: true, verts: packBulge(vs) } });
       }
       if (paths.length) {
         try {

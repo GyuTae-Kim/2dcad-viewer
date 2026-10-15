@@ -1,7 +1,7 @@
 /** 도면 비교 시험용 문서·객체 만들기 */
 import type { BlockDef, CadDocument, Entity, HatchEntity, InsertEntity, Vec3 } from '../../src/core/model';
 import { MODEL_SPACE, createDocument, entityDefaults, tableKey } from '../../src/core/model';
-import { packLw } from '../../src/core/lwpoly';
+import { packBulge, packLw } from '../../src/core/lwpoly';
 
 export const P = (x: number, y: number, z = 0): Vec3 => ({ x, y, z });
 export const deg = (d: number) => (d * Math.PI) / 180;
@@ -99,12 +99,12 @@ export function hatch(x: number, y: number, w: number, h: number, pattern = 'ANS
         flags: 3,
         polyline: {
           closed: true,
-          vertices: [
+          verts: packBulge([
             { x, y, bulge: 0 },
             { x: x + w, y, bulge: 0 },
             { x: x + w, y: y + h, bulge: 0 },
             { x, y: y + h, bulge: 0 },
-          ],
+          ]),
         },
       },
     ],
