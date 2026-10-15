@@ -5,10 +5,11 @@
  *   - 이름이 표준에 없으면 "비표준 이름" 문제(대체할 표준 객체 목록, 특성이 같은 것을 권장)
  *   - 이름은 같은데 특성이 다르면 "비표준 특성" 문제(표준 값으로 고친다)
  * - 수정: 특성은 표준 값으로 바꾸고, 이름은 고른 표준 객체로 대체한다(객체·스타일·현재 값이 따라가고 비표준 기록은 지운다).
- * - 표준 파일 연결: AutoCAD가 도면에 두는 표준 연결 기록(AcStStandard 사전)의 정확한 구조를 실물로 확인하지 못해
- *   이 앱의 루트 사전 항목 OPENCAD_STANDARDS(XRECORD: 90 형식, 1 파일 이름…)에 둔다. AutoCAD는 이 기록을 표준 연결로 읽지 않는다.
+ * - 표준 파일 연결: AutoCAD 형식 — 루트 사전 항목 `AcStStandard`(DICTIONARY) → 항목 "0"·"1"…(연결 순서) → XRECORD(1 표준 파일 경로).
+ *   AutoCAD가 저장한 실물(공개 연습 도면의 DWG·DWS)과 Autodesk ADN 블로그(표준 파일을 도면에 잇는 법)로 확인했다.
+ *   예전 이 앱 기록(루트 사전 OPENCAD_STANDARDS, XRECORD: 90 형식, 1 파일 이름…)도 읽고, 연결을 쓸 때 AcStStandard로 옮긴다.
  */
-import type { CadColor, CadDocument, DimStyle, Entity, Layer, Linetype, MLeaderStyleObject, RawTag, TextStyle, XRecordObject } from '../../core/model';
+import type { CadColor, CadDocument, DictionaryObject, DimStyle, Entity, Layer, Linetype, MLeaderStyleObject, RawTag, TextStyle, XRecordObject } from '../../core/model';
 import { normalizeHandle, tableKey } from '../../core/model';
 import { DIM_VAR_DEFAULTS } from '../../core/dimvars';
 import type { EditOp } from '../session';
@@ -486,53 +487,139 @@ function retarget(e: Entity, kind: StdKind, same: (n: string | undefined) => boo
 }
 
 // ---------------------------------------------------------------------------
-// 표준 파일 연결(이 앱의 기록)
+// 표준 파일 연결(AutoCAD AcStStandard, 예전 이 앱 기록 OPENCAD_STANDARDS도 읽는다)
 // ---------------------------------------------------------------------------
 
+/** AutoCAD의 표준 연결 사전(루트 사전 항목) */
+export const ACST_STANDARD_KEY = 'AcStStandard';
+/** 예전 이 앱 기록(루트 사전 항목, XRECORD) */
 export const STANDARDS_KEY = 'OPENCAD_STANDARDS';
-const LINK_FORMAT = 1;
 
-function linkObject(doc: CadDocument): XRecordObject | null {
+function rootEntry(doc: CadDocument, name: string): [string, string] | null {
   const root = rootDictionary(doc);
   if (!root) return null;
-  for (const [k, h] of root.entries) {
-    if (k.toUpperCase() !== STANDARDS_KEY) continue;
-    const o = doc.objects.get(normalizeHandle(h));
-    return o?.type === 'XRECORD' ? (o as XRecordObject) : null;
-  }
+  const k = name.toUpperCase();
+  for (const [n, h] of root.entries) if (n.toUpperCase() === k) return [n, normalizeHandle(h)];
   return null;
 }
 
-/** 이 도면에 연결된 표준 파일 이름(순서대로) */
-export function readStandardsLink(doc: CadDocument): string[] {
-  const x = linkObject(doc);
-  if (!x) return [];
-  return x.data.filter((t) => t.code === 1 && typeof t.value === 'string' && t.value).map((t) => String(t.value));
+function legacyLink(doc: CadDocument): XRecordObject | null {
+  const e = rootEntry(doc, STANDARDS_KEY);
+  const o = e ? doc.objects.get(e[1]) : undefined;
+  return o?.type === 'XRECORD' ? (o as XRecordObject) : null;
 }
 
-/** 표준 파일 연결을 쓰는 작업(바뀐 것이 없으면 빈 배열). 루트 사전이 없으면 null */
+function acstDict(doc: CadDocument): DictionaryObject | null {
+  const e = rootEntry(doc, ACST_STANDARD_KEY);
+  const o = e ? doc.objects.get(e[1]) : undefined;
+  return o && (o.type === 'DICTIONARY' || o.type === 'ACDBDICTIONARYWDFLT') ? (o as DictionaryObject) : null;
+}
+
+const firstString = (x: XRecordObject | null | undefined): string => {
+  const t = x?.data.find((d) => d.code === 1);
+  return t ? String(t.value) : '';
+};
+
+/** AcStStandard 항목(번호 순): [항목 이름, XRECORD] */
+function acstEntries(doc: CadDocument, d: DictionaryObject): [string, XRecordObject][] {
+  const out: [string, XRecordObject][] = [];
+  for (const [k, h] of d.entries) {
+    const o = doc.objects.get(normalizeHandle(h));
+    if (o?.type === 'XRECORD') out.push([k, o as XRecordObject]);
+  }
+  const n = (k: string) => (/^\d+$/.test(k) ? Number(k) : Number.MAX_SAFE_INTEGER);
+  return out.sort((a, b) => n(a[0]) - n(b[0]));
+}
+
+/** 경로의 파일 이름(\·/ 뒤) */
+export function stdFileBase(path: string): string {
+  return path.replace(/^.*[\\/]/, '');
+}
+
+/** 같은 표준 파일인지(경로를 빼고 대소문자 무시 — AutoCAD는 전체 경로를 적는다) */
+export function sameStdFile(a: string, b: string): boolean {
+  return stdFileBase(a).toLowerCase() === stdFileBase(b).toLowerCase();
+}
+
+/** 이 도면에 연결된 표준 파일(AutoCAD가 적은 경로 그대로, 순서대로). 예전 이 앱 기록의 이름도 뒤에 붙인다 */
+export function readStandardsLink(doc: CadDocument): string[] {
+  const out: string[] = [];
+  const d = acstDict(doc);
+  if (d) for (const [, x] of acstEntries(doc, d)) {
+    const f = firstString(x);
+    if (f && !out.some((o) => sameStdFile(o, f))) out.push(f);
+  }
+  const old = legacyLink(doc);
+  if (old) for (const t of old.data) if (t.code === 1 && typeof t.value === 'string' && t.value && !out.some((o) => sameStdFile(o, String(t.value)))) out.push(String(t.value));
+  return out;
+}
+
+/**
+ * 표준 파일 연결을 쓰는 작업(바뀐 것이 없으면 빈 배열). 루트 사전이 없으면 null.
+ * AcStStandard 사전(없으면 만든다)의 "0"…"n-1" 항목을 files 순서로 맞춘다 — 같은 파일을 가리키는 항목은 원래 레코드를 그대로 쓴다.
+ * 예전 이 앱 기록(OPENCAD_STANDARDS)은 지운다.
+ */
 export function standardsLinkOps(doc: CadDocument, files: readonly string[], newHandle: () => string): EditOp[] | null {
   const root = rootDictionary(doc);
   if (!root) return null;
-  const old = linkObject(doc);
-  const prev = readStandardsLink(doc);
-  if (prev.length === files.length && prev.every((f, i) => f === files[i])) return [];
-  if (!files.length) {
-    if (!old) return [];
-    const entries = new Map([...root.entries].filter(([k]) => k.toUpperCase() !== STANDARDS_KEY));
-    return [
-      { kind: 'object', key: root.handle, before: root, after: { ...root, entries } },
-      { kind: 'object', key: old.handle, before: old, after: null },
-    ];
+  const old = legacyLink(doc);
+  const d0 = acstDict(doc);
+  const cur = d0 ? acstEntries(doc, d0) : [];
+  const same = !old && cur.length === files.length && cur.every(([k, x], i) => k === String(i) && firstString(x) === files[i]);
+  if (same) return [];
+  const ops: EditOp[] = [];
+  let rootAfter: DictionaryObject | null = null;
+  const rootMut = () => (rootAfter ??= { ...root, entries: new Map(root.entries) });
+  let d: DictionaryObject;
+  if (d0) {
+    // XRECORD가 아닌 항목은 그대로 둔다
+    d = { ...d0, entries: new Map([...d0.entries].filter(([, h]) => doc.objects.get(normalizeHandle(h))?.type !== 'XRECORD')) };
   }
-  const data: RawTag[] = [{ code: 90, value: LINK_FORMAT }, ...files.map((f) => ({ code: 1, value: f }))];
-  if (old) return [{ kind: 'object', key: old.handle, before: old, after: { ...old, data } }];
-  const h = newHandle();
-  const x: XRecordObject = { type: 'XRECORD', handle: h, owner: root.handle, reactors: [root.handle], cloning: 1, data };
-  const entries = new Map(root.entries);
-  entries.set(STANDARDS_KEY, h);
-  return [
-    { kind: 'object', key: h, before: null, after: x },
-    { kind: 'object', key: root.handle, before: root, after: { ...root, entries } },
-  ];
+  else {
+    if (!files.length && !old) return [];
+    d = { type: 'DICTIONARY', handle: newHandle(), owner: root.handle, reactors: [root.handle], entries: new Map(), hardOwner: false, cloning: 1 };
+    rootMut().entries.set(ACST_STANDARD_KEY, d.handle);
+  }
+  delete d.dwgRaw;
+  // 원래 레코드: 파일 이름이 같은 것을 먼저 다시 쓰고, 남는 것은 고쳐 쓰거나 지운다
+  const pool = cur.map(([, x]) => x);
+  const used = new Set<XRecordObject>();
+  const pick = (f: string) => pool.find((x) => !used.has(x) && firstString(x) === f) ?? pool.find((x) => !used.has(x) && sameStdFile(firstString(x), f));
+  const recs: (XRecordObject | null)[] = files.map((f) => {
+    const x = pick(f);
+    if (x) used.add(x);
+    return x ?? null;
+  });
+  files.forEach((f, i) => {
+    let x = recs[i];
+    if (!x) x = pool.find((y) => !used.has(y)) ?? null;
+    if (x) {
+      used.add(x);
+      if (firstString(x) !== f) {
+        let done = false;
+        const data = x.data.map((t) => (t.code === 1 && !done ? ((done = true), { code: 1, value: f }) : t));
+        const after: XRecordObject = { ...x, data: done ? data : [{ code: 1, value: f }, ...data] };
+        delete after.dwgRaw;
+        ops.push({ kind: 'object', key: x.handle, before: x, after });
+      }
+      d.entries.set(String(i), x.handle);
+    } else {
+      const h = newHandle();
+      const nx: XRecordObject = { type: 'XRECORD', handle: h, owner: d.handle, reactors: [d.handle], cloning: 1, data: [{ code: 1, value: f }] };
+      ops.push({ kind: 'object', key: h, before: null, after: nx });
+      d.entries.set(String(i), h);
+    }
+  });
+  for (const x of pool) if (!used.has(x)) ops.push({ kind: 'object', key: x.handle, before: x, after: null });
+  ops.unshift({ kind: 'object', key: d.handle, before: d0, after: d });
+  if (old) {
+    const e = rootEntry(doc, STANDARDS_KEY)!;
+    rootMut().entries.delete(e[0]);
+    ops.push({ kind: 'object', key: old.handle, before: old, after: null });
+  }
+  if (rootAfter) {
+    delete (rootAfter as DictionaryObject).dwgRaw;
+    ops.unshift({ kind: 'object', key: root.handle, before: root, after: rootAfter });
+  }
+  return ops;
 }

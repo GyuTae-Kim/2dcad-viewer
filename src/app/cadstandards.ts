@@ -2,8 +2,9 @@
  * CAD 표준: STANDARDS(표준 구성), CHECKSTANDARDS(표준 검사).
  *
  * - 사용자가 고른 표준 파일(DWS·DWG·DXF)의 도면층·선종류·문자 스타일·치수 스타일을 이 도면과 비교한다.
- * - 표준 파일 이름은 이 도면의 루트 사전 항목 OPENCAD_STANDARDS(XRECORD)에 저장한다(AutoCAD의 표준 연결 기록 구조를
- *   실물로 확인하지 못해 이 앱의 기록을 쓴다 — AutoCAD는 이 연결을 읽지 않는다).
+ * - 표준 파일 연결은 AutoCAD 형식(루트 사전 AcStStandard → "0"·"1"… XRECORD의 1 = 파일 경로)으로 저장한다 — AutoCAD의
+ *   STANDARDS에도 보인다. AutoCAD가 적은 전체 경로는 그대로 두고, 같은 파일인지는 파일 이름(경로 제외, 대소문자 무시)으로 맞춘다.
+ *   예전 이 앱 기록(OPENCAD_STANDARDS)도 읽고, 연결을 저장할 때 AcStStandard로 옮긴다.
  * - 브라우저는 저장된 경로의 파일을 열 수 없으므로 표준 파일 내용은 이 세션 동안만 기억한다. 도면을 다시 열면 다시 고르게 안내한다.
  */
 import type { CadDocument, DimensionEntity, Entity } from '../core/model';
@@ -21,7 +22,9 @@ import {
   readStandardsLink,
   recordOf,
   replacePlan,
+  sameStdFile,
   standardsLinkOps,
+  stdFileBase,
 } from '../edit/layertools/standards';
 import type { App, CommandContext } from './app';
 import { dimensionBlockOps } from './dimcmds';
@@ -55,7 +58,7 @@ function stateOf(doc: CadDocument): StdState {
     states.set(doc, s);
   }
   // 도면에 연결된 이름 가운데 아직 목록에 없는 것(명령 취소 등)
-  for (const n of readStandardsLink(doc)) if (!s.files.some((f) => f.name.toLowerCase() === n.toLowerCase())) s.files.push({ name: n, doc: null });
+  for (const n of readStandardsLink(doc)) if (!s.files.some((f) => sameStdFile(f.name, n))) s.files.push({ name: n, doc: null });
   return s;
 }
 
@@ -103,7 +106,7 @@ async function configureDialog(app: App, ctx: CommandContext, st: DocState): Pro
   const list = new PickList('표준 파일', false);
   const desc = h('div', { class: 'ltx-box ltx-note', style: 'min-height:110px' });
   const refresh = () => {
-    list.setItems(files.map((f, i) => ({ key: String(i), label: f.name, tag: f.doc ? '' : '다시 골라야 함', dim: !f.doc, title: f.doc ? f.name : `${f.name} — 이 세션에서 아직 읽지 않았습니다. 추가(+)로 같은 파일을 고르십시오.` })));
+    list.setItems(files.map((f, i) => ({ key: String(i), label: stdFileBase(f.name), tag: f.doc ? '' : '다시 골라야 함', dim: !f.doc, title: f.doc ? f.name : `${f.name} — 이 세션에서 아직 읽지 않았습니다. 추가(+)로 같은 파일을 고르십시오.` })));
     describe();
   };
   const describe = () => {
@@ -129,12 +132,12 @@ async function configureDialog(app: App, ctx: CommandContext, st: DocState): Pro
   addBtn.addEventListener('click', async () => {
     const got = await pickAndReadDrawings(app, (t, c) => ctx.print(t, c));
     for (const g of got) {
-      const i = files.findIndex((f) => f.name.toLowerCase() === g.name.toLowerCase());
+      const i = files.findIndex((f) => sameStdFile(f.name, g.name));
       if (i >= 0) files[i] = { name: files[i]!.name, doc: g.doc };
       else files.push({ name: g.name, doc: g.doc });
     }
     refresh();
-    if (got.length) list.setSelection([String(files.findIndex((f) => f.name.toLowerCase() === got[got.length - 1]!.name.toLowerCase()))]);
+    if (got.length) list.setSelection([String(files.findIndex((f) => sameStdFile(f.name, got[got.length - 1]!.name)))]);
   });
   const delBtn = h('button', { class: 'ltx-btn', type: 'button', title: '표준 파일 제거(Del)' }, '− 제거');
   delBtn.addEventListener('click', () => {

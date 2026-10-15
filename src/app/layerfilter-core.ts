@@ -1,14 +1,16 @@
 /**
  * 도면층 필터의 앱 쪽 공통 부분: 지금 고른 필터(문서마다, 필터 반전 포함), 필터 저장·이름 바꾸기·삭제·그룹 필터로 변환,
  * 그룹 필터의 도면층 추가·대치·제거, 필터의 도면층에 가시성·잠금·뷰포트 동결 적용, 도면에서 객체를 골라 도면층 얻기.
- * 필터는 도면의 LAYER 표 확장 사전(OPENCAD_LAYERFILTERS)에 바로 쓴다 — 저장하면 DXF·DWG에 남고, 변경은 명령 취소할 수 있다.
+ * 필터는 도면의 LAYER 표 확장 사전에 바로 쓴다 — AutoCAD 형식(ACLYDICTIONARY, AutoCAD 도면층 특성 관리자에 보인다)을 쓰고,
+ * AutoCAD 형식으로 쓸 수 없는 조건의 필터만 이 앱 기록(OPENCAD_LAYERFILTERS)으로 쓴다(src/edit/layerfilter/store.ts).
+ * 저장하면 DXF·DWG에 남고, 변경은 명령 취소할 수 있다.
  */
 import type { Layer } from '../core/model';
 import { tableKey } from '../core/model';
 import { FilterEvaluator, REF_ALL, isUserRef, matchContext, resolveFilterRef, userRef, visibleLayerKeys } from '../edit/layerfilter/match';
 import { type FilterKind, type LayerFilter, canConvertToGroup, canNest, cleanRows, descendantsOf, filterKey, filterNameProblem, findFilter } from '../edit/layerfilter/model';
-import { LayerFilterWriter, listLayerFilters } from '../edit/layerfilter/store';
-import type { EditOp } from '../edit/session';
+import { FilterStoreError, LayerFilterWriter, layerFiltersDict, listLayerFilters, migrateLayerFiltersOps } from '../edit/layerfilter/store';
+import type { EditOp, Transaction } from '../edit/session';
 import type { App } from './app';
 import type { DocState } from './docstate';
 import { currentViewport } from './layerstate-core';
@@ -124,8 +126,17 @@ export function saveLayerFilter(app: App, f: LayerFilter, previousName?: string,
     rows: f.kind === 'property' ? cleanRows(f.rows) : [],
     layers: f.kind === 'group' ? f.layers.filter((n) => st.doc.layers.has(tableKey(n))) : [],
   };
+  // 이 앱 정의로 바꿀 수 없는 AutoCAD 식(읽기 전용)은 정의 행이 없을 때 그대로 둔다
+  if (clean.kind === 'property' && !clean.rows.length && f.expression !== undefined) clean.expression = f.expression;
   const w = writer(app);
-  w.put(clean, prev?.name);
+  const problem = w.problem(clean, prev?.name);
+  if (problem) return problem;
+  try {
+    w.put(clean, prev?.name);
+  } catch (e) {
+    if (e instanceof FilterStoreError) return e.message;
+    throw e;
+  }
   commit(app, 'LAYER', w.finish(), group);
   // 이름이 바뀌었으면 지금 고른 필터도 따라간다
   const v = filterView(st);
@@ -212,6 +223,26 @@ export function editGroupLayers(app: App, name: string, layers: readonly string[
   if (!changed) return 0;
   const err = saveLayerFilter(app, { ...f, layers: [...next.values()] }, f.name, group);
   return err ? -1 : changed;
+}
+
+/**
+ * 확정 고리(확정 직전): 예전 이 앱 기록(OPENCAD_LAYERFILTERS)이 남은 도면이면 AutoCAD 형식으로 옮기는 작업을 그 트랜잭션에 붙인다
+ * — 도면을 고쳐 저장하면 AutoCAD에서도 필터가 보인다. 트랜잭션이 같은 객체나 표 머리를 고치면 다음 확정으로 미룬다.
+ * 고치지 않고 저장한 도면은 그대로다(이 앱은 계속 읽는다).
+ */
+export function migrateFiltersOnCommit(st: DocState, tx: Transaction): Transaction {
+  if (!layerFiltersDict(st.doc)?.entries.size || tx.ops.some((o) => o.kind === 'tableHead')) return tx;
+  let ops: EditOp[];
+  try {
+    ops = migrateLayerFiltersOps(st.doc, () => st.session.newHandle());
+  } catch (e) {
+    console.warn('도면층 필터 옮기기 실패', e);
+    return tx;
+  }
+  if (!ops.length) return tx;
+  const keys = new Set(ops.map((o) => (o.kind === 'object' ? o.key : '')));
+  if (ops.some((o) => o.kind === 'tableHead') || tx.ops.some((o) => o.kind === 'object' && keys.has(o.key))) return tx;
+  return { ...tx, ops: [...tx.ops, ...ops] };
 }
 
 // ---------------------------------------------------------------------------

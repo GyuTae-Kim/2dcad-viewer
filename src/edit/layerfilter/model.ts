@@ -106,6 +106,11 @@ export interface LayerFilter {
   rows: FilterRow[];
   /** 그룹 필터의 도면층 이름(원래 대소문자, 도면에 있는 것만) */
   layers: string[];
+  /**
+   * AutoCAD 필터 식을 이 앱 필터 정의로 바꿀 수 없을 때 그 원본 식(읽기 전용 — rows는 비고, 결과는 식으로 구한다).
+   * 이름을 바꾸거나 옮겨도 식은 그대로 쓴다.
+   */
+  expression?: string;
 }
 
 /** 조건이 있는 열만 남긴 행(빈 행이면 null) */

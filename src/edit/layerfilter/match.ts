@@ -12,6 +12,7 @@ import { wcmatch } from '../util/wildcard';
 import { parseLayerColor, parseTrueColor, percentFromOpacity } from '../layercmd';
 import { layerPlotStyleName, plotStyleNameMap } from '../layerstate/store';
 import { BUILTIN_LABEL, type FilterRow, type LayerFilter, cleanRows, filterKey, findFilter } from './model';
+import { type ExprNode, literalToCell, parseFilterExpression } from './expr';
 
 export interface MatchContext {
   /** 객체가 있는 도면층(대문자 키) */
@@ -124,6 +125,33 @@ export function rowsMatch(rows: readonly FilterRow[], l: Layer, ctx: MatchContex
   return !list.length || list.some((r) => rowMatches(r, l, ctx));
 }
 
+/**
+ * AutoCAD 필터 식을 그대로 따진다(이 앱 필터 정의로 바꿀 수 없는 식 — 읽기 전용 필터).
+ * 아는 열은 행 조건과 같게 비교하고, 모르는 열(VPOVERRIDES 등)은 따지지 않는다(참). 읽을 수 없는 식은 아무 도면층과도 맞지 않는다.
+ */
+export function expressionMatcher(text: string): (l: Layer, ctx: MatchContext) => boolean {
+  const n = parseFilterExpression(text);
+  if (n === 'empty') return () => true;
+  if (!n) return () => false;
+  const ev = (x: ExprNode, l: Layer, ctx: MatchContext): boolean => {
+    switch (x.t) {
+      case 'or':
+        return x.items.some((i) => ev(i, l, ctx));
+      case 'and':
+        return x.items.every((i) => ev(i, l, ctx));
+      case 'not':
+        return !ev(x.item, l, ctx);
+      case 'rel': {
+        const c = literalToCell(x.name, '==', x.value);
+        if (!c) return true;
+        const hit = conditionMatches(c[0], c[1], l, ctx);
+        return x.op === '==' ? hit : !hit;
+      }
+    }
+  };
+  return (l, ctx) => ev(n, l, ctx);
+}
+
 // ---------------------------------------------------------------------------
 // 필터 결과
 // ---------------------------------------------------------------------------
@@ -161,9 +189,10 @@ export class FilterEvaluator {
     if (f.kind === 'property') {
       const p = findFilter(this.filters, f.parent);
       const base = p ? this.of(p) : null;
+      const m = f.expression !== undefined ? expressionMatcher(f.expression) : (l: Layer, ctx: MatchContext) => rowsMatch(f.rows, l, ctx);
       for (const [lk, l] of this.doc.layers) {
         if (base && !base.has(lk)) continue;
-        if (rowsMatch(f.rows, l, this.ctx)) out.add(lk);
+        if (m(l, this.ctx)) out.add(lk);
       }
     } else {
       for (const n of f.layers) {

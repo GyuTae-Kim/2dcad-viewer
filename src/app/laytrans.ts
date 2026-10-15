@@ -1,13 +1,26 @@
 /**
  * 도면층 변환기(LAYTRANS): 이 도면의 도면층을 다른 도면(DWG·DXF·DWS·DWT)의 도면층 또는 새로 만든 정의로 바꾼다.
  * 변환 대상은 사용자가 고른 파일에서 읽는다(파일은 이 브라우저 안에서만 읽는다).
- * 변환은 명령 취소 한 단계. 매핑을 도면·파일에 저장하는 기능(저장(S))은 없다 — AutoCAD가 쓰는 매핑 기록 형식을 확인하지 못했다.
+ * 변환은 명령 취소 한 단계.
+ * 매핑 저장(S)·불러오기는 AutoCAD 형식: 저장하면 변환 대상 도면층과 확장 자료 ACLAYTRANS(원본 도면층 이름)를 담은 DWS를
+ * 내려받고, 그런 파일을 로드(L)하면 이 도면에 있는 원본 도면층의 매핑을 다시 채운다(src/edit/layertools/translate.ts).
  */
 import type { CadDocument, Layer } from '../core/model';
 import { tableKey } from '../core/model';
 import { DefinitionCopier } from '../edit/layertools/clone';
 import { colorLabel, lineweightLabel, transparencyLabel } from '../edit/layertools/standards';
-import { DEFAULT_TRANSLATE_SETTINGS, type LayerMapping, type TranslateSettings, cannotTranslate, sameNameMappings, translateLayersOps, translateLog } from '../edit/layertools/translate';
+import {
+  DEFAULT_TRANSLATE_SETTINGS,
+  type LayTransSaveItem,
+  type LayerMapping,
+  type TranslateSettings,
+  cannotTranslate,
+  layTransMappingDocument,
+  readLayTransMappings,
+  sameNameMappings,
+  translateLayersOps,
+  translateLog,
+} from '../edit/layertools/translate';
 import { filterLayerNames, layerObjectCounts, purgeLayersOps } from '../edit/layertools/walk';
 import type { App } from './app';
 import { pickAndReadDrawings } from './drawingfiles';
@@ -233,8 +246,23 @@ export function registerLayTransCommands(app: App): void {
           }
         }
         if (files.length) ctx.print(`변환 대상에 도면층 ${added}개를 넣었습니다(${files.map((f) => f.name).join(', ')}).${bad ? ` 이름을 쓸 수 없거나 외부 참조 종속인 ${bad}개는 뺐습니다.` : ''}`);
-        refreshTo();
-        refreshTable();
+        // 파일에 저장된 매핑(ACLAYTRANS): 이 도면에 있는 원본 도면층만, 이미 매핑한 것은 그대로
+        let loaded = 0;
+        for (const f of files) {
+          for (const m of readLayTransMappings(f.doc)) {
+            const tk = tableKey(m.target);
+            if (!targets.has(tk)) continue;
+            for (const n of m.sources) {
+              const fk = tableKey(n);
+              const l = doc.layers.get(fk);
+              if (!l || cannotTranslate(l.name) || mapping.has(fk)) continue;
+              mapping.set(fk, tk);
+              loaded++;
+            }
+          }
+        }
+        if (loaded) ctx.print(`파일에 저장된 도면층 매핑 ${loaded}개를 불러왔습니다.`);
+        refreshAll();
       });
       const newBtn = h('button', { class: 'ltx-btn', type: 'button' }, '새로 만들기(N)...');
       newBtn.addEventListener('click', async () => {
@@ -285,6 +313,34 @@ export function registerLayTransCommands(app: App): void {
       const editBtn = h('button', { class: 'ltx-btn', type: 'button' }, '편집(E)...');
       editBtn.addEventListener('click', () => void editMapping());
       const removeBtn = h('button', { class: 'ltx-btn', type: 'button' }, '제거(R)');
+      const saveBtn = h('button', { class: 'ltx-btn', type: 'button', title: '매핑과 변환 대상 도면층을 DWS 파일로 내려받습니다(AutoCAD 도면층 변환기에서도 불러올 수 있습니다)' }, '저장(S)...');
+      saveBtn.addEventListener('click', async () => {
+        if (!mapping.size) {
+          info.textContent = '저장할 매핑이 없습니다.';
+          return;
+        }
+        const byTarget = new Map<string, LayTransSaveItem & { from: string[] }>();
+        for (const [fk, tk] of mapping) {
+          const t = targets.get(tk);
+          if (!t) continue;
+          let it = byTarget.get(tk);
+          if (!it) byTarget.set(tk, (it = { layer: t.layer, source: t.source, from: [] }));
+          it.from.push(doc.layers.get(fk)?.name ?? fk);
+        }
+        const name = `${baseName(st.name)}-도면층 매핑.dws`;
+        let docId = -1;
+        try {
+          const out = layTransMappingDocument([...byTarget.values()], doc);
+          docId = (await app.engine.adopt(name, out)).docId;
+          const res = await app.engine.save(docId, 'dwg', 'AC1032', false);
+          download(new Blob([res.data as BlobPart], { type: 'application/acad' }), name);
+          ctx.print(`도면층 매핑 ${mapping.size}개(변환 대상 ${byTarget.size}개)를 ${name}(으)로 저장했습니다.`);
+        } catch (e) {
+          ctx.print(`매핑을 저장하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, 'err');
+        } finally {
+          if (docId >= 0) app.engine.closeDoc(docId);
+        }
+      });
       removeBtn.addEventListener('click', () => {
         for (const k of selectedMaps) mapping.delete(k);
         selectedMaps.clear();
@@ -303,8 +359,8 @@ export function registerLayTransCommands(app: App): void {
         ),
         h('div', { class: 'ltx-h' }, '도면층 변환 매핑(Y)'),
         tableBox,
-        h('div', { class: 'ltx-row' }, editBtn, removeBtn, h('span', { class: 'ltx-grow' }), info),
-        h('div', { class: 'ltx-note' }, '매핑은 이 도면에 저장하지 않습니다(저장(S) 없음). 모든 매핑은 지금의 도면층 기준으로 한 번에 적용합니다.'),
+        h('div', { class: 'ltx-row' }, editBtn, removeBtn, saveBtn, h('span', { class: 'ltx-grow' }), info),
+        h('div', { class: 'ltx-note' }, '저장(S)은 매핑을 DWS 파일로 내려받습니다(이 도면에는 남지 않습니다). 매핑을 저장한 파일을 로드(L)하면 매핑을 다시 채웁니다. 모든 매핑은 지금의 도면층 기준으로 한 번에 적용합니다.'),
       );
       refreshAll();
       const dlg = wideDialog('도면층 변환기', body, [

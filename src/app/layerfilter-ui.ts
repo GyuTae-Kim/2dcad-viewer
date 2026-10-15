@@ -5,6 +5,8 @@
  * - 도면층 필터 특성 대화상자(필터 이름, 필터 정의 행, 필터 미리보기), 그룹 필터 대화상자(도면층 추가·제거·끌어 놓기·도면에서 선택),
  *   FILTERS(도면층 필터 삭제) 대화상자.
  * 화면의 변경은 모두 도면에 바로 쓰고 명령 취소할 수 있다.
+ * 필터는 AutoCAD 형식으로 저장한다(AutoCAD에서도 보인다). AutoCAD 형식으로 쓸 수 없는 조건의 필터는 이 앱 기록으로 저장하고
+ * 트리에 "앱" 표지를 단다. 이 앱 정의로 바꿀 수 없는 AutoCAD 식은 "식" 표지를 달고 정의를 읽기 전용으로 보인다.
  */
 import { aciToRgb, rgbToCss } from '../core/color';
 import type { CadColor, Layer } from '../core/model';
@@ -13,7 +15,8 @@ import { LINEWEIGHTS, lineweightText, parseLayerColor, parseTrueColor, percentFr
 import { FilterEvaluator, type FilterNode, colorValueText, filterTree, findNode, isUserRef, matchContext, userRef } from '../edit/layerfilter/match';
 import { FILTER_COLUMNS, type FilterKind, type FilterRow, type LayerFilter, canConvertToGroup, cleanRow, defaultFilterName, descendantsOf, filterKey, findFilter } from '../edit/layerfilter/model';
 import { hasWildcard, wcmatch } from '../edit/util/wildcard';
-import { autocadFilterEntries, listLayerFilters } from '../edit/layerfilter/store';
+import { type StoredFilter, listLayerFilters, listStoredFilters } from '../edit/layerfilter/store';
+import { unwritableColumns } from '../edit/layerfilter/expr';
 import type { App } from './app';
 import type { DocState } from './docstate';
 import {
@@ -52,6 +55,10 @@ const STYLE = `
 .lf-node.sel .tw{color:#dfe8f5}
 .lf-node .ic{width:14px;height:14px;flex:none;display:inline-flex}
 .lf-node .lbl{overflow:hidden;text-overflow:ellipsis}
+.lf-node .tag{flex:none;font-size:10px;line-height:14px;padding:0 4px;border-radius:7px;border:1px solid var(--border-soft);color:var(--text-faint)}
+.lf-node.sel .tag{color:#dfe8f5;border-color:rgba(255,255,255,.35)}
+.lf-expr{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;padding:6px 8px;border:1px solid var(--border-soft);border-radius:4px;background:var(--bg-input);max-height:120px;overflow:auto}
+.lf-warn{color:#ffcc80;font-size:12px;min-height:0}
 .lf-node input{background:var(--bg-input);color:var(--text);border:1px solid var(--accent);border-radius:2px;font:inherit;padding:0 3px;min-width:80px}
 .lf-foot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:6px;color:var(--text-dim);font-size:11.5px}
 .lf-foot label{display:flex;align-items:center;gap:5px;cursor:pointer}
@@ -157,7 +164,9 @@ export function layerFilterPanel(app: App, refresh: () => void): LayerFilterPane
   ensureStyle();
   const st = app.active!;
   const res = currentFilterResult(st);
-  const filters = listLayerFilters(st.doc);
+  const stored = listStoredFilters(st.doc);
+  const filters = stored.map((x) => x.filter);
+  const info = new Map<string, StoredFilter>(stored.map((x) => [userRef(x.filter.name), x]));
   const showTree = loadPref<boolean>(TREE_PREF, true);
   let collapsed = collapsedOf.get(st);
   if (!collapsed) collapsedOf.set(st, (collapsed = new Set()));
@@ -183,12 +192,19 @@ export function layerFilterPanel(app: App, refresh: () => void): LayerFilterPane
         });
       const lbl = h('span', { class: 'lbl' }, n.label);
       const sel = n.ref === res.ref;
+      const si = info.get(n.ref);
+      const tag = si?.readOnly
+        ? h('span', { class: 'tag', title: `AutoCAD 필터 식(읽기 전용): ${si.filter.expression ?? ''}` }, '식')
+        : si?.format === 'app'
+          ? h('span', { class: 'tag', title: '이 앱 기록 — AutoCAD에서는 보이지 않습니다(AutoCAD 형식으로 쓸 수 없는 조건)' }, '앱')
+          : null;
       const row = h(
         'div',
         { class: `lf-node${sel ? ' sel' : ''}`, role: 'treeitem', 'aria-selected': sel ? 'true' : 'false', 'aria-expanded': n.children.length ? (closed ? 'false' : 'true') : undefined, style: `padding-left:${4 + depth * 14}px`, title: n.label },
         tw,
         h('span', { class: 'ic', html: nodeIcon(n) }),
         lbl,
+        tag,
       );
       row.addEventListener('click', () => {
         if (!sel) select(n.ref);
@@ -484,6 +500,10 @@ export async function propertyFilterDialog(app: App, init: LayerFilter, previous
   const others = listLayerFilters(doc).filter((f) => !previousName || filterKey(f.name) !== filterKey(previousName));
   const ctx = matchContext(doc);
   const rows: FilterRow[] = init.rows.map((r) => ({ ...r }));
+  /** 이 앱 정의로 바꿀 수 없는 AutoCAD 식(정의는 읽기 전용, 이름만 바꾼다) */
+  const readOnlyExpr = init.expression;
+  const parentStored = init.parent ? listStoredFilters(doc).find((x) => filterKey(x.filter.name) === filterKey(init.parent!)) : undefined;
+  const warn = h('div', { class: 'lf-warn', role: 'status' });
   const nameIn = h('input', { class: 'ltx-input', value: init.name, 'aria-label': '필터 이름', style: 'width:260px' }) as HTMLInputElement;
   const err = h('div', { class: 'lf-err', role: 'alert' });
   const defBox = h('div', { class: 'lf-def' });
@@ -499,13 +519,24 @@ export async function propertyFilterDialog(app: App, init: LayerFilter, previous
     h('datalist', { id: 'lf-dl-name' }, ...[...doc.layers.values()].map((l) => h('option', { value: l.name }))),
   );
 
-  const draft = (): LayerFilter => ({ name: nameIn.value.trim() || init.name, kind: 'property', parent: init.parent, rows: rows.map((r) => cleanRow(r)).filter((r): r is FilterRow => !!r), layers: [] });
+  const draft = (): LayerFilter => {
+    const d: LayerFilter = { name: nameIn.value.trim() || init.name, kind: 'property', parent: init.parent, rows: readOnlyExpr !== undefined ? [] : rows.map((r) => cleanRow(r)).filter((r): r is FilterRow => !!r), layers: [] };
+    if (readOnlyExpr !== undefined) d.expression = readOnlyExpr;
+    return d;
+  };
 
   const updatePreview = () => {
     const d = draft();
     const keys = new FilterEvaluator(doc, others, ctx, d).of(d);
     prevTitle.textContent = `필터 미리보기: ${keys.size}개 도면층`;
     prevBox.replaceChildren(previewTable(app, keys, ctx.used, ctx.plotStyle));
+    if (readOnlyExpr !== undefined) return;
+    const bad = unwritableColumns(d.rows).map((k) => FILTER_COLUMNS.find((c) => c.key === k)?.label ?? k);
+    warn.textContent = bad.length
+      ? `AutoCAD 형식으로 쓰는 방법을 확인하지 못한 조건(${bad.join('·')})이 있어 이 필터는 이 앱 기록으로 저장합니다 — AutoCAD에서는 보이지 않습니다. (색상은 ACI 번호, 선가중치는 mm 값만 AutoCAD 형식으로 씁니다)`
+      : parentStored?.format === 'app'
+        ? '상위 필터가 이 앱 기록이라 이 필터도 이 앱 기록으로 저장합니다 — AutoCAD에서는 보이지 않습니다.'
+        : '';
   };
 
   const cell = (row: FilterRow, col: (typeof FILTER_COLUMNS)[number]): HTMLElement => {
@@ -616,19 +647,20 @@ export async function propertyFilterDialog(app: App, init: LayerFilter, previous
   guardKeys(nameIn);
 
   const parentNote = init.parent ? h('div', { class: 'ltx-note' }, `상위 필터: ${init.parent} — 이 필터는 상위 필터의 도면층 가운데에서 고릅니다.`) : null;
-  const body = h(
-    'div',
-    { class: 'ltx-col' },
-    lists,
-    h('label', { class: 'ltx-row' }, h('span', { class: 'ltx-h' }, '필터 이름(N):'), nameIn),
-    parentNote,
-    h('div', { class: 'ltx-h' }, '필터 정의:'),
-    defBox,
-    h('div', { class: 'ltx-note' }, '한 행의 조건은 모두 맞아야 하고, 행끼리는 하나만 맞으면 됩니다. 빈 칸은 상관없음입니다. 이름·선종류·플롯 스타일·설명에는 와일드카드(* ? # @ . [ ] ~ `)를 쓸 수 있습니다.'),
-    prevTitle,
-    prevBox,
-    err,
-  );
+  const definition =
+    readOnlyExpr !== undefined
+      ? [
+          h('div', { class: 'ltx-h' }, '필터 정의(AutoCAD 필터 식, 읽기 전용):'),
+          h('div', { class: 'lf-expr', 'aria-label': 'AutoCAD 필터 식' }, readOnlyExpr || '(조건 없음)'),
+          h('div', { class: 'ltx-note' }, '이 식은 이 앱의 필터 정의 행으로 바꿀 수 없어 원본 그대로 둡니다(이름은 바꿀 수 있습니다). 미리보기는 이 앱이 아는 열만 따진 결과입니다.'),
+        ]
+      : [
+          h('div', { class: 'ltx-h' }, '필터 정의:'),
+          defBox,
+          h('div', { class: 'ltx-note' }, '한 행의 조건은 모두 맞아야 하고, 행끼리는 하나만 맞으면 됩니다. 빈 칸은 상관없음입니다. 이름·선종류·플롯 스타일·설명에는 와일드카드(* ? # @ . [ ] ~ `)를 쓸 수 있습니다.'),
+          warn,
+        ];
+  const body = h('div', { class: 'ltx-col' }, lists, h('label', { class: 'ltx-row' }, h('span', { class: 'ltx-h' }, '필터 이름(N):'), nameIn), parentNote, ...definition, prevTitle, prevBox, err);
   let ok = false;
   const dlg = wideDialog('도면층 필터 특성', body, [
     { label: '취소', value: 'cancel' },
@@ -816,11 +848,8 @@ export async function deleteFiltersDialog(app: App): Promise<number> {
   ensureStyle();
   const st = app.active!;
   const filters = listLayerFilters(st.doc);
-  const acad = autocadFilterEntries(st.doc);
-  const acadNote = acad.length ? `이 도면의 AutoCAD 도면층 필터 원본(${acad.map((a) => `${a.dict} ${a.count}개`).join(', ')})은 이 웹 버전에서 읽지 않으며 고치지 않고 그대로 저장합니다.` : '';
   if (!filters.length) {
     app.cmd.print('이 도면에는 삭제할 도면층 필터가 없습니다.');
-    if (acadNote) app.cmd.print(acadNote);
     return 0;
   }
   const keep = new Set<string>();
@@ -871,7 +900,6 @@ export async function deleteFiltersDialog(app: App): Promise<number> {
       h('div', { class: 'ltx-col' }, h('div', { class: 'ltx-h' }, '삭제할 필터'), delList.el),
     ),
     h('div', { class: 'ltx-note' }, '남길 필터를 왼쪽으로 옮긴 뒤 "필터 삭제"를 누르십시오. 지우는 필터 안에 남길 필터가 있으면 그 필터는 위쪽으로 옮겨 남깁니다.'),
-    acadNote ? h('div', { class: 'ltx-note' }, acadNote) : null,
   );
   const dlg = wideDialog('도면층 필터 삭제', body, [
     { label: '닫기', value: 'close' },
