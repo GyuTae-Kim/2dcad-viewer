@@ -11,7 +11,7 @@ import type { LayerState } from '../render/styles';
 import { SpaceScene } from './scene';
 import type { App } from './app';
 import type { DocState } from './docstate';
-import { dialog, h, toast } from './ui/dom';
+import { type MenuItem, dialog, h, showMenu, toast } from './ui/dom';
 
 export interface RefItem {
   kind: 'image' | 'xref' | 'pdf';
@@ -41,6 +41,19 @@ interface XrefFile {
   layers: LayerState[];
 }
 const xrefFiles = new Map<string, XrefFile>();
+
+/** 다른 모듈이 거는 고리(외부 참조 비교 XCOMPARE) */
+export const refHooks: {
+  /** 연결해 둔 참조 파일을 다른 내용으로 다시 연결했을 때(열쇠 = 파일 이름 소문자) */
+  onXrefReload: ((key: string, prev: { name: string; doc: CadDocument }, next: { name: string; doc: CadDocument }) => void) | null;
+  /** 외부 참조 창의 행 오른쪽 클릭 메뉴 항목 */
+  rowMenu: ((item: RefItem, closeDialog: () => void) => MenuItem[]) | null;
+} = { onXrefReload: null, rowMenu: null };
+
+/** 외부 참조 블록이 찾는 파일 열쇠(파일 이름 소문자) */
+export function xrefFileKey(b: { name: string; xrefPath?: string }): string {
+  return baseKey(b.xrefPath || `${b.name}.dwg`);
+}
 
 /** 호스트 도면의 외부 참조 블록 → 연결한 참조 파일 */
 export function xrefOfDoc(doc: CadDocument, blockKey: string): XrefFile | null {
@@ -202,12 +215,12 @@ export function expandXrefBounds(app: App, st: DocState, space?: string): void {
   }
 }
 
-/** 고른 파일 중 외부 참조(DWG·DXF)를 연다. 연결한 파일 이름들 */
-export async function linkXrefFiles(app: App, files: File[]): Promise<string[]> {
+/** 고른 파일 중 외부 참조(DWG·DXF)를 연다. 연결한 파일 이름들. asKey면 그 참조 열쇠로(다른 이름의 파일로 다시 로드) */
+export async function linkXrefFiles(app: App, files: File[], asKey?: string): Promise<string[]> {
   const out: string[] = [];
   for (const f of files) {
     if (!/\.(dwg|dxf)$/i.test(f.name)) continue;
-    const key = f.name.toLowerCase();
+    const key = asKey ?? f.name.toLowerCase();
     try {
       const res = await app.engine.open(f.name, await f.arrayBuffer());
       const old = xrefFiles.get(key);
@@ -217,6 +230,7 @@ export async function linkXrefFiles(app: App, files: File[]): Promise<string[]> 
       }
       xrefFiles.set(key, { name: f.name, docId: res.docId, doc: res.doc, scene: new SpaceScene(app.view.renderer, res.model, '*MODEL_SPACE'), layers: res.model.layers });
       out.push(f.name);
+      if (old) refHooks.onXrefReload?.(key, { name: old.name, doc: old.doc }, { name: f.name, doc: res.doc });
     } catch (e) {
       app.cmd.print(`${f.name}: 외부 참조를 열지 못했습니다(${e instanceof Error ? e.message : String(e)}).`, 'err');
     }
@@ -481,7 +495,18 @@ export function registerRefCommands(app: App): void {
                 ...refs.map((r) =>
                   h(
                     'tr',
-                    {},
+                    {
+                      oncontextmenu: (ev: Event) => {
+                        const items = refHooks.rowMenu?.(r, () => back.remove()) ?? [];
+                        if (!items.length) return;
+                        ev.preventDefault();
+                        const m = ev as MouseEvent;
+                        showMenu(m.clientX, m.clientY, items);
+                        // 대화상자 위에 보이게
+                        const el = document.body.lastElementChild as HTMLElement | null;
+                        if (el?.classList.contains('menu')) el.style.zIndex = '80';
+                      },
+                    },
                     h('td', {}, r.name),
                     h('td', {}, kindName[r.kind]),
                     h('td', { style: r.found ? '' : 'color:var(--warn, #e0a030)' }, r.found ? '로드됨' : '찾을 수 없음'),
@@ -516,7 +541,7 @@ export function registerRefCommands(app: App): void {
         if (img.unsupported.length) ctx.print(`참고: ${img.unsupported.slice(0, 4).join(', ')}은(는) 이 브라우저가 읽을 수 없는 이미지 형식입니다(PNG·JPEG·GIF·BMP·WebP만).`);
         if (n) toast(`외부 파일 ${n}개를 연결했습니다.`, 'info', 3000);
       };
-      dialog('외부 참조', body, [
+      const back = dialog('외부 참조', body, [
         { label: '파일 고르기…', run: () => void load(false) },
         { label: '폴더 고르기…', primary: true, run: () => void load(true) },
       ]);

@@ -7,6 +7,7 @@ import type { App } from './app';
 import { ALL_SNAPS, SNAP_NAMES } from './snap';
 import type { SnapKind } from './view';
 import { form } from './ui/dom';
+import { isoState, setIso } from './viewtools-iso';
 
 /** -OSNAP·명령행에서 쓰는 영문 약어 */
 const SNAP_ABBR: Record<string, SnapKind> = { END: 'end', MID: 'mid', CEN: 'cen', QUA: 'qua', INT: 'int', INS: 'ins', NOD: 'nod', PER: 'per', NEA: 'nea' };
@@ -77,17 +78,63 @@ export function registerDraftingCommands(app: App): void {
     async run(ctx) {
       const st = app.active!;
       const cur = formatLength(st.snap.x, st.units);
-      const r = await ctx.getPoint(`스냅 간격두기 지정 또는 [켜기(ON)/끄기(OFF)/종횡비(A)] <${cur}>:`, {
+      const iso = isoState(st).style === 1;
+      const r = await ctx.getPoint(`스냅 간격두기 지정 또는 [켜기(ON)/끄기(OFF)/${iso ? '' : '종횡비(A)/'}스타일(S)/유형(T)] <${iso ? formatLength(st.snap.y, st.units) : cur}>:`, {
         keywords: [
           { key: 'ON', label: '켜기' },
           { key: 'OFF', label: '끄기' },
-          { key: 'A', label: '종횡비' },
+          ...(iso ? [] : [{ key: 'A', label: '종횡비' }]),
+          { key: 'S', label: '스타일' },
+          { key: 'T', label: '유형' },
         ],
         allowText: true,
         preferNumber: true,
       });
       if ('enter' in r) return;
       if ('keyword' in r) {
+        if (r.keyword === 'S') {
+          // 스냅 스타일: 표준(직사각형) 또는 등각투영(SNAPSTYL)
+          const s = await ctx.getPoint(`스냅 그리드 스타일 입력 [표준(S)/등각투영(I)] <${iso ? 'I' : 'S'}>:`, {
+            keywords: [
+              { key: 'S', label: '표준' },
+              { key: 'I', label: '등각투영' },
+            ],
+          });
+          const toIso = 'keyword' in s ? s.keyword === 'I' : 'enter' in s ? iso : null;
+          if (toIso === null) return;
+          if (toIso) {
+            const y = await ctx.getPoint(`수직 간격두기 지정 <${formatLength(st.snap.y, st.units)}>:`, { allowText: true, preferNumber: true });
+            const vy = 'text' in y ? Number(y.text) : st.snap.y;
+            if (!(vy > 0)) {
+              ctx.print('값은 양수이고 0이 아니어야 합니다.', 'err');
+              return;
+            }
+            st.snap.y = vy;
+            setIso(app, st, { style: 1 });
+          } else {
+            setIso(app, st, { style: 0 });
+            const x = await ctx.getPoint(`스냅 간격두기 지정 또는 [종횡비(A)] <${formatLength(st.snap.x, st.units)}>:`, { keywords: [{ key: 'A', label: '종횡비' }], allowText: true, preferNumber: true });
+            if ('text' in x && Number(x.text) > 0) st.snap.x = st.snap.y = Number(x.text);
+            else if ('keyword' in x) {
+              const ax = await ctx.getPoint(`수평 간격두기 지정 <${formatLength(st.snap.x, st.units)}>:`, { allowText: true, preferNumber: true });
+              const ay = await ctx.getPoint(`수직 간격두기 지정 <${formatLength(st.snap.y, st.units)}>:`, { allowText: true, preferNumber: true });
+              if ('text' in ax && Number(ax.text) > 0) st.snap.x = Number(ax.text);
+              if ('text' in ay && Number(ay.text) > 0) st.snap.y = Number(ay.text);
+            }
+          }
+          app.view.requestOverlay();
+          return;
+        }
+        if (r.keyword === 'T') {
+          const t = await ctx.getPoint('스냅 유형 입력 [극좌표(P)/그리드(G)] <그리드>:', {
+            keywords: [
+              { key: 'P', label: '극좌표' },
+              { key: 'G', label: '그리드' },
+            ],
+          });
+          if ('keyword' in t && t.keyword === 'P') ctx.print('극좌표 스냅(PolarSnap)은 이 웹 버전에서 지원하지 않습니다. 그리드 스냅을 그대로 씁니다.', 'err');
+          return;
+        }
         if (r.keyword === 'A') {
           const x = await ctx.getPoint(`수평 간격두기 지정 <${cur}>:`, { allowText: true, preferNumber: true });
           const y = await ctx.getPoint(`수직 간격두기 지정 <${formatLength(st.snap.y, st.units)}>:`, { allowText: true, preferNumber: true });
@@ -122,6 +169,16 @@ export function registerDraftingCommands(app: App): void {
         { key: 'snapOn', label: '스냅 켜기 (F9)', type: 'check', value: app.snapOn },
         { key: 'snapX', label: '스냅 X 간격', type: 'number', value: st.snap.x },
         { key: 'snapY', label: '스냅 Y 간격', type: 'number', value: st.snap.y },
+        {
+          key: 'snapStyle',
+          label: '스냅 유형',
+          type: 'select',
+          value: String(isoState(st).style),
+          options: [
+            { value: '0', label: '직사각형 스냅' },
+            { value: '1', label: '등각투영 스냅' },
+          ],
+        },
         { key: 'gridOn', label: '격자 켜기 (F7)', type: 'check', value: app.gridOn },
         { key: 'gridX', label: '격자 X 간격', type: 'number', value: st.grid.x },
         { key: 'gridY', label: '격자 Y 간격', type: 'number', value: st.grid.y },
@@ -155,6 +212,7 @@ export function registerDraftingCommands(app: App): void {
       st.grid.x = Number(v.gridX);
       st.grid.y = Number(v.gridY);
       st.grid.major = Math.round(Number(v.major));
+      if (Number(v.snapStyle) !== isoState(st).style) setIso(app, st, { style: Number(v.snapStyle) === 1 ? 1 : 0 });
       if (!!v.snapOn !== app.snapOn) app.toggleSnap(!!v.snapOn);
       if (!!v.gridOn !== app.gridOn) app.toggleGrid(!!v.gridOn);
       app.view.requestOverlay();

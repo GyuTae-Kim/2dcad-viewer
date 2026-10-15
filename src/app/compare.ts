@@ -71,6 +71,14 @@ function summary(s: CompareSession): string {
   return `현재 도면에서만 ${r.onlyCurrent.length}개, 비교 도면에서만 ${r.onlyCompare.length}개, 차이 없음 ${r.common}개, 변경 세트 ${s.sets.length}개${f ? ` (비교하지 않은 문자·해치 ${f}개)` : ''}.`;
 }
 
+/** 도면 비교를 시작하기 전에 부르는 것(외부 참조 비교가 자기 비교를 닫는다) */
+export const beforeCompare = new Set<() => void>();
+
+/** 도면 비교를 끝낸다(열려 있었으면 true). 외부 참조 비교가 시작할 때 부른다 */
+export function closeCompare(): boolean {
+  return endCompare();
+}
+
 /** 비교를 끝낸다 */
 function endCompare(): boolean {
   const s = session;
@@ -86,6 +94,7 @@ function endCompare(): boolean {
 
 async function startCompare(app: App, ctx: CommandContext, st: DocState, src: CompareSource): Promise<void> {
   endCompare();
+  for (const f of beforeCompare) f();
   if (st.blockEdit) {
     if (!src.open) app.engine.closeDoc(src.workerDocId);
     ctx.print('블록 편집기에서는 도면을 비교할 수 없습니다.', 'err');

@@ -14,6 +14,7 @@ import { unlockedOnly } from './layers';
 import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
 import { textStyleAnnotative } from '../edit/annoscale/xdata';
+import { isoCircleEllipse, isoEllipseKeyword } from './viewtools-iso';
 
 // ---------------------------------------------------------------------------
 // 공통
@@ -676,12 +677,16 @@ export function registerDrawCommands(app: App): void {
     aliases: ['EL'],
     title: '타원',
     async run(ctx) {
-      const r0 = await ctx.getPoint('타원의 축 끝점 지정 또는 [호(A)/중심(C)]:', {
-        keywords: [
-          { key: 'A', label: '호' },
-          { key: 'C', label: '중심' },
-        ],
+      // 등각투영 제도가 켜져 있으면 등각원(I)
+      const isoKw = isoEllipseKeyword(app);
+      const r0 = await ctx.getPoint(isoKw ? '타원의 축 끝점 지정 또는 [호(A)/중심(C)/등각원(I)]:' : '타원의 축 끝점 지정 또는 [호(A)/중심(C)]:', {
+        keywords: [{ key: 'A', label: '호' }, { key: 'C', label: '중심' }, ...(isoKw ? [isoKw] : [])],
       });
+      if ('keyword' in r0 && r0.keyword === 'I') {
+        const ic = await isoCircleEllipse(app, ctx);
+        if (ic) addEntities(app, ctx, [{ ...base(), type: 'ELLIPSE', handle: '', center: v3(ic.center), majorAxis: { ...ic.majorAxis, z: 0 }, ratio: ic.ratio, startParam: 0, endParam: TAU } as Entity], 'ELLIPSE');
+        return;
+      }
       let arcMode = false;
       let center: Pt;
       let major: Pt;

@@ -58,6 +58,7 @@ import { registerExportLayoutCommands } from './app/exportlayout';
 import { registerPdfImportCommands } from './app/pdfimport';
 import { registerLayerStateCommands } from './app/layerstate';
 import { registerExpressCommands } from './app/express';
+import { registerViewToolCommands } from './app/viewtools';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportRaster, exportSvg } from './app/export';
@@ -140,6 +141,7 @@ registerExportLayoutCommands(app);
 registerPdfImportCommands(app);
 registerLayerStateCommands(app);
 registerExpressCommands(app);
+registerViewToolCommands(app);
 // 필드 회색 배경(FIELDDISPLAY): 화면 표시 설정만 바꾸고 다시 그린다
 displayFlags.fieldBackground = fieldDisplay() === 1;
 onFieldDisplayChange((v) => {
@@ -222,6 +224,9 @@ app.register({
       ['F1 · F2 · F3 · F8 · F10 · F11 · F12', '도움말 · 명령 기록 펼치기 · 객체 스냅 · 직교 · 극좌표 추적 · 객체 스냅 추적 · 동적 입력'],
       ['Ctrl+N · Ctrl+O · Ctrl+S · Ctrl+Shift+S', '새 도면 · 열기 · 저장 · 다른 이름으로 저장'],
       ['Ctrl+Z · Ctrl+Y · Ctrl+C · Ctrl+X · Ctrl+V', '명령 취소 · 복구 · 복사 · 잘라내기 · 붙여넣기'],
+      ['F5 · Ctrl+E', '등각평면 전환(등각투영 제도가 켜졌을 때)'],
+      ['Shift+Ctrl+L', '도면층 상태 관리자'],
+      ['Ctrl+R', '최대화한 뷰포트에서 다음 뷰포트로'],
       ['Ctrl+1 · Ctrl+A · Ctrl+P · Ctrl+9', '특성 · 모두 선택 · 플롯 · 명령행 숨기기'],
       ['Ctrl+Tab · Ctrl+PgUp/PgDn', '다음 도면 · 배치 전환'],
       ['터치', '한 손가락 = 이동, 두 손가락 = 확대·축소, 탭 = 선택'],

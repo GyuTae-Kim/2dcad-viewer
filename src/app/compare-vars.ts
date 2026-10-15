@@ -3,7 +3,7 @@
  * 변수 이름이 곧 명령이다(투명 명령, 도면이 없어도 된다): `COMPARETEXT에 대한 새 값 입력 <1>:`.
  */
 import type { App, CommandContext } from './app';
-import { COMPARE_VARS, type CompareSettings, type CompareVar, compareVar, normalizeStored, parseInput, settingsFrom } from '../edit/compare/settings';
+import { COMPARE_VARS, type CompareSettings, type CompareVar, XCOMPARE_VARS, compareVar, normalizeStored, parseInput, settingsFrom } from '../edit/compare/settings';
 
 const PREFIX = 'opencad.compare.';
 /** localStorage를 못 쓸 때 이번 세션만 */
@@ -92,10 +92,10 @@ async function askVar(ctx: CommandContext, v: CompareVar, arg?: string): Promise
 
 /** 변수 명령 등록 */
 export function registerCompareVarCommands(app: App): void {
-  for (const v of COMPARE_VARS) {
+  for (const v of [...COMPARE_VARS, ...XCOMPARE_VARS]) {
     app.register({
       name: v.name,
-      title: `도면 비교: ${v.title}`,
+      title: `${v.name.startsWith('X') ? '외부 참조 비교' : '도면 비교'}: ${v.title}`,
       transparent: true,
       noDoc: true,
       run: (ctx, arg) => askVar(ctx, v, arg),

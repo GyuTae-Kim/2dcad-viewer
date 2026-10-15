@@ -28,6 +28,8 @@ import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 import { isEditableTable } from '../edit/table/entity';
+import { cycleIsoPlane } from './viewtools-iso';
+import { maximized } from './viewtools-vpmax';
 
 export class CancelError extends Error {
   constructor() {
@@ -1525,6 +1527,12 @@ export class App {
         ev.preventDefault();
         this.toggleOsnap();
         return;
+      case 'F5':
+        // 등각평면 전환(도면이 없으면 브라우저 새로 고침을 막지 않는다)
+        if (!this.active) break;
+        ev.preventDefault();
+        cycleIsoPlane(this);
+        return;
       case 'F7':
         ev.preventDefault();
         this.toggleGrid();
@@ -1570,6 +1578,17 @@ export class App {
     }
     if (mod && !ev.shiftKey && !ev.altKey) {
       const k = ev.key.toLowerCase();
+      if (k === 'e' && !typing && this.active) {
+        ev.preventDefault();
+        cycleIsoPlane(this);
+        return;
+      }
+      // 최대화한 뷰포트에서 다음 뷰포트로(최대화 중이 아니면 브라우저 새로 고침 그대로)
+      if (k === 'r' && !typing && maximized(this.active)) {
+        ev.preventDefault();
+        void this.run('VPMAXNEXT');
+        return;
+      }
       if (k === 'o') {
         ev.preventDefault();
         void this.run('OPEN');

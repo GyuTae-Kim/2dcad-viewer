@@ -41,9 +41,15 @@ export const COMPARE_VARS: readonly CompareVar[] = [
   { kind: 'int', name: 'COMPARESHOWRC', def: 1, min: 0, max: 1, title: '구름형 리비전 표시' },
 ];
 
+/** 외부 참조 비교(XCOMPARE) 변수: 같은 저장소·같은 명령 모양(색·표시는 COMPARE 변수를 함께 쓴다) */
+export const XCOMPARE_VARS: readonly CompareVar[] = [
+  { kind: 'int', name: 'XCOMPAREENABLE', def: 1, min: 0, max: 1, title: '외부 참조를 다시 로드할 때 이전 버전을 남기고 비교를 알림' },
+  { kind: 'int', name: 'XCOMPARECOLORMODE', def: 1, min: 0, max: 1, title: '외부 참조 비교 중 호스트 객체를 회색으로(0 원래 색)' },
+];
+
 export function compareVar(name: string): CompareVar | undefined {
   const n = name.trim().toUpperCase();
-  return COMPARE_VARS.find((v) => v.name === n);
+  return COMPARE_VARS.find((v) => v.name === n) ?? XCOMPARE_VARS.find((v) => v.name === n);
 }
 
 /** 색상 값 → ACI 또는 RGB. 올바르지 않으면 null */

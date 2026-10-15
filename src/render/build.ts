@@ -52,6 +52,7 @@ import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist'
 import { ColorKind, type LayerState, STYLE_FLAG_FIELD, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
+import { boundaryEdges, contourSegments, openRing, stripOutline, textLineBoxes } from './fillmode';
 import { type Affine, type TextEngine, type TextLayout, affMul } from '../text/layout';
 import { type ShxFont, ShxRunner } from '../text/shx';
 import { parseProxyGraphics } from './proxy';
@@ -144,6 +145,12 @@ export class SceneBuilder {
   /** ATTDISP: 0 모두 숨김, 1 보통(숨김 속성은 숨김), 2 모두 보임 */
   private attmode = 1;
   private fill = true;
+  /** QTEXTMODE: 문자를 테두리 사각형으로 */
+  private qtext = false;
+  /** TEXTFILL: 윤곽 글꼴 문자를 채운다(0이면 윤곽선, FILLMODE 0도 윤곽선) */
+  private textFill = true;
+  /** 윤곽 글꼴 글자의 윤곽선 선분(채우기를 끈 그리기용) */
+  private readonly glyphOutlines = new WeakMap<object, Float32Array>();
   private extentSize = 100;
 
   constructor(
@@ -176,6 +183,8 @@ export class SceneBuilder {
     this.attmode = num('$ATTMODE', 1);
     this.pdsize = num('$PDSIZE', 0);
     this.fill = num('$FILLMODE', 1) !== 0;
+    this.qtext = num('$QTEXTMODE', 0) !== 0;
+    this.textFill = num('$TEXTFILL', 1) !== 0;
   }
 
   private warnInc(code: string, n = 1): void {
@@ -416,8 +425,8 @@ export class SceneBuilder {
             const q = applyXY(top(), p.pts[i]!, p.pts[i + 1]!, p.pts[i + 2]!);
             pts.push(q.x, q.y);
           }
-          if (p.fill && pts.length >= 6) this.out.triangles(triangulateLoops([pts]), r.style);
-          else this.stroke(pts, p.closed, r, ctx);
+          if (p.fill && pts.length >= 6 && this.fill) this.out.triangles(triangulateLoops([pts]), r.style);
+          else this.stroke(pts, p.closed || (p.fill && pts.length >= 6), r, ctx);
           drew = true;
           break;
         }
@@ -580,6 +589,8 @@ export class SceneBuilder {
   }
 
   private emitText(lay: TextLayout, world: Affine, r: Resolved, ctx: Ctx): void {
+    // 빠른 문자(QTEXTMODE 1): 치수·지시선·공차 등의 문자도 줄마다 테두리 사각형
+    if (this.qtext) return this.qtextBoxes(lay, world, r);
     for (const g of lay.glyphs) {
       const m = affMul(world, g.m);
       const style = g.color ? this.styleWithColor(r, g.color, ctx) : r.style;
@@ -587,7 +598,14 @@ export class SceneBuilder {
       const bbox = [geom.minX, geom.minY, geom.maxX, geom.maxY] as const;
       if (geom.segs) {
         if (geom.segs.length) this.out.glyph(geom, 1, geom.segs, m, bbox, style);
-      } else if (geom.tris && geom.tris.length) this.out.glyph(geom, 0, geom.tris, m, bbox, style);
+      } else if (geom.tris && geom.tris.length) {
+        // 채우기를 끄면(FILLMODE 0·TEXTFILL 0) 윤곽 글꼴은 윤곽선만
+        if ((!this.fill || !this.textFill) && geom.contours?.length) {
+          let segs = this.glyphOutlines.get(geom);
+          if (!segs) this.glyphOutlines.set(geom, (segs = contourSegments(geom.contours)));
+          if (segs.length) this.out.glyph(segs, 1, segs, m, bbox, style);
+        } else this.out.glyph(geom, 0, geom.tris, m, bbox, style);
+      }
     }
     for (const l of lay.lines) {
       const style = l.color ? this.styleWithColor(r, l.color, ctx) : r.style;
@@ -598,6 +616,42 @@ export class SceneBuilder {
         world[1] * l.x1 + world[3] * l.y1 + world[5],
         style,
       );
+    }
+  }
+
+  /** 빠른 문자(QTEXTMODE 1): 줄마다 글자 범위의 테두리 사각형 */
+  private qtextBoxes(lay: TextLayout, world: Affine, r: Resolved): void {
+    const boxes: { minX: number; minY: number; maxX: number; maxY: number; base: number }[] = [];
+    let hMin = Infinity;
+    for (const g of lay.glyphs) {
+      const m = g.m;
+      const gm = g.geom;
+      const ys = [gm.minY, gm.maxY];
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const x of [gm.minX, gm.maxX])
+        for (const y of ys) {
+          const px = m[0] * x + m[2] * y + m[4];
+          const py = m[1] * x + m[3] * y + m[5];
+          minX = Math.min(minX, px);
+          maxX = Math.max(maxX, px);
+          minY = Math.min(minY, py);
+          maxY = Math.max(maxY, py);
+        }
+      const h = Math.hypot(m[2], m[3]);
+      if (h > 0) hMin = Math.min(hMin, h);
+      boxes.push({ minX, minY, maxX, maxY, base: m[5] });
+    }
+    let lines = textLineBoxes(boxes, Number.isFinite(hMin) ? hMin * 0.5 : 0);
+    if (!lines.length && lay.maxX > lay.minX && lay.maxY > lay.minY) lines = [{ minX: lay.minX, minY: lay.minY, maxX: lay.maxX, maxY: lay.maxY }];
+    for (const b of lines) {
+      if (!(b.maxX > b.minX) && !(b.maxY > b.minY)) continue;
+      const q = [b.minX, b.minY, b.maxX, b.minY, b.maxX, b.maxY, b.minX, b.maxY];
+      const w: number[] = [];
+      for (let i = 0; i < 8; i += 2) w.push(world[0] * q[i]! + world[2] * q[i + 1]! + world[4], world[1] * q[i]! + world[3] * q[i + 1]! + world[5]);
+      this.out.polyline(w, true, r.style);
     }
   }
 
@@ -1041,14 +1095,14 @@ export class SceneBuilder {
       return;
     }
     const segCount = closed ? n : n - 1;
-    if (wide && this.fill) {
+    if (wide) {
       for (let i = 0; i < segCount; i++) {
         const a = vs[i]!;
         const b = vs[(i + 1) % n]!;
         const pts: number[] = [a.x, a.y];
         bulgePoints(a.x, a.y, b.x, b.y, a.bulge, tol, pts);
-        // 폭이 0인 세그먼트는 보통 선으로
-        if (a.sw > 0 || a.ew > 0) this.wideStrip(pts, a.sw, a.ew, m, z, r);
+        // 폭이 0인 세그먼트는 보통 선으로. 채우기를 끄면(FILLMODE 0) 폭의 윤곽만
+        if (a.sw > 0 || a.ew > 0) this.wideStrip(pts, a.sw, a.ew, m, z, r, !this.fill);
         else this.stroke(this.xf(m, pts, z), false, r, ctx);
       }
       return;
@@ -1075,7 +1129,7 @@ export class SceneBuilder {
   }
 
   /** 폭 있는 선분(로컬 점 배열, 시작·끝 폭) → 삼각형 띠 */
-  private wideStrip(pts: number[], sw: number, ew: number, m: Mat, z: number, r: Resolved): void {
+  private wideStrip(pts: number[], sw: number, ew: number, m: Mat, z: number, r: Resolved, outline = false): void {
     const n = pts.length >> 1;
     if (n < 2) return;
     let total = 0;
@@ -1102,6 +1156,10 @@ export class SceneBuilder {
     }
     const L = this.xf(m, left, z);
     const R = this.xf(m, right, z);
+    if (outline) {
+      for (const pl of stripOutline(L, R)) this.out.polyline(pl, false, r.style);
+      return;
+    }
     for (let i = 0; i + 1 < n; i++) {
       const a = i * 2;
       const b = (i + 1) * 2;
@@ -1221,6 +1279,7 @@ export class SceneBuilder {
     });
     const m = this.ocsM(ctx, e.extrusion);
     const world = this.planar(m, e.insert.z);
+    if (this.qtext) return this.qtextBoxes(lay, world, r);
     this.fieldBackground(e, lay, world, r);
     this.emitText(lay, world, r, ctx);
   }
@@ -1267,6 +1326,7 @@ export class SceneBuilder {
       this.out.triangle(w[0]!, w[1]!, w[4]!, w[5]!, w[6]!, w[7]!, bgStyle);
       if (lay.frame) this.out.polyline(w, true, r.style);
     }
+    if (this.qtext) return this.qtextBoxes(lay, world, r);
     this.fieldBackground(e, lay, world, r);
     this.emitText(lay, world, r, ctx);
   }
@@ -1522,6 +1582,14 @@ export class SceneBuilder {
       this.out.polyline(pts, false, r.style);
     }
     for (const f of shape.fills) {
+      if (!this.fill) {
+        // 채우기를 끄면 채운 화살촉은 바깥 윤곽만
+        const pts: number[] = [];
+        for (let i = 0; i + 1 < f.length; i += 2) pts.push(...X(f[i]!, f[i + 1]!));
+        const e = boundaryEdges(pts);
+        for (let i = 0; i + 3 < e.length; i += 4) this.out.segment(e[i]!, e[i + 1]!, e[i + 2]!, e[i + 3]!, r.style);
+        continue;
+      }
       for (let i = 0; i + 5 < f.length; i += 6) {
         const a = X(f[i]!, f[i + 1]!);
         const b = X(f[i + 2]!, f[i + 3]!);
@@ -1642,6 +1710,11 @@ export class SceneBuilder {
     const loops = hatchLoops(e, tol);
     if (!loops.length) return;
     const z = e.elevation;
+    // 채우기를 끄면(FILLMODE 0) 해치·그라데이션·MPOLYGON은 경계 윤곽만
+    if (!this.fill) {
+      for (const l of loops) this.out.polyline(this.xf(m, openRing(l), z), true, r.style);
+      return;
+    }
     if (e.gradient) {
       this.gradient(e, loops, m, z, r, ctx);
       return;
@@ -1912,7 +1985,7 @@ export class SceneBuilder {
       for (const pl of pls) this.stroke(W(pl), false, er, ctx);
     });
     for (const pl of [...d.caps, ...d.joints]) this.stroke(W(pl), false, r, ctx);
-    if (st && d.fill.length) this.out.triangles(triangulateLoops(d.fill.map(W)), this.styleWithColor(r, st.fillColor, ctx));
+    if (st && d.fill.length && this.fill) this.out.triangles(triangulateLoops(d.fill.map(W)), this.styleWithColor(r, st.fillColor, ctx));
   }
 }
 

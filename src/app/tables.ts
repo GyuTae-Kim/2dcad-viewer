@@ -9,6 +9,7 @@ import type { App, CommandContext } from './app';
 import { dialog, form, h } from './ui/dom';
 import { annotativeFlag, textStyleAnnotative, withAnnotativeFlag } from '../edit/annoscale/xdata';
 import { compareVar } from '../edit/compare/settings';
+import { VIEWTOOL_VARS } from '../edit/viewtools/vars';
 
 /** 웹에서 바로 쓸 수 있는 글꼴(없으면 대체 글꼴로 그린다) */
 const FONTS = [
@@ -308,6 +309,11 @@ export function registerTableCommands(app: App): void {
       }
       // 도면 비교 변수(COMPARECOLOR1 …)·XFADECTL·SETBYLAYERMODE·LAYERPMODE는 이 브라우저에 저장하고, 변수 이름이 곧 명령이다
       if (compareVar(key.slice(1)) || key === '$XFADECTL' || key === '$SETBYLAYERMODE' || key === '$LAYERPMODE') {
+        await app.run(key.slice(1));
+        return;
+      }
+      // 채우기·빠른 문자·끌기·등각투영 변수는 그 변수 명령이 값을 검사한다(SNAPSTYL·SNAPISOPAIR는 머리말에 없다)
+      if (VIEWTOOL_VARS.has(key.slice(1))) {
         await app.run(key.slice(1));
         return;
       }

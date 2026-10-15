@@ -10,6 +10,8 @@ import { colorText } from '../inquiry';
 import { type Field, GENERAL_FIELDS, applyField, commonValue } from '../propedit';
 import { currentLayer, setCurrentLayer } from '../layers';
 import { layerStateNames, newLayerState, restoreLayerStateNamed } from '../layerstate';
+import { isoState, setIso } from '../viewtools-iso';
+import { maximized, maximizedLabel } from '../viewtools-vpmax';
 import { pickColor } from './colorpick';
 import { dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
 import { icon } from './icons';
@@ -605,6 +607,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'PSPACE', label: '종이 공간', icon: 'paper', tip: '뷰포트에서 나오기(뷰포트 밖을 두 번 눌러도 됨)' },
             { cmd: 'CHSPACE', label: '공간 변경', icon: 'move' },
           ],
+          [
+            { cmd: 'VPMAX', label: '최대화', icon: 'fullscreen', tip: '뷰포트를 화면 가득 모형 공간으로 (VPMAX, 복원은 VPMIN)' },
+            { cmd: 'VPSYNC', label: '뷰포트 동기화', icon: 'viewport', tip: '기준 뷰포트의 축척·위치에 맞추기 (VPSYNC)' },
+            { cmd: 'VPSCALE', label: '뷰포트 축척', icon: 'ruler', tip: '고른 뷰포트의 축척 보기 (VPSCALE)' },
+          ],
         ],
       },
       {
@@ -614,6 +621,13 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           { cmd: 'LWDISPLAY', label: '선가중치', icon: 'lineweight', noDoc: true, tip: '선가중치 표시 켜기·끄기' },
           { cmd: 'SHXFONTS', label: 'SHX 글꼴', icon: 'text', noDoc: true, tip: '이 컴퓨터의 SHX 글꼴을 불러와 도면 문자를 원래 글꼴로 그리기' },
           { cmd: 'FULLSCREEN', label: '전체 화면', icon: 'fullscreen', noDoc: true },
+        ],
+        cols: [
+          [
+            { cmd: 'FILL', label: '채우기', icon: 'hatch', tip: '해치·솔리드·폭 있는 폴리선 채우기 켜기·끄기 (FILL)' },
+            { cmd: 'QTEXT', label: '빠른 문자', icon: 'text', tip: '문자를 테두리 사각형으로 (QTEXT)' },
+            { cmd: 'ISODRAFT', label: '등각 제도', icon: 'polygon', tip: '등각투영 격자·스냅·직교 (ISODRAFT, F5로 평면 전환)' },
+          ],
         ],
       },
     ],
@@ -698,6 +712,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'COMPARECLOSE', label: '비교 닫기', icon: 'close', tip: '비교 표시를 끝냄' },
           ],
         ],
+      },
+      {
+        title: '외부 참조 비교',
+        large: [{ cmd: 'XCOMPARE', label: '외부 참조 비교', icon: 'layers', tip: '다시 불러온 외부 참조의 바뀐 곳을 색과 구름형 리비전으로 (XCOMPARE)' }],
+        cols: [[{ cmd: 'XCOMPARECLOSE', label: '비교 닫기', icon: 'close', tip: '외부 참조 비교 끝내기' }]],
       },
     ],
   },
@@ -1281,6 +1300,26 @@ export class Shell implements UiHooks {
         })),
       ]);
     });
+    // 등각투영 제도: 누르면 켜기·끄기, 오른쪽 클릭으로 평면 고르기(F5·Ctrl+E로 평면 전환)
+    const iso = mk('iso', 'polygon', '등각투영 제도 (ISODRAFT) · 오른쪽 클릭으로 평면 선택, F5로 평면 전환', () => {
+      const st = app.active;
+      if (!st) return;
+      setIso(app, st, { style: isoState(st).style === 1 ? 0 : 1 });
+    });
+    iso.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const st = app.active;
+      if (!st) return;
+      const cur = isoState(st);
+      showMenu(ev.clientX, ev.clientY - 150, [
+        { heading: '등각투영 제도' },
+        ...(['왼쪽', '위', '오른쪽'] as const).map((name, i) => ({
+          label: `${cur.style === 1 && cur.pair === i ? '✓ ' : ' '}등각평면 ${name}`,
+          run: () => setIso(app, st, { style: 1, pair: i as 0 | 1 | 2 }),
+        })),
+        { label: `${cur.style === 0 ? '✓ ' : ' '}직교(끄기)`, run: () => setIso(app, st, { style: 0 }) },
+      ]);
+    });
     const caret = h('button', { class: 'icon-btn', title: '객체 스냅 종류', 'aria-label': '객체 스냅 종류', style: 'width:14px;padding:0', html: '▾' });
     caret.addEventListener('click', (ev) => this.snapMenu(ev.clientX, ev.clientY - 260));
     this.status.append(
@@ -1293,6 +1332,7 @@ export class Shell implements UiHooks {
       mk('grid', 'grid', '격자 표시 (F7)', () => app.toggleGrid()),
       mk('snap', 'gridSnap', '스냅 모드 (F9) · 격자 간격으로 점을 맞춥니다', () => app.toggleSnap()),
       mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()),
+      iso,
       polar,
       mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()),
       mk('dyn', 'dyn', '동적 입력 (F12) · 커서 옆에 프롬프트·거리·입력 중인 값', () => app.toggleDyn()),
@@ -1304,6 +1344,7 @@ export class Shell implements UiHooks {
       ...(this.annoItems = annoStatus(app)).elements,
       h('span', { class: 'status-sep' }),
       this.unitLabel,
+      mk('vpmax', 'viewport', '뷰포트 최대화·복원 (VPMAX·VPMIN) · 최대화 중 Ctrl+R로 다음 뷰포트', () => void app.run(maximized(app.active) ? 'VPMIN' : 'VPMAX')),
       mk('ext', 'extents', '전체 보기', () => app.view.zoomExtents()),
       mk('props', 'props', '특성 팔레트 (Ctrl+1)', () => this.openPalette('props')),
     );
@@ -1341,6 +1382,15 @@ export class Shell implements UiHooks {
     this.statusBtns.dyn?.classList.toggle('on', app.dynOn);
     this.statusBtns.lw?.classList.toggle('on', app.view.lwDisplay);
     this.statusBtns.bg?.classList.toggle('on', app.view.modelBg === 0xffffff);
+    this.statusBtns.iso?.classList.toggle('on', isoState(st).style === 1);
+    const vpm = this.statusBtns.vpmax;
+    if (vpm) {
+      const label = maximizedLabel(app);
+      vpm.classList.toggle('on', !!label);
+      // 배치나 최대화 중일 때만 보인다
+      vpm.style.display = st && (label || !st.isModel || st.msVp) ? '' : 'none';
+      vpm.title = label ? `${label} · 누르면 복원 (VPMIN), Ctrl+R 다음 뷰포트` : '뷰포트 최대화 (VPMAX)';
+    }
     this.spaceLabel.textContent = st
       ? st.blockEdit
         ? `블록 편집기: ${st.blockEdit.name}`

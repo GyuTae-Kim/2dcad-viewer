@@ -6,8 +6,8 @@ import type { App } from './app';
 import type { DocState } from './docstate';
 import { dialog, h } from './ui/dom';
 import { rgbToCss } from '../core/color';
-import type { CompareSession } from './compare-session';
 import { compareRgb } from './compare-session';
+import type { CompareSettings } from '../edit/compare/settings';
 import { compareSettings, getCompareVar, setCompareVars } from './compare-vars';
 import { formatCompareColor } from '../edit/compare/settings';
 
@@ -64,10 +64,30 @@ function isolate(el: HTMLElement): void {
 export interface ToolbarActions {
   prev(): void;
   next(): void;
-  importObjects(): void;
-  exportSnapshot(): void;
-  info(): void;
+  /** 없으면 단추를 두지 않는다(외부 참조 비교) */
+  importObjects?(): void;
+  exportSnapshot?(): void;
+  info?(): void;
   close(): void;
+}
+
+/** 도구막대가 읽는 비교 상태(도면 비교·외부 참조 비교가 함께 쓴다) */
+export interface CompareBarSession {
+  readonly sets: readonly unknown[];
+  readonly current: number;
+  readonly busy: boolean;
+  readonly result: { readonly onlyCurrent: readonly string[]; readonly onlyCompare: readonly string[]; readonly common: number } | null;
+  readonly settings: CompareSettings;
+}
+
+/** 도구막대 문구·추가 설정(외부 참조 비교) */
+export interface ToolbarOptions {
+  /** 도구막대 이름(접근성) */
+  title?: string;
+  /** 개수 칩 설명: [현재에서만, 비교에서만, 차이 없음] */
+  labels?: [string, string, string];
+  /** 설정 창 끝에 붙일 줄 */
+  extraSettings?: () => Node[];
 }
 
 /** 비교 도구막대(도면 영역 위) */
@@ -81,11 +101,15 @@ export class CompareToolbar {
   private readonly setBtn: HTMLButtonElement;
   private pop: HTMLDivElement | null = null;
 
+  private readonly labels: [string, string, string];
+
   constructor(
     private readonly app: App,
-    private readonly session: CompareSession,
+    private readonly session: CompareBarSession,
     actions: ToolbarActions,
+    private readonly opts: ToolbarOptions = {},
   ) {
+    this.labels = opts.labels ?? ['현재 도면에서만', '비교 도면에서만', '차이 없음'];
     ensureStyle();
     const btn = (label: string, title: string, run: () => void) => h('button', { type: 'button', title, 'aria-label': title, onclick: () => run() }, label);
     this.setBtn = btn('⚙ 설정', '비교 설정', () => this.toggleSettings());
@@ -96,7 +120,7 @@ export class CompareToolbar {
     this.busy = h('span', { class: 'busy', hidden: true }, '비교 중…');
     this.el = h(
       'div',
-      { class: 'cmp-bar', role: 'toolbar', 'aria-label': '도면 비교' },
+      { class: 'cmp-bar', role: 'toolbar', 'aria-label': opts.title ?? '도면 비교' },
       this.setBtn,
       h('span', { class: 'sep' }),
       this.prevBtn,
@@ -106,10 +130,10 @@ export class CompareToolbar {
       this.chips,
       this.busy,
       h('span', { class: 'sep' }),
-      btn('가져오기', '비교 도면의 객체 가져오기(COMPAREIMPORT)', actions.importObjects),
-      btn('내보내기', '스냅샷 내보내기(COMPAREEXPORT)', actions.exportSnapshot),
-      btn('정보', '도면 비교 정보(COMPAREINFO)', actions.info),
-      btn('✕', '비교 닫기(COMPARECLOSE)', actions.close),
+      actions.importObjects ? btn('가져오기', '비교 도면의 객체 가져오기(COMPAREIMPORT)', actions.importObjects) : null,
+      actions.exportSnapshot ? btn('내보내기', '스냅샷 내보내기(COMPAREEXPORT)', actions.exportSnapshot) : null,
+      actions.info ? btn('정보', '도면 비교 정보(COMPAREINFO)', actions.info) : null,
+      btn('✕', opts.title ? `${opts.title} 닫기` : '비교 닫기(COMPARECLOSE)', actions.close),
     );
     isolate(this.el);
     app.view.el.append(this.el);
@@ -133,9 +157,9 @@ export class CompareToolbar {
     const dark = true;
     const chip = (text: string, title: string, color: string) => h('span', { class: 'chip', title }, h('i', { style: `background:${rgbToCss(compareRgb(color, dark, 7))}` }), text);
     this.chips.replaceChildren(
-      chip(String(r?.onlyCurrent.length ?? 0), '현재 도면에서만', set.color1),
-      chip(String(r?.onlyCompare.length ?? 0), '비교 도면에서만', set.color2),
-      chip(String(r?.common ?? 0), '차이 없음', set.colorCommon),
+      chip(String(r?.onlyCurrent.length ?? 0), this.labels[0], set.color1),
+      chip(String(r?.onlyCompare.length ?? 0), this.labels[1], set.color2),
+      chip(String(r?.common ?? 0), this.labels[2], set.colorCommon),
     );
     if (this.pop) this.fillSettings(this.pop);
   }
@@ -206,9 +230,9 @@ export class CompareToolbar {
     hatchCb.addEventListener('change', () => setCompareVars({ COMPAREHATCH: hatchCb.checked ? 1 : 0 }));
     pop.replaceChildren(
       h('h4', {}, '비교 표시'),
-      check('현재 도면에서만', 'COMPARESHOW1', s.show1, color('COMPARECOLOR1', s.color1, '현재 도면에서만')),
-      check('비교 도면에서만', 'COMPARESHOW2', s.show2, color('COMPARECOLOR2', s.color2, '비교 도면에서만')),
-      check('차이 없음', 'COMPARESHOWCOMMON', s.showCommon, color('COMPARECOLORCOMMON', s.colorCommon, '차이 없음')),
+      check(this.labels[0], 'COMPARESHOW1', s.show1, color('COMPARECOLOR1', s.color1, this.labels[0])),
+      check(this.labels[1], 'COMPARESHOW2', s.show2, color('COMPARECOLOR2', s.color2, this.labels[1])),
+      check(this.labels[2], 'COMPARESHOWCOMMON', s.showCommon, color('COMPARECOLORCOMMON', s.colorCommon, this.labels[2])),
       h(
         'div',
         { class: 'row' },
@@ -232,6 +256,7 @@ export class CompareToolbar {
       h('h4', {}, '비교 필터'),
       h('div', { class: 'row' }, h('label', {}, textCb, '문자'), h('label', {}, hatchCb, '해치'), h('label', {}, props, '특성')),
       h('div', { class: 'row' }, h('span', {}, '허용 오차(소수점 자릿수)'), tol),
+      ...(this.opts.extraSettings?.() ?? []),
     );
   }
 
