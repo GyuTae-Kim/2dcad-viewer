@@ -43,17 +43,21 @@ type Pending = {
 };
 
 export class EngineClient {
-  private readonly worker: Worker;
+  private worker?: Worker;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
 
-  constructor(fontBase: string) {
-    this.worker = new Worker(new URL('../worker/engine.worker.ts', import.meta.url), { type: 'module' });
-    this.worker.onmessage = (ev: MessageEvent<FromWorker>) => this.onMessage(ev.data);
-    this.post({ type: 'init', fontBase });
-  }
+  constructor(private readonly fontBase: string) {}
 
   private post(m: ToWorker, transfer: Transferable[] = []): void {
+    // The start page and its guide do not need the 2D parsing engine. Queue init
+    // before the first real request; subsequent requests reuse the same worker.
+    if (!this.worker) {
+      const worker = new Worker(new URL('../worker/engine.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (ev: MessageEvent<FromWorker>) => this.onMessage(ev.data);
+      worker.postMessage({ type: 'init', fontBase: this.fontBase } satisfies ToWorker);
+      this.worker = worker;
+    }
     this.worker.postMessage(m, transfer);
   }
 
