@@ -94,6 +94,9 @@ function currentActives(app: App, st: DocState, layout?: { rects: R[]; cams: (Ca
       aspect: wPx / hPx,
       lensLength: base?.lensLength ?? 50,
       twist: base?.twist ?? 0,
+      // 등각투영 설정(SNAPSTYL·SNAPISOPAIR)은 뷰포트 레코드에 저장한다(viewtools-iso.ts)
+      ...(base?.snapStyle !== undefined ? { snapStyle: base.snapStyle } : {}),
+      ...(base?.snapIsoPair !== undefined ? { snapIsoPair: base.snapIsoPair } : {}),
       ...(base?.xdata ? { xdata: base.xdata } : {}),
     };
   });

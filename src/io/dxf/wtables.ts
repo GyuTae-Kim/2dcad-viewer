@@ -6,6 +6,7 @@ import type { TagSink } from './tagwriter';
 import { kindOf } from './tagwriter';
 import type { PlannedRecord, TableName, WriteContext } from './wcontext';
 import { TagOut, appGroups, writeXData } from './wentities';
+import { vportSnap } from '../vportsnap';
 
 const SUBCLASS: Record<TableName, string> = {
   VPORT: 'AcDbViewportTableRecord',
@@ -75,8 +76,10 @@ function vport(w: TagOut, p: PlannedRecord<VPortRecord>): void {
   w.t(74, 3);
   w.t(75, 0);
   w.t(76, 0);
-  w.t(77, 0);
-  w.t(78, 0);
+  // 등각투영 설정(SNAPSTYL·SNAPISOPAIR — R12 VPORT 표에도 있다)
+  const snap = vportSnap(w.ctx.doc, v);
+  w.t(77, snap.style);
+  w.t(78, snap.pair);
   if (ver >= 1015) {
     w.t(281, 0);
     w.t(65, 1);

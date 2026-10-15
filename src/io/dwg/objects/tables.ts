@@ -92,6 +92,9 @@ export interface VportRec extends RecordCommon {
   snapBase: Vec2;
   snapSpacing: Vec2;
   gridSpacing: Vec2;
+  /** 스냅 스타일(0 표준, 1 등각투영)·등각평면(0 왼쪽, 1 위, 2 오른쪽) */
+  snapStyle: number;
+  snapIsoPair: number;
 }
 
 export interface ViewRec extends RecordCommon {
@@ -398,10 +401,10 @@ export function readVport(or: ObjectReader): VportRec {
   r.B();
   r.B();
   const gridSpacing = r.RD2();
-  r.B();
-  r.B();
-  r.BS();
-  r.BD();
+  r.B(); // 스냅 켜기
+  const snapStyle = r.B();
+  const snapIsoPair = r.BS();
+  r.BD(); // 스냅 회전
   const snapBase = r.RD2();
   const snapSpacing = r.RD2();
   return {
@@ -418,6 +421,8 @@ export function readVport(or: ObjectReader): VportRec {
     snapBase,
     snapSpacing,
     gridSpacing,
+    snapStyle,
+    snapIsoPair,
   };
 }
 

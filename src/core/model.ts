@@ -940,6 +940,10 @@ export interface VPortRecord extends TableRecordBase {
   aspect: number;
   lensLength: number;
   twist: number;
+  /** 스냅 스타일(SNAPSTYL — DXF 77, DWG VPORT): 0 표준, 1 등각투영. 없으면 0(R12 DXF는 머리말 $SNAPSTYLE) */
+  snapStyle?: number;
+  /** 등각평면(SNAPISOPAIR — DXF 78, DWG VPORT): 0 왼쪽, 1 위, 2 오른쪽. 없으면 0(R12 DXF는 머리말 $SNAPISOPAIR) */
+  snapIsoPair?: number;
 }
 
 export interface ViewRecord extends TableRecordBase {

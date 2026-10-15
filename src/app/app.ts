@@ -17,7 +17,7 @@ import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
 import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
-import { type Acquired, type TrackResult, objectTrack, polarAngles, polarTrack } from './tracking';
+import { type Acquired, objectTrack, polarAngles, polarTrack } from './tracking';
 import { gripPoints } from '../edit/geom';
 import { dynGrips, isDynamicReference } from '../edit/dynblock';
 import { spaceTolerance } from '../render/build';
@@ -28,6 +28,7 @@ import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 import { isEditableTable } from '../edit/table/entity';
+import { type CommitHook, type EntityClickHandler, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
 import { cycleIsoPlane } from './viewtools-iso';
 import { maximized } from './viewtools-vpmax';
 
@@ -61,6 +62,8 @@ interface PointRequest {
   allowText: boolean;
   /** 숫자만 입력하면 직접 거리 입력 대신 문자로 돌려준다(각도·축척 입력) */
   preferNumber: boolean;
+  /** 이 입력을 기다리는 명령(실행의 취소 신호). 명령이 끝날 때 자기 요청만 치운다 */
+  signal: AbortSignal;
   resolve: (r: PointResult) => void;
   reject: (e: unknown) => void;
 }
@@ -69,6 +72,7 @@ interface EntityRequest {
   kind: 'entity';
   prompt: string;
   keywords: Keyword[];
+  signal: AbortSignal;
   resolve: (r: { handle: string; point: Pt } | { keyword: string } | { enter: true }) => void;
   reject: (e: unknown) => void;
 }
@@ -78,11 +82,14 @@ interface SelectRequest {
   prompt: string;
   keywords: Keyword[];
   remove: boolean;
+  signal: AbortSignal;
   resolve: (r: { handles: string[] } | { keyword: string }) => void;
   reject: (e: unknown) => void;
 }
 
 type Request = PointRequest | EntityRequest | SelectRequest;
+
+export type { CommitHook, EntityClickHandler, InputFilter, PendingInput, PointFilter, ResolvedPoint } from './hooks';
 
 export interface CommandContext {
   app: App;
@@ -150,6 +157,19 @@ export class App {
   private groupSerial = 0;
   /** 고른 핸들을 넓히는 고리(PICKSTYLE 그룹 선택 등) */
   selectionExpander: ((handles: string[]) => string[]) | null = null;
+  /** 확장 지점: 점 요청에서 객체 스냅이 잡히지 않은 점의 해석(추적·격자 스냅·직교)을 대신한다 — 등각투영 제도 */
+  readonly pointFilters: PointFilter[] = [];
+  /** 확장 지점: 명령행 입력을 요청보다 먼저 본다 — 점 프롬프트의 DRAG */
+  readonly inputFilters: InputFilter[] = [];
+  /** 확장 지점: 끌기 미리보기 모드(DRAGMODE 0 끄기·1 켜기·2 자동). 없으면 자동 */
+  dragPreviewMode: (() => number) | null = null;
+  /** 확장 지점: 명령 없이 Ctrl+클릭한 객체(하이퍼링크 linkClick보다 먼저) — 연관 배열 항목 고르기 */
+  readonly entityClickHandlers: EntityClickHandler[] = [];
+  /** 확장 지점: 편집 확정 고리(문서를 열 때 편집 세션에 잇는다) — 주석 축척·도면층 이전·연관 배열 경로 따라가기 */
+  readonly commitHooks: CommitHook[] = [];
+  /** 마지막 점 요청과 DRAG로 끌기 미리보기를 켠 점 요청(DRAGMODE 켜기) */
+  private lastPointRequest: PointRequest | null = null;
+  private dragFor: PointRequest | null = null;
   /** 직전 선택(P 옵션) */
   lastSelection: string[] = [];
   lastPoint: Pt | null = null;
@@ -272,8 +292,16 @@ export class App {
       this.cmd.print('열린 도면이 없습니다. 먼저 파일을 여십시오.', 'err');
       return;
     }
-    if (this.running && !c.transparent) this.cancel(true);
-    const nested = this.running && c.transparent;
+    const prev = this.running && !c.transparent ? this.running : null;
+    if (prev) {
+      this.cancel(true);
+      // 앞 명령은 취소를 받은 뒤에도 더 묻지 못하고(요청이 곧바로 거절된다), 남긴 미리보기는 지금 지운다.
+      // 앞 명령의 정리(finally)는 마이크로태스크 뒤에 오므로 새 명령의 요청·프롬프트를 건드리지 않게 한다.
+      prev.ctrl.abort();
+      this.resetCommandUi();
+    }
+    const outer = this.running && c.transparent ? this.running : null;
+    const nested = !!outer;
     const saved = nested ? this.request : null;
     if (nested) this.request = null;
     const ctrl = new AbortController();
@@ -298,22 +326,33 @@ export class App {
         this.cmd.print(`오류: ${e instanceof Error ? e.message : String(e)}`, 'err');
       }
     } finally {
+      // 자기 것만 치운다: 이 명령이 끝나기 전에 다른 명령이 이어받았으면(취소 직후 같은 틱의 새 명령, 스크립트,
+      // 명령 안에서 시작한 명령) 그 명령의 요청·프롬프트·미리보기는 그대로 둔다
+      if (this.request?.signal === ctrl.signal) this.request = null;
       if (nested) {
-        this.request = saved;
-        if (saved) this.cmd.setPrompt(this.promptOf(saved));
+        // 바깥 명령이 아직 그 입력을 기다리면 되돌린다(그 사이 취소·이어받기로 끝났으면 되돌리지 않는다)
+        if (!this.request && saved && !saved.signal.aborted && this.running === outer) {
+          this.request = saved;
+          this.cmd.setPrompt(this.promptOf(saved));
+        }
       } else {
         if (this.running?.ctrl === ctrl) this.running = null;
-        this.request = null;
-        this.cmd.setPrompt('');
-        this.view.overlay.rubber = [];
-        this.view.overlay.ghost = [];
-        this.view.overlay.marks = [];
-        this.view.overlay.hotGrip = null;
-        this.clearTracking();
-        this.view.overlay.tip = null;
-        this.view.requestOverlay();
+        if (!this.running) this.resetCommandUi();
       }
     }
+  }
+
+  /** 명령의 프롬프트·미리보기·추적 표시를 지운다 */
+  private resetCommandUi(): void {
+    this.cmd.setPrompt('');
+    const o = this.view.overlay;
+    o.rubber = [];
+    o.ghost = [];
+    o.marks = [];
+    o.hotGrip = null;
+    this.clearTracking();
+    o.tip = null;
+    this.view.requestOverlay();
   }
 
   get busyCommand(): string | null {
@@ -321,7 +360,7 @@ export class App {
   }
 
   /** 명령이 기다리는 입력(스크립트 실행기가 다음 입력을 넣을 때를 안다). 없으면 null */
-  get pendingInput(): { readonly kind: 'point' | 'entity' | 'select'; readonly prompt: string; readonly remove?: boolean } | null {
+  get pendingInput(): PendingInput | null {
     return this.request;
   }
 
@@ -344,6 +383,12 @@ export class App {
     this.cmd.setPrompt('');
   }
 
+  /** 명령이 취소(abort)되면 그 명령의 요청을 거절한다(지금 요청이면 치운다) */
+  private dropRequest(req: Request, reject: (e: unknown) => void): void {
+    if (this.request === req) this.request = null;
+    reject(new CancelError());
+  }
+
   private promptOf(r: Request): string {
     if (!r.keywords.length) return r.prompt;
     if (r.prompt.includes('[')) return r.prompt;
@@ -363,16 +408,18 @@ export class App {
         ghost: opt.ghost,
         allowText: !!opt.allowText || !!opt.preferNumber,
         preferNumber: !!opt.preferNumber,
+        signal,
         resolve: (r) => {
-          this.request = null;
+          if (this.request === req) this.request = null;
           resolve(r);
         },
         reject,
       };
       this.request = req;
+      this.lastPointRequest = req;
       this.cmd.setPrompt(this.promptOf(req));
       this.view.overlay.tip = prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
-      signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+      signal.addEventListener('abort', () => this.dropRequest(req, reject), { once: true });
       this.view.requestOverlay();
     });
   }
@@ -401,8 +448,9 @@ export class App {
           prompt,
           keywords: kws,
           remove: false,
+          signal,
           resolve: (x) => {
-            this.request = null;
+            if (this.request === req) this.request = null;
             resolve(x);
           },
           reject,
@@ -410,7 +458,7 @@ export class App {
         this.request = req;
         this.cmd.setPrompt(prompt);
         this.view.overlay.tip = prompt.replace(/:\s*$/, '');
-        signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+        signal.addEventListener('abort', () => this.dropRequest(req, reject), { once: true });
         this.view.requestOverlay();
       });
       if ('handles' in r) {
@@ -464,8 +512,9 @@ export class App {
         kind: 'entity',
         prompt,
         keywords,
+        signal,
         resolve: (r) => {
-          this.request = null;
+          if (this.request === req) this.request = null;
           resolve(r);
         },
         reject,
@@ -473,13 +522,14 @@ export class App {
       this.request = req;
       this.cmd.setPrompt(this.promptOf(req));
       this.view.overlay.tip = prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
-      signal.addEventListener('abort', () => reject(new CancelError()), { once: true });
+      signal.addEventListener('abort', () => this.dropRequest(req, reject), { once: true });
       this.view.requestOverlay();
     });
   }
 
   /** 명령행 입력 */
   private onInput(text: string): void {
+    for (const f of this.inputFilters) if (f.input(text, this.request)) return;
     const r = this.request;
     if (!r) {
       if (!text) return;
@@ -602,6 +652,7 @@ export class App {
     const st = new DocState(res.docId, res.doc, name, size, res.readMs);
     st.addScene(this.view.renderer, res.model, MODEL_SPACE);
     this.edits.attach(st);
+    bindCommitHooks(this, st);
     this.docs.push(st);
     this.activate(st);
     this.initialView(st);
@@ -1059,7 +1110,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   /** 스냅·추적·직교를 적용한 점 */
-  private resolvePoint(w: Pt): { p: Pt; snap: { p: Pt; kind: SnapKind; handle?: string; handle2?: string } | null; track?: TrackResult } {
+  private resolvePoint(w: Pt): ResolvedPoint {
     const r = this.request;
     if (r?.kind === 'point' || !r) {
       const pk = this.picker();
@@ -1069,6 +1120,11 @@ export class App {
         if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind, handle: s.handle, handle2: s.handle2 } };
       }
       if (r?.kind === 'point') {
+        // 확장 지점: 객체 스냅이 없으면 고리가 추적·격자 스냅·직교를 대신할 수 있다(등각투영 제도)
+        for (const f of this.pointFilters) {
+          const res = f.resolve(w, { base: r.base, acquired: this.acquired });
+          if (res) return res;
+        }
         const tol = 8 * this.view.pixelSize();
         const st = this.active!;
         const fmt = (v: number) => formatLength(v, st.units);
@@ -1148,8 +1204,10 @@ export class App {
     o.tracks = track ? track.lines.map((l) => ({ from: l.from, dir: l.dir })) : [];
     this.updateAcquire(snap);
     if (r?.kind === 'point') {
-      o.rubber = r.rubber ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
-      o.ghost = r.ghost ? r.ghost(p) : [];
+      // 끌기 미리보기(DRAGMODE)가 꺼져 있으면 명령의 미리보기 대신 기준점 고무줄만
+      const drag = this.dragPreviewOn(r);
+      o.rubber = r.rubber && drag ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
+      o.ghost = r.ghost && drag ? r.ghost(p) : [];
       if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
       else if (track) o.tip = track.tip;
       else if (!this.dynOn) o.tip = null;
@@ -1173,6 +1231,18 @@ export class App {
       clearTimeout(this.hoverTimer);
       this.hoverTimer = window.setTimeout(() => this.updateHover(w), 30);
     }
+    this.view.requestOverlay();
+  }
+
+  /** 이 점 요청에서 명령의 끌기 미리보기(ghost·rubber)를 보이는지: 자동(2)이거나, 켜기(1)이고 이 요청에서 DRAG를 입력했을 때 */
+  private dragPreviewOn(r: PointRequest): boolean {
+    const m = this.dragPreviewMode ? this.dragPreviewMode() : 2;
+    return m === 2 || (m === 1 && this.dragFor === r);
+  }
+
+  /** DRAG: 지금(마지막) 점 요청에서 끌기 미리보기를 보인다(DRAGMODE 켜기일 때 쓴다) */
+  dragPreviewNow(): void {
+    this.dragFor = this.lastPointRequest;
     this.view.requestOverlay();
   }
 
@@ -1281,8 +1351,8 @@ export class App {
       }
     }
     const h = pk.pick(w.x, w.y, tol);
-    // Ctrl+클릭: 하이퍼링크를 따라간다
-    if (h && (ev.ctrlKey || ev.metaKey) && !r && this.linkClick?.(h)) return;
+    // Ctrl+클릭: 확장 지점(연관 배열 항목 고르기 등)이 먼저, 그다음 하이퍼링크를 따라간다
+    if (h && (ev.ctrlKey || ev.metaKey) && !r && (this.entityClickHandlers.some((f) => f.click(h, w)) || this.linkClick?.(h))) return;
     const pickIt = (h: string) => {
       const hs = this.expandPick([h]);
       if (ev.shiftKey) this.setSelection(hs, st.selection.has(h) ? 'remove' : 'add');

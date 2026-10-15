@@ -42,6 +42,7 @@ import { parseHandle, warnOnce } from './util';
 import { CTX_TYPES } from '../ctxcodec';
 import { DYN_TYPES } from '../dyncodec';
 import { rawObjectOk } from './rawobjects';
+import { arrayRecordXData, hasAcadArrays } from './assocarray';
 
 export type TableName = 'BLOCK_RECORD' | 'LAYER' | 'STYLE' | 'LTYPE' | 'VIEW' | 'UCS' | 'VPORT' | 'APPID' | 'DIMSTYLE' | 'VPENT';
 
@@ -253,6 +254,8 @@ export class WCtx {
 
   /** 원본 본문을 되쓸지 */
   readonly useRaw: boolean;
+  /** DXF 원본 태그의 AutoCAD 연관 배열이 있는지(처음 배열 참조 후보를 볼 때 정한다) */
+  private acadArrays: boolean | undefined;
 
   constructor(doc: CadDocument, ver: number, warnings: ReadWarning[], useRaw = true) {
     this.useRaw = useRaw;
@@ -623,6 +626,11 @@ export class WCtx {
   private planEntity(e: Entity, dropped: Record<string, number>): PEnt | null {
     const h = this.take(e.handle);
     const pe: PEnt = { e, h };
+    // DXF의 AutoCAD 연관 배열: 연관 객체는 DWG로 못 쓰므로 이 앱의 배열 기록을 붙여 쓴다(assocarray.ts)
+    if (e.type === 'INSERT' && e.reactors?.length && (this.acadArrays ??= hasAcadArrays(this.doc))) {
+      const xdata = arrayRecordXData(this.doc, e);
+      if (xdata) pe.e = { ...e, xdata };
+    }
     const raw = this.rawFor(e, h);
     if (raw) pe.raw = raw;
     else if (RAW_ONLY_ENTITIES.has(e.type)) {

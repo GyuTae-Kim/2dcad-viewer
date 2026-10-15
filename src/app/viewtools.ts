@@ -7,8 +7,9 @@
  * - 외부 참조 비교 XCOMPARE·XCOMPARECLOSE·XCOMPARERCNEXT·XCOMPARERCPREV(xcompare.ts)
  * 프롬프트는 AutoCAD 2026 한국어판을 따른다. 계산은 src/edit/viewtools, 채우기·빠른 문자 그리기는 src/render/fillmode.ts.
  */
-import type { App, CommandContext, Keyword, PointResult } from './app';
+import type { App, CommandContext, Keyword } from './app';
 import type { DocState } from './docstate';
+import { addHook } from './hooks';
 import type { HeaderValue, ViewportEntity } from '../core/model';
 import type { EditOp } from '../edit/session';
 import type { Pt } from './view';
@@ -87,47 +88,21 @@ async function askHeaderVar(app: App, ctx: CommandContext, name: string, arg?: s
 // 끌기(DRAGMODE)
 // ---------------------------------------------------------------------------
 
-type PointOpts = Parameters<CommandContext['getPoint']>[1];
-let reqSerial = 0;
-let lastRequest = 0;
-/** DRAGMODE 켜기(1)에서 DRAG를 입력한 점 요청 */
-let dragFor = -1;
-
-/** DRAGMODE: 0 끄기(끌기 미리보기 없음 — 기준점에서 고무줄만), 1 켜기(DRAG를 입력해야), 2 자동 */
-function dragAllowed(app: App, id: number): boolean {
-  const m = headerVar(app.active, 'DRAGMODE');
-  return m === 2 || (m === 1 && dragFor === id);
-}
-
-/** 점 요청의 끌기 미리보기(ghost·rubber)를 DRAGMODE에 따라 거른다(app.ts의 점 요청을 감싼다) */
+/**
+ * DRAGMODE: 0 끄기(끌기 미리보기 없음 — 기준점에서 고무줄만), 1 켜기(DRAG를 입력해야), 2 자동.
+ * App의 끌기 미리보기 모드(dragPreviewMode)로 점 요청의 미리보기(ghost·rubber)를 거르고,
+ * 입력 고리(inputFilters)로 점 프롬프트의 DRAG를 받는다(문자를 받는 프롬프트여도).
+ */
 function installDragHook(app: App): void {
-  const p = app as unknown as { requestPoint: (prompt: string, opt: PointOpts, signal: AbortSignal) => Promise<PointResult> };
-  const orig = p.requestPoint.bind(app);
-  p.requestPoint = (prompt, opt = {}, signal) => {
-    const id = ++reqSerial;
-    lastRequest = id;
-    const o = { ...opt };
-    if (opt.ghost) {
-      const g = opt.ghost;
-      o.ghost = (q) => (dragAllowed(app, id) ? g(q) : []);
-    }
-    if (opt.rubber) {
-      const rb = opt.rubber;
-      const base = opt.base ?? null;
-      o.rubber = (q) => (dragAllowed(app, id) ? rb(q) : base ? [{ pts: [base.x, base.y, q.x, q.y] }] : []);
-    }
-    return orig(prompt, o, signal);
-  };
-  // 점 프롬프트에서 DRAG를 입력하면(문자를 받는 프롬프트여도) 그 프롬프트에서 끌기 미리보기
-  const pi = app as unknown as { onInput: (t: string) => void; request: { kind: string } | null };
-  const input = pi.onInput.bind(app);
-  pi.onInput = (t: string) => {
-    if (pi.request?.kind === 'point' && /^'?DRAG$/i.test(t.trim())) {
+  app.dragPreviewMode = () => headerVar(app.active, 'DRAGMODE');
+  addHook(app.inputFilters, {
+    name: 'drag',
+    input(t, pending) {
+      if (pending?.kind !== 'point' || !/^'?DRAG$/i.test(t.trim())) return false;
       dragNow(app, (text, cls) => app.cmd.print(text, cls));
-      return;
-    }
-    input(t);
-  };
+      return true;
+    },
+  });
 }
 
 /** DRAG: DRAGMODE 켜기(1)일 때 지금 점 프롬프트에서 끌기 미리보기를 보인다 */
@@ -137,8 +112,7 @@ function dragNow(app: App, print: (text: string, cls?: 'err' | 'res') => void): 
     print('DRAGMODE가 끄기(0)라 끌기 미리보기를 보이지 않습니다. DRAGMODE를 켜기나 자동으로 바꾸십시오.');
     return;
   }
-  dragFor = lastRequest;
-  app.view.requestOverlay();
+  app.dragPreviewNow();
 }
 
 // ---------------------------------------------------------------------------

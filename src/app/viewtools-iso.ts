@@ -2,18 +2,21 @@
  * 등각투영 제도: ISODRAFT, ISOPLANE, SNAPSTYL·SNAPISOPAIR 변수, 등각 격자·스냅·직교·극좌표/객체 스냅 추적,
  * 등각 십자선, ELLIPSE의 등각원(I). 계산은 src/edit/viewtools/iso.ts.
  *
- * 앱(app.ts)은 고치지 않고 고리로 붙는다: 점 해석(resolvePoint)·격자 스냅(snapToGrid)을 감싸고, 격자(gridInfo)는
- * 등각일 때 직교 격자 대신 덧그림(extraOverlay)에 등각 격자를 그린다.
- * 설정은 도면마다(이 세션만 — SNAPSTYL·SNAPISOPAIR는 DXF R2000+에서 VPORT 표 값이라 지금은 저장하지 않는다).
+ * 앱(app.ts)에는 확장 지점으로 붙는다: 점 해석 고리(App.pointFilters)가 객체 스냅이 잡히지 않은 점의 추적·격자 스냅·직교를
+ * 등각으로 대신하고, 격자(gridInfo)는 등각일 때 직교 격자 대신 덧그림(extraOverlay)에 등각 격자를 그린다.
+ * 설정은 도면에 저장한다: *Active 뷰포트 레코드의 스냅 스타일·등각평면(DXF R2000+ VPORT 77·78, R12는 머리말
+ * $SNAPSTYLE·$SNAPISOPAIR도, DWG VPORT 객체 — src/io/vportsnap.ts). 명령 취소 단위가 아니라 바꾸면 수정 표시만 한다.
  */
 import type { App, CommandContext, Keyword } from './app';
 import type { DocState } from './docstate';
-import type { CadDocument } from '../core/model';
-import type { Pt, SnapKind } from './view';
+import type { VPortRecord } from '../core/model';
+import type { Pt } from './view';
 import { formatLength } from '../core/units';
 import { currentUcs, toUcs, toWcs } from './ucs';
 import { objectTrack, polarTrack } from './tracking';
-import type { Acquired, TrackResult } from './tracking';
+import type { Acquired } from './tracking';
+import { type ResolvedPoint, addHook } from './hooks';
+import { activeVport, vportSnap } from '../io/vportsnap';
 import { ellipsePoints, TAU } from '../geom/curves';
 import { ISO_PLANE_KEYS, ISO_PLANE_NAMES, type IsoPlane, isoAxes, isoCircle, isoGridSegments, isoOrthoPoint, isoPolarAngles, isoSnapPoint, nextIsoPlane, toIsoPlane } from '../edit/viewtools/iso';
 
@@ -24,20 +27,62 @@ export interface IsoState {
   pair: IsoPlane;
 }
 
-const states = new WeakMap<CadDocument, IsoState>();
 const listeners = new Set<() => void>();
 
-/** 도면의 등각 설정(처음이면 머리말 $SNAPSTYLE·$SNAPISOPAIR — R12 DXF — 또는 0·0) */
+/**
+ * 도면의 등각 설정: *Active 뷰포트 레코드의 값(DXF 77·78, DWG VPORT), 레코드에 없으면 R12 DXF 머리말
+ * $SNAPSTYLE·$SNAPISOPAIR, 그것도 없으면 0·0. 도면에서 바로 읽으므로 명령 취소(VPORTS 등)로 표가 바뀌어도 맞다.
+ */
 export function isoState(st: DocState | null): IsoState {
   if (!st) return { style: 0, pair: 0 };
-  let s = states.get(st.doc);
-  if (!s) {
-    const h = st.doc.header;
-    const pair = h.get('$SNAPISOPAIR');
-    s = { style: Number(h.get('$SNAPSTYLE') ?? 0) === 1 ? 1 : 0, pair: pair === undefined ? 0 : toIsoPlane(pair) };
-    states.set(st.doc, s);
-  }
-  return s;
+  return vportSnap(st.doc, activeVport(st.doc));
+}
+
+const isActive = (v: VPortRecord) => v.name.toUpperCase() === '*ACTIVE';
+
+/** *Active 레코드가 없는 도면(VPORT 표가 없는 DXF)에 둘 레코드: 지금 화면·격자·스냅(저장할 때 화면은 다시 맞춘다) */
+function newActiveRecord(app: App, st: DocState): VPortRecord {
+  const v = app.view;
+  const cam = v.camera();
+  const h = Math.max(1, v.height);
+  return {
+    name: '*Active',
+    handle: st.session.newHandle(),
+    flags: 0,
+    lowerLeft: { x: 0, y: 0 },
+    upperRight: { x: 1, y: 1 },
+    center: { x: cam.cx, y: cam.cy },
+    snapBase: { x: st.snap.baseX, y: st.snap.baseY },
+    snapSpacing: { x: st.snap.x, y: st.snap.y },
+    gridSpacing: { x: st.grid.x, y: st.grid.y },
+    viewDirection: { x: 0, y: 0, z: 1 },
+    viewTarget: { x: 0, y: 0, z: 0 },
+    height: h / cam.scale,
+    aspect: Math.max(1, v.width) / h,
+    lensLength: 50,
+    twist: 0,
+  };
+}
+
+/**
+ * 등각 설정을 도면에 기록한다: *Active 레코드(타일 뷰포트면 모두)의 snapStyle·snapIsoPair. 명령 취소 기록 없이
+ * 문서와 워커 문서에 바로 쓰고 수정 표시만 한다(AutoCAD도 SNAPSTYL·F5는 명령 취소 단위가 아니다). 바뀌었으면 true
+ */
+export function storeIso(app: App, st: DocState, s: IsoState): boolean {
+  const doc = st.doc;
+  const same = (v: VPortRecord | undefined) => {
+    const cur = vportSnap(doc, v);
+    return cur.style === s.style && cur.pair === s.pair;
+  };
+  const before = doc.vports.slice();
+  let after = before.map((v) => (!isActive(v) || same(v) ? v : { ...v, snapStyle: s.style, snapIsoPair: s.pair }));
+  if (!after.some(isActive) && !same(undefined)) after = [{ ...newActiveRecord(app, st), snapStyle: s.style, snapIsoPair: s.pair }, ...after];
+  if (after.length === before.length && after.every((v, i) => v === before[i])) return false;
+  doc.vports.splice(0, doc.vports.length, ...after);
+  app.engine?.edit(st.docId, [{ kind: 'vports', before, after }]);
+  if (st.session) st.session.dirty = true;
+  app.ui?.refreshTabs();
+  return true;
 }
 
 /** 등각투영 제도가 켜졌으면 그 평면, 아니면 null(블록 편집기·배치 종이 공간도 쓴다) */
@@ -52,11 +97,10 @@ export function onIsoChange(f: () => void): () => void {
   return () => listeners.delete(f);
 }
 
-/** 등각 설정을 바꾼다(명령 취소 단위가 아니다 — AutoCAD의 F5·상태 막대와 같다) */
+/** 등각 설정을 바꾼다(명령 취소 단위가 아니다 — AutoCAD의 F5·상태 막대와 같다). 도면에 기록하고 수정 표시를 한다 */
 export function setIso(app: App, st: DocState, patch: Partial<IsoState>): void {
-  const s = isoState(st);
-  if (patch.style !== undefined) s.style = patch.style;
-  if (patch.pair !== undefined) s.pair = patch.pair;
+  const cur = isoState(st);
+  storeIso(app, st, { style: patch.style ?? cur.style, pair: patch.pair ?? cur.pair });
   app.view.requestOverlay();
   app.ui?.refreshStatus();
   for (const f of listeners) f();
@@ -75,72 +119,51 @@ export function cycleIsoPlane(app: App): void {
 // 앱 고리
 // ---------------------------------------------------------------------------
 
-type Resolve = (w: Pt) => { p: Pt; snap: { p: Pt; kind: SnapKind; handle?: string; handle2?: string } | null; track?: TrackResult };
-type PointReq = { kind: 'point'; base: Pt | null } | { kind: 'entity' | 'select' };
-
-/** 앱의 비공개 멤버(고리를 거는 데만 쓴다) */
-interface AppPrivate {
-  resolvePoint: Resolve;
-  snapToGrid: (w: Pt) => Pt;
-  request: PointReq | null;
-  acquired: Acquired[];
-}
-
-const priv = (app: App) => app as unknown as AppPrivate;
-
 let gridInfoOrig: App['view']['gridInfo'] = null;
+let gridHooked = false;
 let crossOff = false;
 
-/** 점 해석·격자 스냅·격자 표시를 등각 모드에 맞게 감싼다(한 번만) */
+/** 등각 격자 스냅(종이 공간에서 뷰포트 안에 들어간 MSPACE는 스냅하지 않는다 — 표준 격자 스냅과 같다) */
+function isoGridSnap(st: DocState, w: Pt): Pt {
+  if (st.msVp) return w;
+  const u = currentUcs(st);
+  return toWcs(u, isoSnapPoint(toUcs(u, w), { x: st.snap.baseX, y: st.snap.baseY }, st.snap.y));
+}
+
+/**
+ * 등각투영 제도의 점 해석(App.pointFilters 고리). 객체 스냅은 App이 먼저 보고, 잡히지 않았을 때만 부른다.
+ * 등각이 아니면 null(앱의 표준 추적·격자 스냅·직교).
+ */
+export function resolveIsoPoint(app: App, w: Pt, req: { readonly base: Pt | null; readonly acquired: readonly Acquired[] }): ResolvedPoint | null {
+  const st = app.active;
+  const plane = isoPlaneOf(st);
+  if (plane === null || !st) return null;
+  // 1) 극좌표·객체 스냅 추적: 등각 각도(30°·90°·150°…, UCS X축 기준)
+  const tol = 8 * app.view.pixelSize();
+  const fmt = (v: number) => formatLength(v, st.units);
+  const u = currentUcs(st);
+  const iso = isoPolarAngles().map((a) => a + u.angle);
+  if (app.otrackOn && req.acquired.length) {
+    const t = objectTrack(req.acquired, w, iso, tol, req.base, app.polarOn ? iso : null, fmt);
+    if (t) return { p: t.p, snap: null, track: t };
+  }
+  if (req.base && app.polarOn && !app.orthoOn) {
+    const t = polarTrack(req.base, w, iso, tol, fmt);
+    if (t) return { p: t.p, snap: null, track: t };
+  }
+  // 2) 등각 격자 스냅
+  let q = app.snapOn ? isoGridSnap(st, w) : w;
+  // 3) 등각 직교: 평면의 두 축 중 가까운 쪽(UCS 기준)
+  if (req.base && app.orthoOn) q = toWcs(u, isoOrthoPoint(toUcs(u, req.base), toUcs(u, q), plane));
+  return { p: q, snap: null };
+}
+
+/** 점 해석 고리를 달고, 격자 표시를 등각 모드에 맞게 한다(한 번만) */
 export function installIsoHooks(app: App): void {
-  const p = priv(app);
-  const resolve = p.resolvePoint.bind(app);
-  const snap = p.snapToGrid.bind(app);
-  p.snapToGrid = (w: Pt) => {
-    const st = app.active;
-    if (isoPlaneOf(st) === null || !st || st.msVp) return snap(w);
-    const u = currentUcs(st);
-    const q = isoSnapPoint(toUcs(u, w), { x: st.snap.baseX, y: st.snap.baseY }, st.snap.y);
-    return toWcs(u, q);
-  };
-  p.resolvePoint = (w: Pt) => {
-    const st = app.active;
-    const plane = isoPlaneOf(st);
-    const r = p.request;
-    if (plane === null || !st || r?.kind !== 'point') return resolve(w);
-    // 1) 객체 스냅은 그대로(추적·극좌표·직교·격자 스냅을 잠시 끄고 원래 해석을 부른다)
-    const saved = { polar: app.polarOn, ortho: app.orthoOn, otrack: app.otrackOn, snap: app.snapOn };
-    app.polarOn = app.orthoOn = app.otrackOn = app.snapOn = false;
-    let res: ReturnType<Resolve>;
-    try {
-      res = resolve(w);
-    } finally {
-      app.polarOn = saved.polar;
-      app.orthoOn = saved.ortho;
-      app.otrackOn = saved.otrack;
-      app.snapOn = saved.snap;
-    }
-    if (res.snap) return res;
-    // 2) 극좌표·객체 스냅 추적: 등각 각도(30°·90°·150°…, UCS X축 기준)
-    const tol = 8 * app.view.pixelSize();
-    const fmt = (v: number) => formatLength(v, st.units);
-    const u = currentUcs(st);
-    const iso = isoPolarAngles().map((a) => a + u.angle);
-    const acquired = p.acquired;
-    if (app.otrackOn && acquired.length) {
-      const t = objectTrack(acquired, w, iso, tol, r.base, app.polarOn ? iso : null, fmt);
-      if (t) return { p: t.p, snap: null, track: t };
-    }
-    if (r.base && app.polarOn && !app.orthoOn) {
-      const t = polarTrack(r.base, w, iso, tol, fmt);
-      if (t) return { p: t.p, snap: null, track: t };
-    }
-    // 3) 등각 격자 스냅
-    let q = app.snapOn ? p.snapToGrid(w) : w;
-    // 4) 등각 직교: 평면의 두 축 중 가까운 쪽(UCS 기준)
-    if (r.base && app.orthoOn) q = toWcs(u, isoOrthoPoint(toUcs(u, r.base), toUcs(u, q), plane));
-    return { p: q, snap: null };
-  };
+  addHook(app.pointFilters, { name: 'iso', resolve: (w, req) => resolveIsoPoint(app, w, req) });
+  // 표준 격자(CadView.gridInfo — App이 단 공개 고리)는 등각일 때 끄고, 등각 격자는 덧그림에서 그린다
+  if (gridHooked || !app.view) return;
+  gridHooked = true;
   gridInfoOrig = app.view.gridInfo;
   app.view.gridInfo = () => {
     const gi = gridInfoOrig?.() ?? null;

@@ -6,6 +6,7 @@ import type { PBlock, PRec, TableName, WCtx } from './context';
 import { eedOf, wcolor } from './common';
 import { HARD_OWNER, HARD_PTR, SOFT_OWNER, SOFT_PTR, type ObjWriter } from './objwriter';
 import { lwIndex } from './util';
+import { vportSnap } from '../../vportsnap';
 
 const TYPE: Record<string, number> = {
   BLOCK_CONTROL: 48,
@@ -347,9 +348,11 @@ export class TableWriter {
     d.B(1);
     d.B(0);
     d.RD2(v.gridSpacing);
+    // 스냅 켜기, 스냅 스타일·등각평면(SNAPSTYL·SNAPISOPAIR — src/io/vportsnap.ts), 스냅 회전
+    const snap = vportSnap(this.ctx.doc, v);
     d.B(0);
-    d.B(0);
-    d.BS(0);
+    d.B(snap.style);
+    d.BS(snap.pair);
     d.BD(0);
     d.RD2(v.snapBase);
     d.RD2(v.snapSpacing);

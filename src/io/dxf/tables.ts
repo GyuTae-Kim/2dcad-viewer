@@ -219,6 +219,9 @@ function vport(rec: DxfRecord): VPortRecord {
     aspect: t.num(41, 1),
     lensLength: t.num(42, 50),
     twist: t.num(51) * DEG,
+    // 등각투영 설정(SNAPSTYL·SNAPISOPAIR): 0이 아니면만 둔다(없으면 0)
+    ...(t.int(77) ? { snapStyle: t.int(77) } : {}),
+    ...(t.int(78) ? { snapIsoPair: t.int(78) } : {}),
   };
 }
 

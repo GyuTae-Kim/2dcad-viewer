@@ -42,6 +42,7 @@ import {
   wantsAnnotative,
 } from '../edit/annoscale';
 import type { App } from './app';
+import { addHook } from './hooks';
 import type { DocState } from './docstate';
 import { loadPref, savePref } from './util2-ui';
 
@@ -490,23 +491,9 @@ function findCopySource(app: App, st: DocState, block: string, e: Entity): Entit
   return null;
 }
 
-/** 편집 세션에 고리를 단다(문서마다 한 번) */
-function hookSession(app: App, st: DocState): void {
-  if (!st.session) return;
-  st.session.beforeCommit = (tx: Transaction) => annotateTransaction(app, st, tx);
-}
-
-/** 편집 고리(EditSession.beforeCommit)를 단다. EditManager.attach(문서를 열 때 편집 세션을 만든다)를 감싸 새 문서에도 단다. */
+/** 편집 고리를 단다: App의 확정 고리(commitHooks)의 확정 직전(before) — App이 모든 문서의 편집 세션에 잇는다 */
 export function installAnnoHooks(app: App): void {
-  const ed = app.edits as typeof app.edits & { __annoHooked?: boolean };
-  if (ed.__annoHooked) return;
-  ed.__annoHooked = true;
-  const attach = ed.attach.bind(ed);
-  ed.attach = (st: DocState) => {
-    attach(st);
-    hookSession(app, st);
-  };
-  for (const st of app.docs) hookSession(app, st);
+  addHook(app.commitHooks, { name: 'annoscale', before: (st: DocState, tx: Transaction) => annotateTransaction(app, st, tx) });
 }
 
 // ---------------------------------------------------------------------------

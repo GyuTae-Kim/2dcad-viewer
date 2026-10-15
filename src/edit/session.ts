@@ -304,6 +304,8 @@ export class EditSession {
 
   /** 커밋 직전에 트랜잭션을 고치는 고리(주석 축척: 새 주석 객체에 축척 레코드 붙이기 등) */
   beforeCommit: ((tx: Transaction) => Transaction) | null = null;
+  /** 커밋 뒤(적용·알림 다음) 부르는 고리(도면층 이전 기록, 연관 배열 경로 따라가기 등). 여기서 다시 커밋해도 된다 */
+  afterCommit: ((tx: Transaction) => void) | null = null;
 
   commit(tx: Transaction): void {
     if (this.beforeCommit && tx.ops.length) tx = this.beforeCommit(tx);
@@ -318,6 +320,7 @@ export class EditSession {
     this.redoStack.length = 0;
     this.dirty = true;
     this.onApply(tx, summary);
+    this.afterCommit?.(tx);
   }
 
   /** 명령 안에서 마지막 단계만 되돌린다(LINE의 U 옵션 등). 되돌린 작업 수를 돌려준다 */

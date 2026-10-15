@@ -15,9 +15,10 @@ import { boundsOf } from '../edit/geom/query';
 import { type Path, pathStart } from '../edit/geom/curve';
 import { entityPath } from '../edit/geom/path';
 import { type Affine, affApply, affInv, affMul, affRotate, affTranslate } from '../edit/geom/math';
-import type { EditOp, EditSession, Transaction } from '../edit/session';
+import type { EditOp, Transaction } from '../edit/session';
 import type { App, CommandContext, Keyword } from './app';
 import type { DocState } from './docstate';
+import { addHook } from './hooks';
 import { unlockedOnly } from './layers';
 import { currentProps } from './draw';
 import { applyArrayState, arrayAssociativity, arrayOf, arrayPreview, arrayToWorld, askNumber, askYesNo, buildEnv, degText, itemAt, setArrayAssociativity } from './assocarray-core';
@@ -655,31 +656,14 @@ export function erasePickedItem(app: App): boolean {
   return true;
 }
 
+/** Delete·Esc 키를 이미 들은 App */
+const keysInstalled = new WeakSet<App>();
+
 function installCtrlClick(app: App): void {
-  if (typeof window === 'undefined' || !app.view?.el) return;
-  let last: { p: Pt; ctrl: boolean } | null = null;
-  app.view.el.addEventListener(
-    'pointerup',
-    (ev) => {
-      const r = app.view.el.getBoundingClientRect();
-      last = { p: app.view.screenToWorld(ev.clientX - r.left, ev.clientY - r.top), ctrl: ev.ctrlKey || ev.metaKey };
-    },
-    { capture: true },
-  );
-  type Hook = ((h: string) => boolean) & { __assocArray?: boolean };
-  const wrap = () => {
-    const prev = app.linkClick as Hook | null;
-    if (prev?.__assocArray) return;
-    const fn: Hook = (h) => {
-      if (last?.ctrl && pickArrayItem(app, h, last.p)) return true;
-      return prev ? prev(h) : false;
-    };
-    fn.__assocArray = true;
-    app.linkClick = fn;
-  };
-  wrap();
-  // 다른 모듈(하이퍼링크)이 나중에 고리를 달면 그 위에 다시 단다
-  window.setTimeout(wrap, 0);
+  // Ctrl+클릭한 배열 항목: App의 Ctrl+클릭 고리(하이퍼링크보다 먼저)
+  addHook(app.entityClickHandlers, { name: 'assocarray-item', click: (h, p) => pickArrayItem(app, h, p) });
+  if (typeof window === 'undefined' || !app.view?.el || keysInstalled.has(app)) return;
+  keysInstalled.add(app);
   window.addEventListener(
     'keydown',
     (ev) => {
@@ -704,43 +688,29 @@ function installCtrlClick(app: App): void {
 // 경로 따라가기: 경로 곡선을 고치면(같은 명령 취소 묶음) 경로 배열을 새 경로로 다시 계산한다
 // ---------------------------------------------------------------------------
 
-const followHooked = new WeakSet<EditSession>();
+/** 따라가기 확정 중(그 확정이 다시 고리를 부를 때 되풀이하지 않는다) */
+let following = false;
 
-/** 편집 세션의 commit을 감싼다(주석 축척의 beforeCommit 고리와 겹치지 않게 commit 뒤에 따로 커밋) */
-function hookFollow(st: DocState): void {
-  const s = st.session;
-  if (!s || followHooked.has(s)) return;
-  followHooked.add(s);
-  const commit = s.commit.bind(s);
-  let busy = false;
-  s.commit = (tx: Transaction) => {
-    commit(tx);
-    if (busy) return;
-    const changed = new Set<string>();
-    for (const op of tx.ops) if (op.kind === 'modify' && op.after.type !== 'INSERT') changed.add(op.after.handle);
-    if (!changed.size) return;
-    busy = true;
-    try {
-      const ops = followPathOps(buildEnv(st), changed);
-      if (ops.length) commit({ label: tx.label, ops, group: tx.group, rebuildNow: true });
-    } catch {
-      /* 따라가지 못하면 배열은 그대로(ARRAYEDIT에서 다시 계산) */
-    } finally {
-      busy = false;
-    }
-  };
-}
-
+/** 경로를 고친 확정 뒤 같은 명령 취소 묶음으로 배열을 따라 고친다: App의 확정 고리(commitHooks)의 확정 뒤(after) */
 function installArrayFollow(app: App): void {
-  const ed = app.edits as (typeof app.edits & { __arrayFollow?: boolean }) | undefined;
-  if (!ed || ed.__arrayFollow) return;
-  ed.__arrayFollow = true;
-  const attach = ed.attach.bind(ed);
-  ed.attach = (st: DocState) => {
-    attach(st);
-    hookFollow(st);
-  };
-  for (const st of app.docs) hookFollow(st);
+  addHook(app.commitHooks, {
+    name: 'assocarray-follow',
+    after(st: DocState, tx: Transaction) {
+      if (following) return;
+      const changed = new Set<string>();
+      for (const op of tx.ops) if (op.kind === 'modify' && op.after.type !== 'INSERT') changed.add(op.after.handle);
+      if (!changed.size) return;
+      following = true;
+      try {
+        const ops = followPathOps(buildEnv(st), changed);
+        if (ops.length) st.session.commit({ label: tx.label, ops, group: tx.group, rebuildNow: true });
+      } catch {
+        /* 따라가지 못하면 배열은 그대로(ARRAYEDIT에서 다시 계산) */
+      } finally {
+        following = false;
+      }
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

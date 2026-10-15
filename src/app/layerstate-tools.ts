@@ -9,9 +9,10 @@
 import { tableKey } from '../core/model';
 import { LayerPreviousLog, layerPreviousOps } from '../edit/layerstate/previous';
 import { SBL_BLOCKS, SBL_BYBLOCK, SBL_DEFAULT, SBL_PROPS, activeSettingsText, setByLayerOps } from '../edit/layerstate/setbylayer';
-import type { EditSession, Transaction } from '../edit/session';
+import type { Transaction } from '../edit/session';
 import type { App } from './app';
 import type { DocState } from './docstate';
+import { addHook } from './hooks';
 import { unlockedOnly } from './layers';
 import { form } from './ui/dom';
 import { askInt, askKeyword, askYesNo, loadPref, savePref, selectWithKeywords } from './util2-ui';
@@ -44,29 +45,14 @@ export function setLayerPMode(on: boolean, app?: App): void {
   if (!on && app) for (const st of app.docs) layerPreviousLog(st).clear();
 }
 
-function hookSession(st: DocState): void {
-  const s = st.session as (EditSession & { __layerP?: boolean }) | undefined;
-  if (!s || s.__layerP) return;
-  s.__layerP = true;
-  const commit = s.commit.bind(s);
-  s.commit = (tx: Transaction) => {
-    commit(tx);
-    if (!suppress && layerPMode) layerPreviousLog(st).record(tx);
-  };
-}
-
-/** 편집 세션에 LAYERP 고리를 단다(지금 열린 도면과 앞으로 여는 도면 모두) */
+/** LAYERP 고리를 단다: App의 확정 고리(commitHooks)의 확정 뒤(after) — App이 모든 문서의 편집 세션에 잇는다 */
 export function installLayerPreviousHook(app: App): void {
-  const ed = app.edits as (typeof app.edits & { __layerP?: boolean }) | undefined;
-  if (ed && !ed.__layerP) {
-    ed.__layerP = true;
-    const attach = ed.attach.bind(ed);
-    ed.attach = (st: DocState) => {
-      attach(st);
-      hookSession(st);
-    };
-  }
-  for (const st of app.docs) hookSession(st);
+  addHook(app.commitHooks, {
+    name: 'layerp',
+    after(st: DocState, tx: Transaction) {
+      if (!suppress && layerPMode) layerPreviousLog(st).record(tx);
+    },
+  });
 }
 
 /** 기록하지 않고 확정한다(LAYERP 자신) */

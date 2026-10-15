@@ -14,6 +14,7 @@ import { TagOut, writeEntity } from './wentities';
 import { writeObjects } from './wobjects';
 import { writeTables } from './wtables';
 import { arcTextsForWrite } from '../arctext';
+import { activeVport, vportSnap } from '../vportsnap';
 
 export type { DxfVersion } from './tagwriter';
 export type { DxfWriteOptions } from './wcontext';
@@ -135,11 +136,17 @@ function writeHeader(s: TagSink, ctx: WriteContext, codepage: string): void {
   w.t(0, 'SECTION');
   w.t(2, 'HEADER');
   const written = new Set<string>();
+  // 등각투영 설정: R12는 머리말에도(*Active 뷰포트 값), R2000+는 VPORT 표의 77·78에만 쓴다(src/io/vportsnap.ts)
+  written.add('$SNAPSTYLE');
+  written.add('$SNAPISOPAIR');
   if (ver <= 1009) {
     for (const [name, code, dims] of R12_HEADER_VARS) {
       written.add(name);
       emit(name, code, dims, special(name) ?? H.get(name) ?? DEFAULT_HEADER[name]);
     }
+    const snap = vportSnap(doc, activeVport(doc));
+    emit('$SNAPSTYLE', 70, 0, snap.style);
+    emit('$SNAPISOPAIR', 70, 0, snap.pair);
   } else {
     for (const [name, code0, dims, minVer] of HEADER_VARS) {
       if (ver < minVer) continue;

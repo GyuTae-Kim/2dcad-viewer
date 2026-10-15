@@ -498,6 +498,8 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
       aspect: v.aspect,
       lensLength: v.lens,
       twist: v.twist,
+      ...(v.snapStyle ? { snapStyle: v.snapStyle } : {}),
+      ...(v.snapIsoPair ? { snapIsoPair: v.snapIsoPair } : {}),
     };
     applyRecordExtras(rec, v, names);
     doc.vports.push(rec);

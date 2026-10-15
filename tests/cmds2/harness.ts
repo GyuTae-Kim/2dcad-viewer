@@ -13,6 +13,7 @@ import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { boundsOf } from '../../src/edit/geom/query';
 import { newDoc } from '../edit/make';
+import { type CommitHook, type EntityClickHandler, type InputFilter, type PointFilter, bindCommitHooks } from '../../src/app/hooks';
 
 export type Input = string | { click: [number, number]; snap?: string } | { pick: string; at: [number, number] } | { sel: string[] };
 
@@ -98,7 +99,15 @@ export function makeHarness(setup?: (doc: CadDocument) => void): Harness {
     },
     setSelection() {},
     refreshSelectionOverlay() {},
+    // App의 확장 지점(src/app/hooks.ts)
+    pointFilters: [] as PointFilter[],
+    inputFilters: [] as InputFilter[],
+    entityClickHandlers: [] as EntityClickHandler[],
+    commitHooks: [] as CommitHook[],
+    dragPreviewMode: null,
   } as unknown as App;
+  // App.addDocument처럼 편집 세션을 확정 고리에 잇는다
+  bindCommitHooks(app, st);
 
   const h: Harness = {
     app,
