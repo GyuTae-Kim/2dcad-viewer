@@ -52,8 +52,13 @@ button {
 #app {
   display: grid;
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  /* dvh를 모르는 브라우저(iOS 15.3 이하 등)에서 높이가 정해지지 않으면 작업 영역 행이 0이 되므로 100%를 먼저 둔다 */
+  height: 100%;
   height: 100dvh;
-  width: 100vw;
+  width: 100%;
+  /* 노치·홈 표시줄(viewport-fit=cover) 자리. 데스크톱에서는 0 */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* 접힌 리본(display:none) 때문에 뒤쪽 요소가 앞 행으로 당겨지지 않게 한다. */
@@ -64,6 +69,43 @@ button {
 #app > .workspace { grid-row: 5; }
 #app > .layouttabs { grid-row: 6; }
 #app > .statusbar { grid-row: 7; }
+
+/* 겹침 리본(760px 미만 또는 480px보다 낮은 화면, shell.ts applyLayout): 리본이 작업 영역 행의 높이를 빼앗지 않고 그 위에 겹쳐 펼쳐진다.
+   그리드 컨테이너가 위치 기준이면 절대 위치 항목은 자기 그리드 영역(3행, 높이 0)을 기준으로 놓인다. */
+#app.ribbon-overlay {
+  position: relative;
+}
+#app.ribbon-overlay > .ribbon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  min-height: 0;
+  max-height: calc(var(--vvh, 100dvh) * 0.7);
+  padding: 2px 4px 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+#app.ribbon-overlay > .ribbon .rpanel {
+  flex: 1 1 auto;
+  max-width: 100%;
+  padding: 4px 4px 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+#app.ribbon-overlay > .ribbon .rpanel-body {
+  flex-wrap: wrap;
+  gap: 2px 4px;
+}
+#app.ribbon-overlay > .ribbon .rpanel-title {
+  padding-left: 2px;
+  text-align: left;
+}
 
 /* 제목 막대 */
 .titlebar {
@@ -161,7 +203,15 @@ button {
   padding: 0 6px;
   background: var(--bg-ribbon-tabs);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.ribbon-tabs::-webkit-scrollbar,
+.filetabs::-webkit-scrollbar,
+.layouttabs::-webkit-scrollbar,
+.statusbar::-webkit-scrollbar {
+  display: none;
 }
 .ribbon-tab {
   padding: 5px 14px 6px;
@@ -297,7 +347,9 @@ button {
   background: var(--bg-app);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
 .filetab {
   display: flex;
@@ -412,6 +464,8 @@ button {
   border-radius: 4px;
   background: var(--cmd-bg);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  /* 소프트 키보드가 가린 높이만큼 올린다(layout.ts watchViewport, 데스크톱에서는 0) */
+  margin-bottom: var(--kb-lift, 0px);
   z-index: 4;
   font-family: var(--mono);
   font-size: 12px;
@@ -498,7 +552,9 @@ button {
   background: var(--bg-app);
   border-top: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
 .layouttab {
   padding: 3px 14px;
@@ -523,13 +579,28 @@ button {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 28px;
-  padding: 0 8px;
+  height: calc(28px + env(safe-area-inset-bottom, 0px));
+  padding: 0 8px env(safe-area-inset-bottom, 0px);
   background: var(--bg-ribbon-tabs);
   border-top: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   white-space: nowrap;
+}
+.statusbar > * {
+  flex: none;
+}
+.statusbar > .status-spacer {
+  flex: 1;
+}
+/* 넘쳐서 "⋯" 메뉴로 옮긴 항목(shell.ts fitStatus) */
+.statusbar > .st-hidden {
+  display: none !important;
+}
+.statusbar .status-more {
+  font-size: 15px;
+  line-height: 1;
 }
 .coords {
   min-width: 220px;
@@ -560,7 +631,7 @@ button {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 320px;
+  width: var(--palette-w, 320px);
   min-width: 240px;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
@@ -892,7 +963,7 @@ table.grid tr.clickable {
   background: transparent;
 }
 .busy-box {
-  width: 300px;
+  width: min(300px, calc(100% - 32px));
   padding: 16px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -923,7 +994,7 @@ table.grid tr.clickable {
   pointer-events: none;
 }
 .toast {
-  max-width: 360px;
+  max-width: min(360px, calc(100vw - 32px));
   padding: 10px 14px;
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--accent);
@@ -942,7 +1013,11 @@ table.grid tr.clickable {
 /* 메뉴 */
 .menu {
   position: fixed;
-  min-width: 220px;
+  min-width: min(220px, calc(100vw - 8px));
+  max-width: calc(100vw - 8px);
+  max-height: calc(var(--vvh, 100dvh) - 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
@@ -993,6 +1068,10 @@ table.grid tr.clickable {
 .dialog-back {
   position: fixed;
   inset: 0;
+  /* 소프트 키보드가 올라와도 보이는 영역(visualViewport) 안에 둔다 */
+  top: var(--vvtop, 0px);
+  bottom: auto;
+  height: var(--vvh, 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1002,7 +1081,8 @@ table.grid tr.clickable {
 }
 .dialog {
   width: min(520px, 100%);
-  max-height: calc(100dvh - 32px);
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-soft);
@@ -1021,8 +1101,10 @@ table.grid tr.clickable {
   margin-left: auto;
 }
 .dialog .body {
+  min-height: 0;
   padding: 12px 14px;
   overflow: auto;
+  overscroll-behavior: contain;
   line-height: 1.6;
 }
 .dialog footer {
@@ -1070,14 +1152,66 @@ kbd {
   z-index: 4;
 }
 
-@media (max-width: 760px) {
+/* 760px 미만(layout.ts NARROW_WIDTH와 같은 기준) */
+@media (max-width: 759.98px) {
   .start-grid {
     grid-template-columns: 1fr;
   }
+  /* 팔레트는 아래쪽 시트: 위 손잡이를 끌어 높이를 바꾼다(palettes.ts) */
   .palette {
     position: absolute;
-    inset: 0 0 0 auto;
-    width: min(100%, 360px);
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: var(--kb-lift, 0px);
+    width: auto;
+    min-width: 0;
+    height: var(--sheet-h, 50%);
+    max-height: calc(100% - 8px - var(--kb-lift, 0px));
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.4);
+  }
+  .palette-head {
+    border-top: 1px solid var(--border);
+  }
+  .palette-resize {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: auto;
+    height: 16px;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  .palette-resize::before {
+    content: '';
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    width: 40px;
+    height: 4px;
+    margin-left: -20px;
+    border-radius: 2px;
+    background: var(--text-faint);
+    opacity: 0.7;
+  }
+  /* 시트가 열려 있으면 명령행은 시트 위로 */
+  .workspace:has(> .palette:not([hidden])) .cmdline {
+    bottom: min(calc(var(--sheet-h, 50%) + 8px), calc(100% - 96px));
+  }
+  /* 키보드가 올라와 둘이 다 들어갈 자리가 없으면: 시트에서 입력 중이면 명령행을, 명령행에서 입력 중이면 시트를 감춘다 */
+  .workspace.kb-up:has(> .palette:not([hidden])) .cmdline:not(:focus-within) {
+    visibility: hidden;
+  }
+  .workspace.kb-up:has(.cmdline:focus-within) > .palette {
+    visibility: hidden;
+  }
+  .workspace.kb-up:has(.cmdline:focus-within) .cmdline {
+    bottom: 8px;
   }
   .ribbon {
     min-height: 0;
@@ -1093,6 +1227,181 @@ kbd {
   }
   .title {
     text-align: left;
+  }
+  /* 명령행: 긴 프롬프트는 줄을 바꿔 키워드가 다 보이게 */
+  .cmdline {
+    width: calc(100% - 16px);
+    bottom: 8px;
+  }
+  .cmd-history {
+    max-height: 50px;
+  }
+  .cmd-row {
+    flex-wrap: wrap;
+    row-gap: 1px;
+  }
+  .cmd-prompt {
+    max-width: 100%;
+    white-space: normal;
+  }
+  /* 대화상자: 화면 가장자리까지 쓰고, 입력 칸은 폭에 맞춘다 */
+  .dialog-back {
+    padding: 8px;
+  }
+  .dialog header,
+  .dialog footer {
+    padding: 8px 10px;
+  }
+  .dialog .body {
+    padding: 10px 12px;
+  }
+  .dialog footer {
+    flex-wrap: wrap;
+  }
+  .form {
+    min-width: 0;
+  }
+  .form-row {
+    grid-template-columns: minmax(84px, 38%) minmax(0, 1fr);
+  }
+  .form .form-row input,
+  .form .form-row select,
+  .form .form-row textarea {
+    width: 100%;
+  }
+  .form .form-row.check input {
+    width: 16px;
+  }
+  .filetab {
+    max-width: 200px;
+  }
+  .statusbar .status-text:empty {
+    display: none;
+  }
+  .toast-wrap {
+    left: 16px;
+    align-items: flex-end;
+  }
+}
+
+/* 낮은 화면(가로로 눕힌 휴대폰): 명령행 기록은 두 줄만 */
+@media (max-height: 479.98px) {
+  .cmd-history {
+    max-height: 34px;
+  }
+}
+
+/* 휴대폰 폭 */
+@media (max-width: 480px) {
+  .start {
+    padding: 16px 12px;
+  }
+  .start h1 {
+    font-size: 22px;
+  }
+  .start p.lead {
+    margin-bottom: 16px;
+    font-size: 13.5px;
+  }
+  .dropzone {
+    min-height: 160px;
+  }
+  .portfolio-link {
+    padding: 0 4px;
+  }
+}
+
+/* 태블릿 폭: 시작 화면은 끌어 놓기 상자를 위에, 카드 셋을 아래 한 줄에 */
+@media (min-width: 760px) and (max-width: 1099.98px) {
+  .start-grid {
+    grid-template-columns: 1fr;
+  }
+  .dropzone {
+    min-height: 180px;
+  }
+  .start-side {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+/* 손가락 입력: 누르기 쉬운 크기. iOS가 입력 칸에서 화면을 확대하지 않게 글자는 16px */
+@media (pointer: coarse) {
+  .titlebar {
+    height: 40px;
+  }
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+  .ribbon-tab {
+    padding: 9px 14px 10px;
+  }
+  /* 펼친 리본은 탭마다 높이가 같아야(작업 영역이 탭을 바꿀 때 출렁이지 않게) 한다 */
+  .ribbon {
+    min-height: 110px;
+  }
+  .rbtn-sm {
+    height: 28px;
+  }
+  #app.ribbon-overlay > .ribbon .rbtn-sm {
+    height: 34px;
+  }
+  .rbtn-lg {
+    min-height: 58px;
+  }
+  .filetabs {
+    height: 38px;
+  }
+  .filetab .x {
+    width: 28px;
+    height: 28px;
+    padding: 5px;
+  }
+  .layouttabs {
+    height: 36px;
+  }
+  .layouttab {
+    padding: 7px 14px;
+  }
+  .statusbar {
+    gap: 4px;
+    height: calc(38px + env(safe-area-inset-bottom, 0px));
+  }
+  .statusbar .icon-btn {
+    width: 34px;
+    height: 32px;
+    padding: 6px;
+  }
+  .palette-head {
+    height: 40px;
+  }
+  .palette-tab {
+    padding: 8px 12px;
+  }
+  .menu button {
+    padding: 10px 12px;
+  }
+  .cmd-input,
+  .search,
+  .form .form-row input,
+  .form .form-row select,
+  .form .form-row textarea,
+  .prop-row.edit input,
+  .prop-row.edit select,
+  .prop-row.edit textarea,
+  .rprop select {
+    font-size: 16px;
+  }
+  .rprop,
+  .rprop select,
+  .rprop button.rprop-color {
+    height: 32px;
+  }
+  .prop-row.edit input,
+  .prop-row.edit select {
+    height: 30px;
   }
 }
 
@@ -1315,7 +1624,7 @@ button.aci.on {
 .rprop button:disabled {
   opacity: 0.45;
 }
-@media (max-width: 760px) {
+@media (max-width: 759.98px) {
   .rprop select,
   .rprop button.rprop-color {
     width: 110px;
@@ -1326,11 +1635,18 @@ button.aci.on {
 .rbtn-lg.folded span:last-child {
   white-space: nowrap;
 }
+/* 태블릿 폭: 접힌 패널을 조금 좁혀 첫 패널(그리기 등)이 펼친 채로 남게 한다(데스크톱은 그대로) */
+#app.layout-tablet > .ribbon > .rpanel:has(> .rpanel-body > .folded) {
+  padding: 0 3px;
+}
 .ribbon-pop {
   position: fixed;
   z-index: 60;
   display: flex;
   flex-direction: column;
+  max-width: calc(100vw - 8px);
+  max-height: calc(var(--vvh, 100dvh) - 8px);
+  overflow: auto;
   padding: 6px 6px 0;
   border: 1px solid var(--border);
   border-radius: 4px;

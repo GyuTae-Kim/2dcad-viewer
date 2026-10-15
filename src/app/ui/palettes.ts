@@ -11,6 +11,7 @@ import { type LayerPatch, cannotDeleteLayer, createLayer, currentLayer, deleteLa
 import { pickColor } from './colorpick';
 import { h, showMenu } from './dom';
 import { icon } from './icons';
+import { NARROW_WIDTH, sheetFraction } from './layout';
 import { dynPaletteGroup } from '../dynblock';
 import { arrayPaletteGroup } from '../assocarray-ui';
 import { annoCurrentRow, annoPaletteGroup } from '../annoscale-palette';
@@ -43,7 +44,7 @@ export class Palette {
     const close = h('button', { class: 'icon-btn', title: '팔레트 닫기', 'aria-label': '팔레트 닫기', html: icon('close2') });
     close.addEventListener('click', () => this.close());
     this.body = h('div', { class: 'palette-body' });
-    const grip = h('div', { class: 'palette-resize' });
+    const grip = h('div', { class: 'palette-resize', 'aria-hidden': 'true' });
     this.el = h('div', { class: 'palette', hidden: true }, grip, h('div', { class: 'palette-head' }, this.tabs, close), this.body);
     parent.append(this.el);
     try {
@@ -52,25 +53,44 @@ export class Palette {
     } catch {
       /* 저장소를 못 쓰는 환경 */
     }
-    this.el.style.width = `${this.width}px`;
+    this.el.style.setProperty('--palette-w', `${this.width}px`);
+    // 좁은 화면(760px 미만)에서는 아래쪽 시트: 손잡이를 위아래로 끌어 높이를 바꾼다(작업 영역 높이에 대한 비율)
+    let sheet = 0.5;
+    try {
+      sheet = sheetFraction(Number(localStorage.getItem('opencad.palette.sheet') ?? 0.5));
+    } catch {
+      /* 저장소를 못 쓰는 환경 */
+    }
+    parent.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
     grip.addEventListener('pointerdown', (ev) => {
       grip.setPointerCapture(ev.pointerId);
+      const asSheet = window.innerWidth < NARROW_WIDTH;
       const x0 = ev.clientX;
       const w0 = this.el.getBoundingClientRect().width;
+      const host = parent.getBoundingClientRect();
       const move = (e: PointerEvent) => {
+        if (asSheet) {
+          sheet = sheetFraction((host.bottom - e.clientY) / Math.max(1, host.height));
+          parent.style.setProperty('--sheet-h', `${Math.round(sheet * 100)}%`);
+          return;
+        }
         this.width = Math.max(240, Math.min(900, w0 + (x0 - e.clientX)));
-        this.el.style.width = `${this.width}px`;
+        this.el.style.setProperty('--palette-w', `${this.width}px`);
       };
       const up = () => {
         grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        grip.removeEventListener('pointercancel', up);
         try {
-          localStorage.setItem('opencad.palette.width', String(Math.round(this.width)));
+          if (asSheet) localStorage.setItem('opencad.palette.sheet', sheet.toFixed(3));
+          else localStorage.setItem('opencad.palette.width', String(Math.round(this.width)));
         } catch {
           /* 무시 */
         }
       };
       grip.addEventListener('pointermove', move);
-      grip.addEventListener('pointerup', up, { once: true });
+      grip.addEventListener('pointerup', up);
+      grip.addEventListener('pointercancel', up);
     });
   }
 
