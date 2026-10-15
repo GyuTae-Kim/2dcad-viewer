@@ -64,6 +64,10 @@ export interface LispHost {
   select(prompt: string, single: boolean): Promise<string[]>;
   /** 창(crossing이면 걸침) 선택(UCS 두 점) */
   selectWindow(a: Pt2, b: Pt2, crossing: boolean): string[];
+  /** 윈도우 폴리곤(crossing이면 걸침 폴리곤) 선택(UCS 점 목록, 저절로 닫는다) */
+  selectPolygon(pts: Pt2[], crossing: boolean): string[];
+  /** 울타리 선택(UCS 점 목록) */
+  selectFence(pts: Pt2[]): string[];
   /** 그 점(UCS)의 객체 */
   pickAt(p: Pt2): string | null;
   /** 지금 고른 객체(pickfirst) */
@@ -81,4 +85,26 @@ export interface LispHost {
   defineCommand(name: string): void;
   /** (load "이름"): 이 세션에 연 .lsp 파일. 없으면 null */
   findFile(name: string): Promise<{ name: string; text: string } | null>;
+  /** 이번 세션에 연 파일(도면·스크립트·.lsp·고른 파일)의 정보: findfile·vl-file-size·vl-file-systime·open. 없으면 null */
+  fileInfo(name: string): Promise<{ name: string; size: number; time: number; text(): Promise<string | null> } | null>;
+  /** 객체 고르기 허용 거리(WCS 도면 단위) */
+  pickTolerance(): number;
+  /** 문자 상자(문자 자기 좌표, 삽입점 원점·회전 없음). 문자 배치 엔진이 없으면 null */
+  textBox(t: TextBoxSpec): { x0: number; y0: number; x1: number; y1: number } | null;
+  /** 객체 스냅(UCS 점, 모드 end·mid·cen·nod·qua·int·ins·per·tan·nea·app·ext·gcen). 잡지 못하면 null */
+  osnap(p: Pt2, modes: string[]): Pt2 | null;
+  /** 임시 벡터(grdraw·grvecs, UCS 점, ACI 색·-1은 반전 색). 다시 그리면 사라진다 */
+  grdraw(vectors: { a: Pt2; b: Pt2; color: number; highlight: boolean }[]): void;
+  /** 임시 벡터 지우기(redraw) */
+  redraw(): void;
+}
+
+/** textbox가 재는 문자 */
+export interface TextBoxSpec {
+  text: string;
+  height: number;
+  style: string;
+  widthFactor: number;
+  oblique: number;
+  generation: number;
 }

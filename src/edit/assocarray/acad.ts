@@ -25,9 +25,9 @@
  */
 import type { CadDocument, GenericObject, InsertEntity, RawTag, Vec3 } from '../../core/model';
 import { normalizeHandle } from '../../core/model';
-import type { Affine } from '../geom/math';
+import { type Affine, affInv } from '../geom/math';
 import type { ArrayItem, ArrayKind, ArrayParams, CachedPiece } from './types';
-import { readCurve } from '../assocnet/curve';
+import { readCurve, transformPieces } from '../assocnet/curve';
 import { assocData } from '../assocnet/network';
 
 export { readCurve };
@@ -417,6 +417,11 @@ const val = (a: AcadArray, name: string): number | undefined => a.values.get(nam
  * AutoCAD 값 → 이 앱의 매개변수(원본 태그가 있고 종류를 알 때). 항목 회전은 항목 행렬로 정한다.
  * 기준점(basePoint)은 원본 블록 좌표, 원점(Origin)은 배열 블록 좌표.
  */
+function blockPieces(pieces: CachedPiece[], m: Affine | null): CachedPiece[] {
+  const inv = m ? affInv(m) : null;
+  return inv ? transformPieces(pieces, inv) : pieces;
+}
+
 export function paramsFromAcad(a: AcadArray, items: readonly AcadItemTag[]): ArrayParams | null {
   if (!a.kind || !a.raw) return null;
   const bp = a.vertex.get('basePoint')?.point;
@@ -471,7 +476,8 @@ export function paramsFromAcad(a: AcadArray, items: readonly AcadItemTag[]): Arr
     zDir: (val(a, 'MaintainZ') ?? 1) !== 0,
     reverse: pd !== undefined && pd === 0,
     path: a.pathEntity ?? null,
-    ...(a.edge?.curve ? { fallback: a.edge.curve } : {}),
+    // 곡선 캐시는 공간(세계) 좌표다(배열 참조가 거울·이동된 공개 DWG 9개로 확인) → 배열 블록 좌표로
+    ...(a.edge?.curve ? { fallback: blockPieces(a.edge.curve, a.insertMatrix) } : {}),
   };
 }
 

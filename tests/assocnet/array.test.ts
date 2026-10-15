@@ -182,13 +182,131 @@ describe('새 배열의 AutoCAD 연관 객체', () => {
     expect(act.head.params!.values.find((v) => v.name === 'ItemSpacing')!.values[0]!.v).toBe(25);
   });
 
-  it('선이 아닌 경로는 AutoCAD 기록 없이 이 앱 기록만 둔다', () => {
+  /** 곡선 경로(호·원·폴리선·스플라인)와 그 곡선 캐시 종류(공개 경로 배열 표본: 원호 11, 복합 47, NURBS 42) */
+  const curvePaths: [string, (t: ReturnType<typeof setup>) => Entity, number][] = [
+    ['호', (t) => t.add({ ...entityDefaults(), type: 'ARC', handle: '', center: { x: 0, y: 0, z: 0 }, radius: 50, startAngle: 0, endAngle: Math.PI } as Entity), 11],
+    ['원', (t) => t.add({ ...entityDefaults(), type: 'CIRCLE', handle: '', center: { x: 0, y: 0, z: 0 }, radius: 40 } as Entity), 11],
+    [
+      '폴리선(볼록 포함)',
+      (t) =>
+        t.add({
+          ...entityDefaults(),
+          type: 'LWPOLYLINE',
+          handle: '',
+          vertices: [
+            { x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
+            { x: 60, y: 0, bulge: -0.5, startWidth: 0, endWidth: 0 },
+            { x: 60, y: 40, bulge: 0, startWidth: 0, endWidth: 0 },
+          ],
+          closed: false,
+          plinegen: false,
+          constantWidth: 0,
+          elevation: 0,
+        } as Entity),
+      47,
+    ],
+    [
+      '스플라인',
+      (t) =>
+        t.add({
+          ...entityDefaults(),
+          type: 'SPLINE',
+          handle: '',
+          flags: 8,
+          degree: 3,
+          knots: [0, 0, 0, 0, 1, 2, 2, 2, 2],
+          controlPoints: [
+            { x: 0, y: 0, z: 0 },
+            { x: 20, y: 30, z: 0 },
+            { x: 50, y: -10, z: 0 },
+            { x: 80, y: 20, z: 0 },
+            { x: 100, y: 0, z: 0 },
+          ],
+          fitPoints: [],
+          knotTolerance: 1e-10,
+          controlTolerance: 1e-10,
+          fitTolerance: 1e-10,
+        } as Entity),
+      42,
+    ],
+  ];
+  for (const [name, mk, type] of curvePaths)
+    it(`곡선 경로(${name}): 곡선 캐시 ${type}, DXF·DWG 저장 뒤 AutoCAD 기록만으로 같은 배열`, () => {
+      const t = setup();
+      const path = mk(t);
+      const params: ArrayParams = { kind: 'path', ...common, method: 'divide', items: 4, spacing: 10, align: false, zDir: true, reverse: false, path: path.handle, tangentRef: 0 };
+      const ins = t.make(params, t.circle(200, 200, 2), 200, 200);
+      const a = readArray(t.doc, ins)!;
+      expect([a.origin, a.items.size]).toEqual(['acad', 4]);
+      const act = parsed(t.doc, a.acad!.action).d;
+      if (act.kind !== 'action') throw new Error('동작');
+      const eh = act.head.params!.actionParams.find((h) => parsed(t.doc, h).d.kind === 'edgeparam')!;
+      const edge = parsed(t.doc, eh).d;
+      if (edge.kind !== 'edgeparam') throw new Error('모서리 매개변수');
+      expect(Number(edge.param.curve[0]!.value)).toBe(type);
+      for (const [fmt, version] of [
+        ['dxf', 'AC1032'],
+        ['dxf', 'AC1015'],
+        ['dwg', 'AC1032'],
+        ['dwg', 'AC1018'],
+      ] as const) {
+        const data = fmt === 'dxf' ? writeDxf(t.doc, { version }).data : writeDwg(t.doc, { version }).data;
+        const back = readCadFile(data, `x.${fmt}`);
+        const e = back.entityIndex.get(ins.handle) as InsertEntity;
+        delete e.xdata;
+        const b = readArray(back, e)!;
+        expect([b.origin, b.state.params.kind, b.items.size], `${fmt} ${version}`).toEqual(['acad', 'path', 4]);
+        // 곡선 캐시가 그대로(DWG도 원본 비트가 아니라 해독한 태그로)
+        const be = parsed(back, eh).d;
+        expect(be.kind === 'edgeparam' && be.param.curve.map((x) => Number(x.value)), `${fmt} ${version}`).toEqual(edge.param.curve.map((x) => expect.closeTo(Number(x.value), 9)));
+      }
+    });
+
+  it('경로 곡선을 지워도 AutoCAD 곡선 캐시(공간 좌표)를 배열 블록 좌표로 바꿔 같은 배열로 읽는다', () => {
+    const t = setup();
+    const arc = t.add({ ...entityDefaults(), type: 'ARC', handle: '', center: { x: 300, y: 200, z: 0 }, radius: 50, startAngle: 0, endAngle: Math.PI } as Entity);
+    const params: ArrayParams = { kind: 'path', ...common, method: 'divide', items: 4, spacing: 10, align: true, zDir: true, reverse: false, path: arc.handle, tangentRef: 0 };
+    // 배열 참조를 옮겨 둔다(배열 블록 좌표 ≠ 공간 좌표)
+    const ins = t.make(params, t.circle(350, 200, 2), 350, 200, { x: 100, y: 50, z: 0 });
+    const act = parsed(t.doc, readArray(t.doc, ins)!.acad!.action).d;
+    if (act.kind !== 'action') throw new Error('동작');
+    const edge = act.head.params!.actionParams.map((h) => parsed(t.doc, h).d).find((d) => d.kind === 'edgeparam');
+    // 캐시는 경로 객체 좌표 그대로(중심 300, 200)
+    expect(edge?.kind === 'edgeparam' && edge.param.curve.slice(1, 3).map((x) => Number(x.value))).toEqual([300, 200]);
+    const ms = t.doc.blocks.get(MODEL_SPACE)!;
+    const i = ms.entities.findIndex((e) => e.handle === arc.handle);
+    t.s.commit({ label: 'ERASE', ops: [{ kind: 'remove', block: MODEL_SPACE, entity: ms.entities[i]!, index: i }] });
+    const b = readArray(t.doc, { ...t.doc.entityIndex.get(ins.handle)!, xdata: undefined } as InsertEntity)!;
+    expect([b.origin, b.items.size]).toEqual(['acad', 4]);
+    const fb = (b.state.params as Extract<ArrayParams, { kind: 'path' }>).fallback![0]!;
+    expect(fb.k === 'arc' && [fb.c.x, fb.c.y, fb.r]).toEqual([expect.closeTo(200, 9), expect.closeTo(150, 9), expect.closeTo(50, 9)]);
+  });
+
+  it('타원 경로는 AutoCAD 기록 없이 이 앱 기록만 둔다(타원 곡선 캐시는 실물로 확인하지 못했다)', () => {
+    const t = setup();
+    const el = t.add({ ...entityDefaults(), type: 'ELLIPSE', handle: '', center: { x: 0, y: 0, z: 0 }, majorAxis: { x: 50, y: 0, z: 0 }, ratio: 0.5, startParam: 0, endParam: Math.PI } as Entity);
+    const params: ArrayParams = { kind: 'path', ...common, method: 'divide', items: 4, spacing: 10, align: false, zDir: true, reverse: false, path: el.handle, tangentRef: 0 };
+    const ins = t.make(params, t.circle(50, 0, 2), 50, 0);
+    const a = readArray(t.doc, ins)!;
+    expect([a.origin, a.acad, a.items.size]).toEqual(['app', null, 4]);
+  });
+
+  it('경로를 고치면(배열 다시 계산) AutoCAD 곡선 캐시도 새 경로로 고친다', () => {
     const t = setup();
     const arc = t.add({ ...entityDefaults(), type: 'ARC', handle: '', center: { x: 0, y: 0, z: 0 }, radius: 50, startAngle: 0, endAngle: Math.PI } as Entity);
     const params: ArrayParams = { kind: 'path', ...common, method: 'divide', items: 4, spacing: 10, align: false, zDir: true, reverse: false, path: arc.handle, tangentRef: 0 };
     const ins = t.make(params, t.circle(50, 0, 2), 50, 0);
-    const a = readArray(t.doc, ins)!;
-    expect([a.origin, a.acad, a.items.size]).toEqual(['app', null, 4]);
+    const before = t.doc.entityIndex.get(arc.handle)!;
+    t.s.commit({ label: 'T', ops: [{ kind: 'modify', block: MODEL_SPACE, before, after: { ...before, radius: 70 } as Entity }] });
+    const info = readArray(t.doc, t.doc.entityIndex.get(ins.handle))!;
+    const r = regenerateOps({ doc: t.doc, newHandle: () => t.s.newHandle(), newBlockName: () => allocBlockName(t.doc, '*U') }, info, info.state);
+    if ('error' in r) throw new Error(r.error);
+    t.s.commit({ label: 'ARRAYEDIT', ops: r.ops });
+    const act = parsed(t.doc, info.acad!.action).d;
+    if (act.kind !== 'action') throw new Error('동작');
+    const edge = act.head.params!.actionParams.map((h) => parsed(t.doc, h).d).find((d) => d.kind === 'edgeparam');
+    // 11 원호: 10 중심(3), 10 법선(3), 10 기준(3), 40 반지름
+    expect(edge?.kind === 'edgeparam' && Number(edge.param.curve[10]!.value)).toBe(70);
   });
 
   for (const [fmt, version] of [

@@ -1,19 +1,24 @@
 /**
- * 앱과 잇는 AutoLISP 함수: 입력(getpoint getcorner getdist getangle getorient getreal getint getstring getkword initget entsel),
- * 명령(command command-s vl-cmdf), 변수(getvar setvar), 객체(entget entmod entmake entmakex entdel entnext entlast handent entupd),
- * 선택 세트(ssget ssname sslength ssadd ssdel ssmemb sssetfirst ssgetfirst), 표(tblsearch tblnext layoutlist), trans, alert, load, findfile.
+ * 앱과 잇는 AutoLISP 함수: 입력(getpoint getcorner getdist getangle getorient getreal getint getstring getkword initget entsel
+ * nentsel nentselp), 명령(command command-s vl-cmdf), 변수(getvar setvar), 객체(entget entmod entmake entmakex entdel entnext
+ * entlast handent entupd textbox), 확장 데이터(regapp xdsize xdroom, entget·entmod·entmake의 -3), 사전(namedobjdict dictsearch
+ * dictnext dictadd dictremove dictrename), 선택 세트(ssget — W·C·WP·CP·F·X·L·P·I 포함 — ssname sslength ssadd ssdel ssmemb
+ * sssetfirst ssgetfirst), 표(tblsearch tblnext tblobjname layoutlist), trans, osnap, 임시 그림(grdraw grvecs redraw), alert, load,
+ * findfile, 이번 세션에 연 파일 정보(vl-file-size vl-file-systime vl-file-directory-p).
  * 파일 쓰기·외부 실행·ActiveX·대화상자(DCL)는 만들지 않고 "이 웹 버전에서는 쓸 수 없습니다"로 알린다.
  */
-import { MODEL_SPACE, tableKey, type Vec3 } from '../../core/model';
+import { MODEL_SPACE, normalizeHandle, tableKey, type Vec3 } from '../../core/model';
 import { ocsToWcs, wcsToOcs } from '../geom/ocs';
 import { isPoint, num, point, ptList, str } from './core';
-import { allMain, entdel, entget, entlast, entmake, entmod, entnext, exists, filterHandles } from './entity';
+import { allMain, entdel, entget, entlast, entmake, entmod, entnext, exists, filterHandles, readPairs } from './entity';
+import { DictCursor, XD_LIMIT, appList, dictAdd, dictLookup, dictRemove, dictRename, findTableRecord, objectOf, recordXData, regApp, rootDictHandle, tableEntries, tableObjHandle, xdataSize, xdsizeArg } from './objects';
+import { nestedPick } from './nested';
 import type { AskOptions, AskResult, LispDrawing, LispHost, Pt2 } from './host';
 import type { Interp } from './interp';
 import { badType, badValue, prin1 } from './printer';
 import { EOF, LispReader } from './reader';
 import { angtof, distof } from './text';
-import { Cons, Ename, Ev, type Gen, LispError, MSG, PickSet, Real, fromArray, isNum, numOf, toArray, type Value } from './types';
+import { Cons, Ename, Ev, type Gen, LispError, LispFile, MSG, PickSet, Real, fromArray, isNum, numOf, toArray, type Value } from './types';
 
 interface Kw {
   /** 고를 때 돌려줄 이름(국제 이름이 있으면 그것) */
@@ -74,11 +79,7 @@ export function installHost(it: Interp, host: LispHost): void {
   for (const n of [
     'STARTAPP',
     'GETFILED',
-    'OPEN',
-    'CLOSE',
-    'READ-LINE',
     'WRITE-LINE',
-    'READ-CHAR',
     'WRITE-CHAR',
     'VL-MKDIR',
     'VL-DIRECTORY-FILES',
@@ -338,6 +339,53 @@ export function installHost(it: Interp, host: LispHost): void {
     }
   });
 
+  /** nentsel·nentselp 결과: 블록 안이면 (이름 점 행렬 (블록 참조…)), 아니면 (이름 점) */
+  const nested = (h: string, pu: Pt2, selp: boolean): Value => {
+    const d = host.drawing();
+    const ptv = ptList(pu.x, pu.y, 0);
+    if (!d) return fromArray([it.ename(h), ptv]);
+    const u = host.ucs();
+    const c = Math.cos(u.angle);
+    const s = Math.sin(u.angle);
+    const w = { x: u.ox + pu.x * c - pu.y * s, y: u.oy + pu.x * s + pu.y * c, z: 0 };
+    const r = nestedPick(d.doc, h, w, host.pickTolerance());
+    if (!r.matrix) return fromArray([it.ename(r.handle), ptv]);
+    const m = r.matrix;
+    const row = (...xs: number[]) => fromArray(xs.map((x) => new Real(x)));
+    // nentsel: 네 줄(X·Y·Z축과 원점, 각 3개), nentselp: 4×4(열 벡터로 곱하는 행렬)
+    const mat = selp ? fromArray([row(m[0]!, m[1]!, m[2]!, m[3]!), row(m[4]!, m[5]!, m[6]!, m[7]!), row(m[8]!, m[9]!, m[10]!, m[11]!), row(0, 0, 0, 1)]) : fromArray([row(m[0]!, m[4]!, m[8]!), row(m[1]!, m[5]!, m[9]!), row(m[2]!, m[6]!, m[10]!), row(m[3]!, m[7]!, m[11]!)]);
+    return fromArray([it.ename(r.handle), ptv, mat, fromArray(r.chain.map((x) => it.ename(x)))]);
+  };
+  const nentAsk = async (msg: Value | undefined, selp: boolean): Promise<Value> => {
+    const prompt = promptOf(msg, '객체 선택:');
+    const cur = init;
+    init = { bits: 0, kws: [] };
+    for (;;) {
+      const r = await ask('entity', prompt, {});
+      if ('entity' in r) return nested(r.entity, r.point, selp);
+      if ('enter' in r) return null;
+      const text = 'text' in r ? r.text : 'keyword' in r ? r.keyword : '';
+      const kw = matchKw(text, cur.kws);
+      if (kw !== null) return kw;
+      if (cur.bits & ANY && text) return text;
+      note('객체를 선택하십시오.');
+    }
+  };
+  def('NENTSEL', 0, 1, ([msg]) => nentAsk(msg, false));
+  def('NENTSELP', 0, 2, (a) => {
+    let msg: Value | undefined;
+    let pt: Value | undefined;
+    for (const x of a) {
+      if (typeof x === 'string') msg = x;
+      else if (x !== null && isPoint(x)) pt = x;
+    }
+    if (pt === undefined) return nentAsk(msg, true);
+    // 점을 주면 묻지 않고 그 자리의 객체
+    const p = point(pt);
+    const h = host.pickAt(p);
+    return h ? nested(h, p, true) : null;
+  });
+
   // ----------------------------------------------------------------- 명령
   const cmd = (mode: 'command' | 'command-s' | 'vl-cmdf') => async (a: Value[]) => {
     it.flush();
@@ -349,7 +397,7 @@ export function installHost(it: Interp, host: LispHost): void {
   def('COMMAND-S', 0, -1, cmd('command-s'));
   def('VL-CMDF', 0, -1, cmd('vl-cmdf'));
   def('INITCOMMANDVERSION', 0, 1, () => null);
-  for (const n of ['ACAD-PUSH-DBMOD', 'ACAD-POP-DBMOD', 'REDRAW', 'GRDRAW', 'GRVECS', 'GRCLEAR', 'GRTEXT', 'MENUCMD', 'MENUGROUP', 'TEXTSCR', 'GRAPHSCR', 'TEXTPAGE']) def(n, 0, -1, () => null);
+  for (const n of ['ACAD-PUSH-DBMOD', 'ACAD-POP-DBMOD', 'GRTEXT', 'MENUCMD', 'MENUGROUP', 'TEXTSCR', 'GRAPHSCR', 'TEXTPAGE']) def(n, 0, -1, () => null);
 
   // ----------------------------------------------------------------- 변수
   const numVar = (n: string, d: number): number => {
@@ -366,17 +414,19 @@ export function installHost(it: Interp, host: LispHost): void {
   def('GETENV', 1, 1, () => null);
 
   // ----------------------------------------------------------------- 객체
-  def('ENTGET', 1, 2, ([e]) => {
+  def('ENTGET', 1, 2, ([e, apps]) => {
     const d = host.drawing();
     if (!d) return null;
-    return entget(it, d, enameArg(e!).handle);
+    return entget(it, d, enameArg(e!).handle, appList(apps));
   });
-  def('ENTMOD', 1, 1, ([l]) => entmod(drawing(), l!));
+  def('ENTMOD', 1, 1, ([l]) => entmod(it, drawing(), l!));
   def('ENTMAKE', 0, 1, ([l]) => entmake(drawing(), l ?? null));
   def('ENTMAKEX', 0, 1, ([l]) => {
     const d = drawing();
-    const r = entmake(d, l ?? null);
+    const made = { h: '' };
+    const r = entmake(d, l ?? null, (h) => (made.h = h));
     if (r === null) return null;
+    if (made.h) return it.ename(made.h);
     const h = entlast(d);
     return h ? it.ename(h) : null;
   });
@@ -394,8 +444,86 @@ export function installHost(it: Interp, host: LispHost): void {
   });
   def('HANDENT', 1, 1, ([h]) => {
     const d = host.drawing();
-    const k = str(h!).trim().toUpperCase().replace(/^0+(?=.)/, '');
-    return d && d.doc.entityIndex.has(k) && exists(d, k) ? it.ename(k) : null;
+    const k = normalizeHandle(str(h!));
+    if (!d) return null;
+    // 객체(블록 정의 안 포함)·비도형 객체·표 기록
+    if (d.doc.entityIndex.has(k)) return exists(d, k) || d.session.ownerOf(k) ? it.ename(k) : null;
+    if (d.doc.objects.has(k)) return it.ename(k);
+    const t = findTableRecord(it, d.doc, k);
+    return t ? it.ename(t.entry.handle) : null;
+  });
+
+  // ----------------------------------------------------------------- 확장 데이터
+  def('REGAPP', 1, 1, ([n]) => {
+    const name = str(n!);
+    return regApp(drawing(), name) ? name : null;
+  });
+  def('XDSIZE', 1, 1, ([l]) => xdataSize(xdsizeArg(drawing().doc, l!)));
+  def('XDROOM', 1, 1, ([e]) => {
+    const d = host.drawing();
+    if (!d) return null;
+    const h = enameArg(e!).handle;
+    const ent = d.doc.entityIndex.get(h);
+    const obj = ent ? undefined : objectOf(d.doc, h);
+    const rec = ent || obj ? undefined : findTableRecord(it, d.doc, h);
+    if (!ent && !obj && !rec) return null;
+    return XD_LIMIT - xdataSize((ent ?? obj)?.xdata ?? recordXData(it, d.doc, h) ?? []);
+  });
+
+  // ----------------------------------------------------------------- 사전
+  const cursor = new DictCursor();
+  def('NAMEDOBJDICT', 0, 0, () => {
+    const d = host.drawing();
+    const h = d ? rootDictHandle(d.doc) : null;
+    return h ? it.ename(h) : null;
+  });
+  def('DICTSEARCH', 2, 3, ([e, n, setnext]) => {
+    const d = host.drawing();
+    if (!d) return null;
+    const dh = enameArg(e!).handle;
+    const name = str(n!);
+    const h = dictLookup(d.doc, dh, name);
+    if (!h) return null;
+    if (setnext !== undefined && setnext !== null) cursor.after(d.doc, dh, name);
+    return entget(it, d, h);
+  });
+  def('DICTNEXT', 1, 2, ([e, rewind]) => {
+    const d = host.drawing();
+    if (!d) return null;
+    const h = cursor.next(d.doc, enameArg(e!).handle, rewind !== undefined && rewind !== null);
+    return h ? entget(it, d, h) : null;
+  });
+  def('DICTADD', 3, 3, ([e, n, o]) => (dictAdd(drawing(), enameArg(e!).handle, str(n!), enameArg(o!).handle) ? o! : null));
+  def('DICTREMOVE', 2, 2, ([e, n]) => {
+    const h = dictRemove(drawing(), enameArg(e!).handle, str(n!));
+    return h ? it.ename(h) : null;
+  });
+  def('DICTRENAME', 3, 3, ([e, a, b]) => (dictRename(drawing(), enameArg(e!).handle, str(a!), str(b!)) ? b! : null));
+
+  // ----------------------------------------------------------------- 문자 상자
+  def('TEXTBOX', 1, 1, ([l]) => {
+    const pairs = readPairs(l!);
+    const get = (c: number) => pairs.find(([k]) => k === c)?.[1];
+    const type = get(0);
+    if (typeof type === 'string' && !/^(TEXT|ATTRIB|ATTDEF)$/i.test(type)) return null;
+    const text = get(1);
+    if (typeof text !== 'string') return null;
+    const d = host.drawing();
+    const sv = get(7);
+    const styleName = typeof sv === 'string' ? sv : (() => {
+      const v = host.getvar('TEXTSTYLE');
+      return typeof v === 'string' ? v : 'Standard';
+    })();
+    const style = d?.doc.textStyles.get(tableKey(styleName));
+    const nOr = (c: number, dv: number) => {
+      const v = get(c);
+      return v !== undefined && isNum(v) ? numOf(v) : dv;
+    };
+    const height = nOr(40, style && style.height > 0 ? style.height : numVar('TEXTSIZE', 2.5));
+    const spec = { text, height, style: style?.name ?? styleName, widthFactor: nOr(41, style?.widthFactor || 1), oblique: nOr(51, style?.oblique ?? 0), generation: Math.trunc(nOr(71, style?.generation ?? 0)) };
+    // 배치 엔진이 없으면 글자 수로 어림한다
+    const b = host.textBox(spec) ?? { x0: 0, y0: 0, x1: text.length * height * spec.widthFactor * 0.85, y1: height };
+    return fromArray([ptList(b.x0, b.y0, 0), ptList(b.x1, b.y1, 0)]);
   });
   def('ENTUPD', 1, 1, ([e]) => enameArg(e!));
 
@@ -451,6 +579,16 @@ export function installHost(it: Interp, host: LispHost): void {
         const p2 = point(rest[1] ?? null);
         return done(host.selectWindow(p1, p2, mode === 'C'), rest[2]);
       }
+      case 'WP':
+      case 'CP':
+      case 'F': {
+        const pts = toArray(rest[0] ?? null);
+        if (!pts || !pts.length) throw badType('listp', rest[0] ?? null);
+        const ps = pts.map((x) => point(x));
+        if (mode !== 'F' && ps.length < 3) throw badValue('폴리곤 점은 3개 이상이어야 함', rest[0]!);
+        if (mode === 'F' && ps.length < 2) throw badValue('울타리 점은 2개 이상이어야 함', rest[0]!);
+        return done(mode === 'F' ? host.selectFence(ps) : host.selectPolygon(ps, mode === 'CP'), rest[1]);
+      }
       default:
         throw new LispError(`SSGET: 선택 방식 "${mode}"은(는) ${MSG.web}`);
     }
@@ -491,129 +629,38 @@ export function installHost(it: Interp, host: LispHost): void {
 
   // ----------------------------------------------------------------- 표
   const tblIter = new Map<string, number>();
-  const tableEntries = (d: LispDrawing, table: string): { name: string; data: () => Value }[] => {
-    const doc = d.doc;
-    const pairs = (xs: [number, Value][]) => fromArray(xs.map(([c, v]) => new Cons(c, v)));
-    switch (table) {
-      case 'LAYER':
-        return [...doc.layers.values()].map((l) => ({
-          name: l.name,
-          data: () =>
-            pairs([
-              [0, 'LAYER'],
-              [2, l.name],
-              [70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0)],
-              [62, l.off ? -Math.abs(l.color.aci) : Math.abs(l.color.aci)],
-              [6, l.linetype],
-              [290, l.plot ? 1 : 0],
-              [370, l.lineweight],
-            ]),
-        }));
-      case 'LTYPE':
-        return [...doc.linetypes.values()].map((l) => ({
-          name: l.name,
-          data: () =>
-            pairs([
-              [0, 'LTYPE'],
-              [2, l.name],
-              [70, l.flags],
-              [3, l.description],
-              [72, 65],
-              [73, l.elements.length],
-              [40, new Real(l.patternLength)],
-              ...l.elements.map((e) => [49, new Real(e.length)] as [number, Value]),
-            ]),
-        }));
-      case 'STYLE':
-        return [...doc.textStyles.values()].map((s) => ({
-          name: s.name,
-          data: () =>
-            pairs([
-              [0, 'STYLE'],
-              [2, s.name],
-              [70, s.flags],
-              [40, new Real(s.height)],
-              [41, new Real(s.widthFactor)],
-              [50, new Real(s.oblique)],
-              [71, s.generation],
-              [42, new Real(s.lastHeight)],
-              [3, s.font],
-              [4, s.bigFont],
-            ]),
-        }));
-      case 'BLOCK':
-        return [...doc.blocks.values()]
-          .filter((b) => !/^\*(MODEL|PAPER)_SPACE/i.test(b.name))
-          .map((b) => ({
-            name: b.name,
-            data: () => {
-              const first = b.entities.find((e) => e.handle);
-              return pairs([
-                [0, 'BLOCK'],
-                [2, b.name],
-                [70, b.flags],
-                [10, ptList(b.basePoint.x, b.basePoint.y, b.basePoint.z)],
-                ...(first ? [[-2, it.ename(first.handle)] as [number, Value]] : []),
-              ]);
-            },
-          }));
-      case 'DIMSTYLE':
-      case 'VIEW':
-      case 'UCS':
-      case 'APPID': {
-        const m = table === 'DIMSTYLE' ? doc.dimStyles : table === 'VIEW' ? doc.views : table === 'UCS' ? doc.ucs : doc.appIds;
-        return [...m.values()].map((r) => ({
-          name: r.name,
-          data: () =>
-            pairs([
-              [0, table],
-              [2, r.name],
-              [70, r.flags],
-            ]),
-        }));
-      }
-      case 'VPORT':
-        return doc.vports.map((r) => ({
-          name: r.name,
-          data: () =>
-            pairs([
-              [0, 'VPORT'],
-              [2, r.name],
-              [70, r.flags],
-            ]),
-        }));
-      default:
-        throw badValue('표 이름', table);
-    }
+  const tableList = (d: LispDrawing, table: string) => {
+    const l = tableEntries(it, d.doc, table);
+    if (!l) throw badValue('표 이름', table);
+    return l;
   };
+  const tblData = (table: string, x: { fields: () => [number, Value][] }) => fromArray([new Cons(0, table), ...x.fields().map(([c, v]) => new Cons(c, v))]);
   def('TBLSEARCH', 2, 3, ([t, n, next]) => {
     const d = host.drawing();
     if (!d) return null;
     const table = str(t!).toUpperCase();
-    const list = tableEntries(d, table);
+    const list = tableList(d, table);
     const i = list.findIndex((x) => tableKey(x.name) === tableKey(str(n!)));
     if (i < 0) return null;
     if (next !== undefined && next !== null) tblIter.set(table, i + 1);
-    return list[i]!.data();
+    return tblData(table, list[i]!);
   });
   def('TBLNEXT', 1, 2, ([t, rewind]) => {
     const d = host.drawing();
     if (!d) return null;
     const table = str(t!).toUpperCase();
-    const list = tableEntries(d, table);
-    let i = rewind !== undefined && rewind !== null ? 0 : (tblIter.get(table) ?? 0);
+    const list = tableList(d, table);
+    const i = rewind !== undefined && rewind !== null ? 0 : (tblIter.get(table) ?? 0);
     if (i >= list.length) return null;
     tblIter.set(table, i + 1);
-    return list[i++]!.data();
+    return tblData(table, list[i]!);
   });
   def('TBLOBJNAME', 2, 2, ([t, n]) => {
     const d = host.drawing();
     if (!d) return null;
     const table = str(t!).toUpperCase();
-    const key = tableKey(str(n!));
-    const doc = d.doc;
-    const h =
-      table === 'LAYER' ? doc.layers.get(key)?.handle : table === 'LTYPE' ? doc.linetypes.get(key)?.handle : table === 'STYLE' ? doc.textStyles.get(key)?.handle : table === 'BLOCK' ? doc.blocks.get(key)?.recordHandle : table === 'DIMSTYLE' ? doc.dimStyles.get(key)?.handle : undefined;
+    if (!tableEntries(it, d.doc, table)) throw badValue('표 이름', table);
+    const h = tableObjHandle(it, d.doc, table, str(n!));
     return h ? it.ename(h) : null;
   });
   def('LAYOUTLIST', 0, 0, () => {
@@ -689,10 +736,113 @@ export function installHost(it: Interp, host: LispHost): void {
   });
   def('FINDFILE', 1, 1, async ([n]) => {
     const name = str(n!);
+    const info = await host.fileInfo(name);
+    if (info) return info.name;
     const f = await host.findFile(name);
     return f ? f.name : null;
   });
-  def('VL-FILE-SYSTIME', 1, 1, () => null);
+  // 이번 세션에 연 파일만(브라우저는 디스크를 볼 수 없다). 복사·지우기·이름 바꾸기는 만들지 않는다
+  def('VL-FILE-SIZE', 1, 1, async ([n]) => (await host.fileInfo(str(n!)))?.size ?? null);
+  def('VL-FILE-SYSTIME', 1, 1, async ([n]) => {
+    const f = await host.fileInfo(str(n!));
+    if (!f) return null;
+    const t = new Date(f.time);
+    return fromArray([t.getFullYear(), t.getMonth() + 1, t.getDay(), t.getDate(), t.getHours(), t.getMinutes(), t.getSeconds(), 0]);
+  });
+  def('VL-FILE-DIRECTORY-P', 1, 1, () => null);
+  // 읽기(r)만: 이번 세션에 연 글 파일. 쓰기(w·a)는 웹 버전에 없다
+  def('OPEN', 2, 3, async ([n, m]) => {
+    const name = str(n!);
+    const mode = str(m!).trim().toLowerCase();
+    if (mode === 'w' || mode === 'a') throw new LispError(`OPEN: 파일 쓰기(${mode})는 ${MSG.web}`);
+    if (mode !== 'r') throw badValue('파일 모드', m!);
+    const f = await host.fileInfo(name);
+    const text = f ? await f.text() : null;
+    return f && text !== null ? new LispFile(f.name, text) : null;
+  });
+  const fileOf = (v: Value | undefined, fn: string): LispFile => {
+    if (v === undefined || v === null) throw new LispError(`${fn}: 키보드 읽기는 ${MSG.web}`);
+    if (!(v instanceof LispFile) || v.closed) throw badType('streamp', v);
+    return v;
+  };
+  def('READ-LINE', 0, 1, ([f]) => {
+    const file = fileOf(f, 'READ-LINE');
+    if (file.pos >= file.text.length) return null;
+    let i = file.text.indexOf('\n', file.pos);
+    if (i < 0) i = file.text.length;
+    const line = file.text.slice(file.pos, i).replace(/\r$/, '');
+    file.pos = i + 1;
+    return line;
+  });
+  def('READ-CHAR', 0, 1, ([f]) => {
+    const file = fileOf(f, 'READ-CHAR');
+    if (file.pos >= file.text.length) return null;
+    let c = file.text.codePointAt(file.pos)!;
+    file.pos += c > 0xffff ? 2 : 1;
+    // CR LF는 LF 하나로
+    if (c === 13 && file.text[file.pos] === '\n') {
+      file.pos++;
+      c = 10;
+    }
+    return c;
+  });
+  def('CLOSE', 1, 1, ([f]) => {
+    if (!(f instanceof LispFile)) throw badType('streamp', f!);
+    f.closed = true;
+    return null;
+  });
+
+  // ----------------------------------------------------------------- 객체 스냅·임시 그림
+  def('OSNAP', 2, 2, ([p, m]) => {
+    const pt = point(p!);
+    const modes: string[] = [];
+    for (const w of str(m!).split(',').map((x) => x.trim().replace(/^_+/, '').toUpperCase()).filter(Boolean)) {
+      const k = OSNAP_NAMES.find(([n]) => w.startsWith(n))?.[1];
+      if (k === undefined) return null;
+      if (k) modes.push(k);
+    }
+    if (!modes.length) return null;
+    if (modes.includes('none')) return ptList(pt.x, pt.y, pt.z);
+    it.flush();
+    const r = host.osnap(pt, modes);
+    return r ? ptList(r.x, r.y, pt.z) : null;
+  });
+  def('GRDRAW', 3, 4, ([a, b, c, hl]) => {
+    host.grdraw([{ a: point(a!), b: point(b!), color: Math.trunc(num(c!)), highlight: hl !== undefined && hl !== null && hl !== 0 }]);
+    return null;
+  });
+  def('GRVECS', 1, 2, ([vl, tr]) => {
+    const items = toArray(vl!);
+    if (!items) throw badType('listp', vl!);
+    const m = tr === undefined || tr === null ? null : matrix4(tr);
+    const tx = (p: { x: number; y: number; z: number }) => (m ? { x: m[0]! * p.x + m[1]! * p.y + m[2]! * p.z + m[3]!, y: m[4]! * p.x + m[5]! * p.y + m[6]! * p.z + m[7]! } : p);
+    let color = 7;
+    let from: Pt2 | null = null;
+    const out: { a: Pt2; b: Pt2; color: number; highlight: boolean }[] = [];
+    for (const x of items) {
+      if (typeof x === 'number') {
+        color = x;
+        continue;
+      }
+      const p = tx(point(x));
+      if (!from) from = p;
+      else {
+        out.push({ a: from, b: p, color: color > 255 ? -1 : Math.abs(color), highlight: color < 0 });
+        from = null;
+      }
+    }
+    host.grdraw(out);
+    return null;
+  });
+  def('REDRAW', 0, 2, ([e]) => {
+    // (redraw): 임시 그림 지우기. (redraw 이름 모드)의 객체 강조·숨기기는 하지 않는다
+    if (e === undefined || e === null) host.redraw();
+    return null;
+  });
+  def('GRCLEAR', 0, 0, () => {
+    host.redraw();
+    return null;
+  });
   def('VL-FILENAME-BASE', 1, 1, ([n]) => str(n!).replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, ''));
   def('VL-FILENAME-EXTENSION', 1, 1, ([n]) => {
     const m = /(\.[^.\\/]*)$/.exec(str(n!));
@@ -707,6 +857,39 @@ export function installHost(it: Interp, host: LispHost): void {
     return i;
   });
 
+}
+
+/** osnap 모드 이름(앞 세 글자) → 객체 스냅. ''은 무시(QUI·PAR) */
+const OSNAP_NAMES: [string, string][] = [
+  ['END', 'end'],
+  ['MID', 'mid'],
+  ['CEN', 'cen'],
+  ['NOD', 'nod'],
+  ['QUA', 'qua'],
+  ['INT', 'int'],
+  ['INS', 'ins'],
+  ['PER', 'per'],
+  ['TAN', 'tan'],
+  ['NEA', 'nea'],
+  ['APP', 'app'],
+  ['EXT', 'ext'],
+  ['GCE', 'gcen'],
+  ['NON', 'none'],
+  ['QUI', ''],
+  ['PAR', ''],
+];
+
+/** grvecs 변환 행렬(4×4 목록) → 행 우선 12개 */
+function matrix4(v: Value): number[] {
+  const rows = toArray(v);
+  if (!rows || rows.length !== 4) throw badType('4x4 행렬', v);
+  const out: number[] = [];
+  for (let r = 0; r < 3; r++) {
+    const a = toArray(rows[r]!);
+    if (!a || a.length !== 4 || !a.every(isNum)) throw badType('4x4 행렬', v);
+    out.push(...a.map((x) => numOf(x as number)));
+  }
+  return out;
 }
 
 const norm = (a: number): number => {

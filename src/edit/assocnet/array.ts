@@ -9,7 +9,8 @@
  *    단위·값 꼴은 표본과 같은 차례).
  *  - ACDBASSOCARRAYACTIONBODY: 매개변수 클래스 이름, 항목(i·j·k, 이동 11 또는 행렬 40×16, 항목 참조), 배열 참조 행렬.
  *  - 배열 참조·경로 곡선의 반응자에 그 종속을 더한다(블록 레코드의 반응자는 모델에 자리가 없어 쓰지 않는다).
- * 경로 배열은 경로 곡선이 선(LINE)일 때만 만든다 — 곡선 캐시(RowProfile)의 배치를 DXF·DWG 모두로 확인한 것이 선분뿐이다.
+ * 경로 배열의 곡선 캐시(RowProfile)는 경로 객체의 공간 좌표 곡선이다(src/edit/assocnet/curve.ts pathCurve — 선·원·호·폴리선·
+ * 스플라인. 공개 경로 배열 70여 개에서 AutoCAD 캐시와 같고, DWG 배치도 곡선 경로 배열 DWG로 확인했다). 그 밖의 경로는 만들지 않는다.
  */
 import type { CadDocument, CadClass, DictionaryObject, Entity, GenericObject, InsertEntity, Vec3 } from '../../core/model';
 import { normalizeHandle } from '../../core/model';
@@ -17,6 +18,7 @@ import type { Affine } from '../geom/math';
 import type { EditOp } from '../session';
 import type { ArrayItem, ArrayParams } from '../assocarray/types';
 import { ASSOC_APP, ASSOC_CLASS_DEFS, ASSOC_PROXY_FLAGS } from './classes';
+import { type CurveData, writeCurve } from './curve';
 import { dictEntry, objectOf, rootNetwork } from './network';
 import { type ActionHead, type ArrayItemData, type AssocObjectData, type DependencyData, type EvalValue, type ValueParam, parseAssocObject, writeAssocObject } from './objects';
 
@@ -125,8 +127,8 @@ export interface AcadArrayInput {
   items: readonly (ArrayItem & { handle: string })[];
   /** 배열 블록 좌표 → 도면 좌표 */
   insertMatrix: Affine;
-  /** 경로 배열: 경로 곡선(선)과 그 곡선 캐시(배열 블록 좌표의 시작점·끝점) */
-  path?: { entity: Entity; a: Vec3; b: Vec3 };
+  /** 경로 배열: 경로 곡선과 그 곡선 캐시(공간 좌표, curve.ts pathCurve) */
+  path?: { entity: Entity; curve: CurveData };
   /** 경로 배열의 실제 항목 간격(등분할이면 계산한 값) */
   pathSpacing?: number;
 }
@@ -200,7 +202,7 @@ export function withValueParam(type: string, raw: readonly import('../../core/mo
 
 export function acadArrayOps(doc: CadDocument, newHandle: () => string, input: AcadArrayInput): AcadArrayResult | null {
   const p = input.params;
-  if (p.kind === 'path' && (!input.path || input.path.entity.type !== 'LINE')) return null;
+  if (p.kind === 'path' && !input.path) return null;
   const rootH = doc.rootDictionary ? normalizeHandle(doc.rootDictionary) : '';
   const root = rootH ? (doc.objects.get(rootH) as DictionaryObject | undefined) : undefined;
   if (!root || (root.type !== 'DICTIONARY' && root.type !== 'ACDBDICTIONARYWDFLT')) return null;
@@ -287,16 +289,7 @@ export function acadArrayOps(doc: CadDocument, newHandle: () => string, input: A
   actionParams.push(vertex('Origin', { x: origin.x, y: origin.y, z: 0 }));
   if (p.kind === 'path') {
     const h = newHandle();
-    const { a, b } = input.path!;
-    const curve = [
-      { code: 90, value: 23 },
-      { code: 10, value: a.x },
-      { code: 20, value: a.y },
-      { code: 30, value: a.z },
-      { code: 10, value: b.x - a.x },
-      { code: 20, value: b.y - a.y },
-      { code: 30, value: b.z - a.z },
-    ];
+    const curve = writeCurve(input.path!.curve);
     put(generic('ACDBASSOCEDGEACTIONPARAM', h, actionH, { kind: 'edgeparam', param: { version: 1, x: 0, name: 'RowProfile', single: { x: 0, dep: pathDep }, ex: 0, eh: '', hasCurve: true, curve } }));
     actionParams.push(h);
   }

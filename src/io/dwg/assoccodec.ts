@@ -17,13 +17,14 @@
  *  - 구속 그룹: DXF 70(그룹)은 B, 노드 플래그 70은 RC. 판 1 노드의 DXF 330(그룹 자신)은 DWG에 없다.
  *    판 2의 노드 목록은 (1 클래스, 90 번호) 대신 클래스 이름 표(BL 개수 + TV…, 처음 나온 차례) + 노드마다 (B 0, BL 표 번호(1부터),
  *    BL 노드 번호)다.
- *  - 모서리 동작 매개변수의 곡선 캐시는 BL 종류 + 자료이고, 짝으로 확인한 종류는 23(선분: 3BD, 3BD)뿐이다.
+ *  - 모서리 동작 매개변수의 곡선 캐시는 BL 종류 + 자료: 23 선분, 11 원호, 42 NURBS(70 → B), 47 복합(BL 개수 + 곡선들).
  * 배치가 맞지 않으면(남는 비트·모르는 종류 등) AssocLayoutError — 부르는 쪽은 원본 비트만 남긴다(같은 버전으로만 되쓴다).
  * 쓰기(assocWriteOps): 원본 태그의 판을 저장 버전에 맞춘 뒤(AC1024 이하 판 1) 쓰고, 쓸 수 없는 구속 그룹이면 그 종속·몸체도
  * 빼며 망의 동작 목록에서도 뺀다.
  */
 import type { CadObject, GenericObject, RawTag, Vec3 } from '../../core/model';
 import { assocRawForVersion } from '../../edit/assocnet/version';
+import { type CurveData, parseCurve, writeCurve } from '../../edit/assocnet/curve';
 import { type CGroupData, type CNode, type FieldDef, type FieldValue, fieldsOf, parseGroupRest, writeGroupRest } from '../../edit/assocnet/cgroup';
 import {
   type ActionHead,
@@ -277,25 +278,66 @@ function subentData(io: IO, cls: string, data?: RawTag[]): RawTag[] {
 }
 
 /**
- * 모서리 동작 매개변수의 곡선 캐시(AcGe 곡선): BL 종류 + 자료. 짝으로 확인한 것은 23(선분: 3BD 시작점, 3BD 방향 벡터)뿐 —
- * 다른 종류(원호 11, NURBS 42, 복합 47)는 풀지 않는다(원본 비트로 남는다).
+ * 모서리 동작 매개변수의 곡선 캐시(AcGe 곡선, src/edit/assocnet/curve.ts): BL 종류 + 자료. DXF와 같은 차례로
+ * 정수 90 → BL, 실수 40 → BD, 점 10 → 3BD, NURBS의 70 → B. 23 선분은 같은 도면의 DWG·DXF 짝으로, 11 원호·42 NURBS·
+ * 47 복합은 곡선 경로 배열 DWG 20개(모서리 매개변수 197개)가 남는 비트 없이 풀리고 값이 경로 객체와 맞는 것으로 확인했다.
  */
+function curveData(io: IO, c?: CurveData, depth = 0): CurveData {
+  if (depth > 4) fail('곡선 캐시 깊이');
+  const type = io.BL(c?.type);
+  switch (type) {
+    case 23: {
+      const x = c?.type === 23 ? c : undefined;
+      return { type: 23, a: io.P(x?.a), v: io.P(x?.v) };
+    }
+    case 11: {
+      const x = c?.type === 11 ? c : undefined;
+      if (x && x.extra.length !== 1) fail('원호 캐시 꼴');
+      return { type: 11, center: io.P(x?.center), normal: io.P(x?.normal), ref: io.P(x?.ref), radius: io.BD(x?.radius), start: io.BD(x?.start), end: io.BD(x?.end), extra: [io.BD(x?.extra[0])] };
+    }
+    case 42: {
+      const x = c?.type === 42 ? c : undefined;
+      if (x && (x.flags.length !== 2 || x.tol.length !== 1)) fail('NURBS 캐시 꼴');
+      const flags = [io.B(x?.flags[0]) ? 1 : 0, io.B(x?.flags[1]) ? 1 : 0];
+      const degree = io.BL(x?.degree);
+      const tol = [io.BD(x?.tol[0])];
+      const nums = (a?: { cap: number; grow: number; v: number[] }) => {
+        const n = io.N(a?.v.length, 2);
+        const cap = io.BL(a?.cap);
+        const grow = io.BL(a?.grow);
+        const v: number[] = [];
+        for (let k = 0; k < n; k++) v.push(io.BD(a?.v[k]));
+        return { cap, grow, v };
+      };
+      const knots = nums(x?.knots);
+      const weights = nums(x?.weights);
+      const n = io.N(x?.ctrl.v.length, 6);
+      const cap = io.BL(x?.ctrl.cap);
+      const grow = io.BL(x?.ctrl.grow);
+      const v: Vec3[] = [];
+      for (let k = 0; k < n; k++) v.push(io.P(x?.ctrl.v[k]));
+      return { type: 42, flags, degree, tol, knots, weights, ctrl: { cap, grow, v } };
+    }
+    case 47: {
+      const x = c?.type === 47 ? c : undefined;
+      const n = io.N(x?.curves.length, 2);
+      const curves: CurveData[] = [];
+      for (let k = 0; k < n; k++) curves.push(curveData(io, x?.curves[k], depth + 1));
+      return { type: 47, curves };
+    }
+    default:
+      return fail(`곡선 캐시 종류 ${type}`);
+  }
+}
+
 function curveCache(io: IO, tags?: RawTag[]): RawTag[] {
-  const type = io.BL(tags ? Number(tags[0]?.value) : undefined);
-  if (type !== 23) return fail(`곡선 캐시 종류 ${type}`);
-  const pt = (i: number): Vec3 | undefined => (tags ? { x: Number(tags[i]!.value), y: Number(tags[i + 1]!.value), z: Number(tags[i + 2]!.value) } : undefined);
-  if (tags && (tags.length !== 7 || tags[1]?.code !== 10 || tags[4]?.code !== 10)) fail('선분 곡선 캐시 꼴');
-  const a = io.P(pt(1));
-  const v = io.P(pt(4));
-  return [
-    { code: 90, value: 23 },
-    { code: 10, value: a.x },
-    { code: 20, value: a.y },
-    { code: 30, value: a.z },
-    { code: 10, value: v.x },
-    { code: 20, value: v.y },
-    { code: 30, value: v.z },
-  ];
+  let c: CurveData | undefined;
+  if (tags) {
+    const p = parseCurve(tags, 0);
+    if (!p || p.next !== tags.length) fail('곡선 캐시 꼴');
+    c = p!.curve;
+  }
+  return writeCurve(curveData(io, c));
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +644,17 @@ function ownedOf(o: GenericObject): string[] {
   }
 }
 
+/** 값 종속의 대상(변수) */
+function valueTargets(o: GenericObject): string[] {
+  if (o.type.toUpperCase() !== 'ACDBASSOCVALUEDEPENDENCY') return [];
+  try {
+    const d = parseAssocObject(o.type, o.raw ?? []);
+    return d?.kind === 'valuedep' && d.dep.target ? [d.dep.target] : [];
+  } catch {
+    return [];
+  }
+}
+
 /** 같은 버전의 원본 본문이 있어 그대로 되쓸 객체(태그를 풀지 못한 객체도 같은 버전이면 남는다) */
 const rawCopy = (o: CadObject, ver: number): boolean => !!o.dwgRaw && o.dwgRaw.version === `AC${ver}`;
 
@@ -609,6 +662,11 @@ const rawCopy = (o: CadObject, ver: number): boolean => !!o.dwgRaw && o.dwgRaw.v
 function subtreeOk(o: GenericObject, ver: number, lookup: (h: string) => CadObject | undefined, depth: number): boolean {
   if (depth > 16) return false;
   if (!selfOk(o, ver, lookup) && !rawCopy(o, ver)) return false;
+  // 값 종속이 가리키는 변수(망 소유라 소유 나무 밖)도 쓸 수 있어야 한다 — 못 쓰는 변수를 가리키는 그룹을 남기지 않는다
+  for (const h of valueTargets(o)) {
+    const x = lookup(h.toUpperCase());
+    if (isAssoc(x) && !selfOk(x, ver, lookup) && !rawCopy(x, ver)) return false;
+  }
   for (const h of ownedOf(o)) {
     const x = lookup(h.toUpperCase());
     if (!x) continue;

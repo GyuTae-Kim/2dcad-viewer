@@ -7,7 +7,8 @@
  */
 import type { BlockDef, CadDocument, Entity, GenericObject, InsertEntity, RawTag, Vec3, XRecordObject } from '../../core/model';
 import { tableKey } from '../../core/model';
-import { BTAG_APP, blockIndices, blockKeyOfRecord, dictEntry, graphHandleOf, readDefinition } from './definition';
+import { BTAG_APP, blockIndices, blockKeyOfRecord, dictEntry, etagIndex, graphHandleOf, readDefinition } from './definition';
+import { blockConstraints, refPoint } from './cblock';
 import { tagHandle, tagInt, tagNum, tagStr, xdataOf } from './tags';
 import type { DynDefinition, DynParam, NodeValue, RefValues, VisibilityParam } from './types';
 
@@ -27,12 +28,21 @@ export interface RefCache {
 }
 
 export interface WorkItem {
-  /** ETag 색인(정의와 표현 블록이 같은 색인으로 짝을 짓는다) */
+  /** ETag 색인(정의와 표현 블록이 같은 색인으로 짝을 짓는다). 배열 사본은 원본의 색인 */
   index: number;
-  /** 같은 색인의 정의 객체 핸들 */
+  /** 같은 색인의 정의 객체 핸들(배열 사본은 null) */
   defHandle: string | null;
   entity: Entity;
+  /**
+   * 배열 동작이 만든 사본: 표현 블록에서 앞 객체와 ETag 색인이 같은 객체(AutoCAD는 사본에 원본의 색인을 붙인다),
+   * 또는 정의 블록의 BEDIT 미리보기 사본(XDATA AcDbBlockArrayActionBEDITTag — 참조 표현에는 들어가지 않는다).
+   * 평가는 사본을 버리고 원본에서 다시 만든다.
+   */
+  copy?: boolean;
 }
+
+/** 블록 편집기가 정의 블록에 남기는 배열 미리보기 사본의 XDATA 앱 이름 */
+export const BEDIT_ARRAY_APP = 'AcDbBlockArrayActionBEDITTag';
 
 export interface DynRef {
   def: DynDefinition;
@@ -198,14 +208,28 @@ export function pointProp(points: readonly Vec3[] | undefined, prop: string): nu
   return null;
 }
 
-/** 블록 객체와 정의 객체 짝 */
+/**
+ * 블록 객체와 정의 객체 짝. 배열 동작이 있는 정의면 배열 사본(copy)을 가려낸다: BEDIT 미리보기 사본과,
+ * 표현 블록에서 앞 객체와 ETag 색인이 같은 객체(공개 도면의 표현 블록: 사본은 원본 뒤에 원본 색인으로 붙는다).
+ */
 export function workItems(def: DynDefinition, block: BlockDef, direct: boolean): WorkItem[] {
   const idx = blockIndices(block);
-  return block.entities.map((e, i) => ({
-    index: idx[i]!,
-    defHandle: direct ? e.handle.toUpperCase() : (def.handleAt.get(idx[i]!) ?? null),
-    entity: e,
-  }));
+  const arrays = def.actions.some((a) => a.kind === 'array');
+  const seen = new Set<number>();
+  return block.entities.map((e, i) => {
+    if (arrays) {
+      const bedit = !!xdataOf(e.xdata, BEDIT_ARRAY_APP);
+      const raw = etagIndex(e);
+      const dup = !direct && raw !== null && raw >= 0 && seen.has(raw);
+      if (raw !== null && raw >= 0) seen.add(raw);
+      if (bedit || dup) return { index: dup ? raw! : idx[i]!, defHandle: null, entity: e, copy: true };
+    }
+    return {
+      index: idx[i]!,
+      defHandle: direct ? e.handle.toUpperCase() : (def.handleAt.get(idx[i]!) ?? null),
+      entity: e,
+    };
+  });
 }
 
 /**
@@ -282,7 +306,36 @@ export function readReference(doc: CadDocument, ins: InsertEntity): DynRef | nul
   }
   const items = workItems(def, block, direct);
   for (const p of def.params) if (p.kind === 'visibility') values.get(p.id)!.state = visibleState(p, items, cachedState.get(p.id));
+  if (def.constrained && !direct) constraintParamPoints(doc, def, defBlock, items, values, src);
   return { def, defBlock, block, blockKey, direct, values, cache };
+}
+
+/**
+ * 구속 매개변수의 지금 점: 캐시 레코드가 없으면(머리 값을 확인하지 못해 이 앱은 쓰지 않는다) 표현 블록 형상에서 정한다 —
+ * 정의 점을 그 치수 구속의 참조 점이 정의 형상에서 지금 형상으로 옮겨진 만큼 옮긴다(평가가 점을 옮기는 규칙과 같다).
+ */
+function constraintParamPoints(doc: CadDocument, def: DynDefinition, defBlock: BlockDef, items: readonly WorkItem[], values: RefValues, src: RefCache | null): void {
+  const bc = blockConstraints(doc, def.recordHandle);
+  if (!bc || bc.problem) return;
+  const now = new Map<string, Entity>();
+  for (const it of items) if (it.defHandle && !it.copy) now.set(it.defHandle, it.entity);
+  const orig = new Map<string, Entity>();
+  for (const e of defBlock.entities) orig.set(e.handle.toUpperCase(), e);
+  for (const p of def.params) {
+    if (p.kind !== 'linear' || !p.constraint || src?.records.has(p.id)) continue;
+    const c = bc.byDependency.get(p.constraint.dependency);
+    if (!c || c.refs.length < 2) continue;
+    const P = c.refs.map((r) => refPoint(orig.get(r.h.toUpperCase()), r.part));
+    const Q = c.refs.map((r) => refPoint(now.get(r.h.toUpperCase()), r.part));
+    if (P.some((x) => !x) || Q.some((x) => !x)) continue;
+    const d = (u: Vec3, v: { x: number; y: number }) => Math.hypot(u.x - v.x, u.y - v.y);
+    const swap = d(p.base, P[1]!) + d(p.end, P[0]!) < d(p.base, P[0]!) + d(p.end, P[1]!);
+    const [i0, i1] = swap ? [1, 0] : [0, 1];
+    values.get(p.id)!.points = [
+      { x: p.base.x + Q[i0]!.x - P[i0]!.x, y: p.base.y + Q[i0]!.y - P[i0]!.y, z: p.base.z },
+      { x: p.end.x + Q[i1]!.x - P[i1]!.x, y: p.end.y + Q[i1]!.y - P[i1]!.y, z: p.end.z },
+    ];
+  }
 }
 
 export function cloneValues(v: RefValues): RefValues {

@@ -7,7 +7,7 @@
  *    암시 점(시작·끝·중간·중심)은 그 곡선의 부분('S'·'E'·'M'·'C', 폴리선은 'V<i>'·'M<i>'·'C<i>') — 시작·끝은 캐시 좌표가
  *    가까운 쪽으로 정한다(AutoCAD와 이 앱의 곡선 방향이 다를 수 있다).
  *  - 사용자 구속 노드(암시 290 = 0) → 기하 구속·치수 구속. 점–곡선·중심점·중간점처럼 암시인 노드는 구조라 옮기지 않는다.
- *    일치(점–점·점–곡선), 평행, 직교, 수평·수직(기준선 노드의 방향 → 축 각도), 접선, 동일선상, 동심, 같은 길이(동일), 고정,
+ *    일치(점–점·점–곡선), 평행, 직교, 수평·수직(기준선 노드의 방향 → 축 각도), 접선, 동일선상, 동심, 같은 길이·같은 반지름(동일), 고정,
  *    거리(방향 종류 1 = 그 방향의 거리: X축 쪽이면 수평, Y축 쪽이면 수직, 0 = 정렬), 반지름·지름(280: 1 지름).
  *    치수 구속의 이름·식·값은 값 종속이 가리키는 ACDBASSOCVARIABLE(식이 빈 글이면 참조 구속), 치수선 자리는 치수 종속이
  *    가리키는 치수 객체(*ADSK_CONSTRAINTS 도면층의 숨은 DIMENSION)의 점에서 정한다.
@@ -60,6 +60,7 @@ const GEO_OF: Record<string, GeoType> = {
   AcColinearConstraint: 'COLLINEAR',
   AcConcentricConstraint: 'CONCENTRIC',
   AcEqualLengthConstraint: 'EQUAL',
+  AcEqualRadiusConstraint: 'EQUAL',
   AcFixedConstraint: 'FIX',
 };
 
@@ -161,21 +162,16 @@ function mapGeometry(doc: CadDocument, g: CGroupData, geo: Geo): Map<number, Geo
     if (t === 3) part = seg >= 0 ? `C${seg}` : 'C';
     else if (t === 2) part = seg >= 0 ? `M${seg}` : 'M';
     else if (t === 0 || t === 1) {
+      // 시작·끝을 함께 맞춘다(두 점이 같은 부분으로 가지 않게): 캐시의 (시작, 끝)과 객체의 (첫, 둘째) 거리 합이 작은 쪽
       const cv = nodeCurve(cn, pl);
-      const want = cv && 'a' in cv && cv.a && cv.b ? (t === 0 ? cv.a : cv.b) : null;
       const cands = seg >= 0 && pr.k === 'poly' ? [`V${seg}`, `V${(seg + 1) % pr.v.length}`] : ['S', 'E'];
-      if (want) {
-        let bd = Infinity;
-        for (const c of cands) {
-          const p = pointOf(pr, c, geo.x);
-          if (!p) continue;
-          const d = dist(p, want);
-          if (d < bd) {
-            bd = d;
-            part = c;
-          }
-        }
-      } else part = t === 0 ? cands[0]! : cands[1]!;
+      let swap = false;
+      if (cv && 'a' in cv && cv.a && cv.b) {
+        const p0 = pointOf(pr, cands[0]!, geo.x);
+        const p1 = pointOf(pr, cands[1]!, geo.x);
+        if (p0 && p1) swap = dist(cv.a, p1) + dist(cv.b, p0) < dist(cv.a, p0) + dist(cv.b, p1);
+      }
+      part = cands[(t === 0) !== swap ? 0 : 1]!;
     }
     if (part && isPointPart(pr, part)) out.set(n.id, { h: cr.h, part });
   }

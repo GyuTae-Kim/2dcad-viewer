@@ -7,12 +7,14 @@
 import type { InsertEntity } from '../core/model';
 import { formatAngle, formatLength, parseAngle, parseLength } from '../core/units';
 import {
+  type AlignTarget,
   type DynChange,
   type DynEditResult,
   type DynGrip,
   type DynProperty,
   MSG_SAME,
   MSG_UNSUPPORTED,
+  alignTargetOn,
   applyDynGrip,
   definitionName,
   dynGrips,
@@ -158,8 +160,26 @@ export function dynGripsOf(app: App, handle: string): DynGrip[] {
 }
 
 /**
+ * 정렬 그립을 q 근처로 끌 때 맞출 곡선: 집기 상자 안의 곡선 객체(이 참조는 빼고) 중 가장 가까운 것의 가장 가까운 점과 접선.
+ * 없으면 null(참조를 돌리지 않고 옮기기만 한다).
+ */
+function alignTarget(app: App, handle: string, q: Pt): AlignTarget | null {
+  const st = app.active;
+  const pk = app.picker();
+  if (!st || !pk) return null;
+  const tol = Math.max(app.view.overlay.pickbox, 5) * app.view.pixelSize();
+  for (const h of pk.pickAll(q.x, q.y, tol)) {
+    if (h === handle) continue;
+    const e = st.doc.entityIndex.get(h);
+    const t = e ? alignTargetOn(e, q) : null;
+    if (t && Math.hypot(t.point.x - q.x, t.point.y - q.y) <= tol * 1.5) return t;
+  }
+  return null;
+}
+
+/**
  * 동적 그립을 눌렀을 때: 가시성·조회 → 목록 메뉴, 뒤집기 → 바로 뒤집기, 선형·XY·회전 → "** 신축 **" 끌기(숫자는 거리·각도),
- * 나머지 → "이 매개변수의 동작은 지원되지 않습니다."
+ * 정렬 → 참조 옮기기(근처 선·곡선이 있으면 그 접선 방향으로 돌린다), 나머지 → "이 매개변수의 동작은 지원되지 않습니다."
  */
 export async function dynGripEdit(app: App, ctx: CommandContext, handle: string, gripId: string): Promise<void> {
   const st = app.active!;
@@ -189,12 +209,21 @@ export async function dynGripEdit(app: App, ctx: CommandContext, handle: string,
     }
     case 'drag': {
       const pk = app.picker();
+      const align = g.kind === 'alignment';
       const ghost = (q: Pt): OverlayGeom[] => {
         const cur = insertOf(app, handle);
         if (!cur || !pk) return [];
-        const list = previewDynGrip(st.doc, cur, gripId, q);
+        const list = previewDynGrip(st.doc, cur, gripId, q, align ? { align: alignTarget(app, handle, q) } : {});
         return list.length ? [pk.geometryOf(list)] : [];
       };
+      if (align) {
+        ctx.print('** 정렬 **');
+        const r = await ctx.getPoint('정렬할 점 지정(선·곡선 가까이 두면 그 방향으로 돌린다) 또는 [종료(X)]:', { base: g.point, keywords: [{ key: 'X', label: '종료' }], ghost });
+        const cur = insertOf(app, handle);
+        if (!cur || !('point' in r)) return;
+        commitResult(app, 'GRIP', applyDynGrip(st.doc, cur, gripId, r.point, nh, { align: alignTarget(app, handle, r.point) }), ctx);
+        return;
+      }
       ctx.print('** 신축 **');
       for (;;) {
         const numeric = g.kind === 'linear' || g.kind === 'rotation' || g.kind === 'polar';

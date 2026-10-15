@@ -7,9 +7,10 @@
  *    숨은 치수 객체·변수(망의 동작 목록에서도)를 함께 지운다.
  *  - 형상이 바뀌면 형상 노드의 캐시 좌표(선: 점·방향·시작·끝, 원: 중심·반지름, 호: + 시작·끝)를 작업 평면 좌표로 고친다.
  *  - 객체를 지우면 그 형상 노드·암시 점·이어진 구속 노드와 형상 종속을 뺀다(AutoCAD가 객체를 지울 때처럼).
- * 이 앱에서 새로 만든 구속은 AutoCAD 그룹에 넣지 않고 이 앱 기록(OPENCAD_CONSTRAINTS)에만 둔다.
+ *  - 확정 고리(acadCommitOps)는 연관 종속과 대상 객체의 반응자도 맞춘다(syncReactors).
+ * 이 앱에서 새로 만든 구속을 AutoCAD 그룹에 쓰는 것은 cwrite.ts(쓸 수 없는 종류만 이 앱 기록 OPENCAD_CONSTRAINTS에 남는다).
  */
-import type { CadDocument, DimensionEntity, GenericObject, Vec2, Vec3 } from '../../core/model';
+import type { CadDocument, CadObject, DimensionEntity, GenericObject, Vec2, Vec3 } from '../../core/model';
 import { normalizeHandle } from '../../core/model';
 import { numberText } from '../constraint/params';
 import { pointOf, curveOf } from '../constraint/prims';
@@ -349,22 +350,113 @@ function groupsByTarget(doc: CadDocument): Map<string, string[]> {
  * 수정: 형상 노드 캐시 좌표. 삭제: 그 객체의 형상 노드와 이어진 구속, 형상 종속.
  */
 export function acadCommitOps(doc: CadDocument, ops: readonly EditOp[]): EditOp[] | null {
+  const a = groupCommitOps(doc, ops);
+  const b = syncReactors(doc, a ?? ops);
+  return b ?? a;
+}
+
+const isDepType = (t: string | undefined) => !!t && /^ACDBASSOC(GEOM|VALUE)?DEPENDENCY$/i.test(t);
+
+/**
+ * 연관 종속과 그 대상 객체의 반응자를 맞춘다: 새로 만든(또는 대상이 바뀐) 종속은 대상 객체의 반응자에 더하고, 지운 종속은 뺀다.
+ * 같은 트랜잭션의 객체 수정이 옛 사본으로 반응자를 잃으면(해법기 결과 등) 되살리고, 복사해 넣은 객체가 원본의 종속을 반응자로
+ * 가지고 들어오면 뺀다. 바뀐 것이 없으면 null.
+ */
+export function syncReactors(doc: CadDocument, ops: readonly EditOp[]): EditOp[] | null {
+  const want = new Map<string, Set<string>>();
+  const drop = new Map<string, Set<string>>();
+  const put = (m: Map<string, Set<string>>, e: string, h: string) => (m.get(e) ?? m.set(e, new Set()).get(e)!).add(normalizeHandle(h));
+  const deleted = new Set<string>();
+  const targetOf = (o: unknown): string => {
+    const g = o as GenericObject | null;
+    if (!g || !isDepType(g.type)) return '';
+    const d = assocData(g);
+    return d && 'dep' in d ? d.dep.target : '';
+  };
+  for (const op of ops) {
+    if (op.kind !== 'object') continue;
+    const t0 = targetOf(op.before);
+    const t1 = targetOf(op.after);
+    if (!op.after && op.before && isDepType(op.before.type)) deleted.add(normalizeHandle(op.key));
+    if (t0 && t0 !== t1) put(drop, t0, op.key);
+    if (t1 && t1 !== t0) put(want, t1, op.key);
+  }
+  // 옛 사본으로 반응자를 잃은 수정
+  for (const op of ops) {
+    if (op.kind !== 'modify') continue;
+    const lost = (op.before.reactors ?? []).filter((r) => !(op.after.reactors ?? []).some((x) => normalizeHandle(x) === normalizeHandle(r)));
+    for (const r of lost) {
+      const h = normalizeHandle(r);
+      if (deleted.has(h)) continue;
+      if (targetOf(doc.objects.get(h)) === op.after.handle) put(want, op.after.handle, h);
+    }
+  }
+  // 복사한 객체가 원본의 연관 종속을 반응자로 가지고 들어오면 뺀다(그 종속의 대상은 원본이다)
+  const txObjects = new Map<string, unknown>();
+  for (const op of ops) if (op.kind === 'object') txObjects.set(normalizeHandle(op.key), op.after);
+  let base: readonly EditOp[] = ops;
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i]!;
+    if (op.kind !== 'add' || !op.entity.reactors?.length) continue;
+    const keep = op.entity.reactors.filter((r) => {
+      const h = normalizeHandle(r);
+      const t = targetOf(txObjects.has(h) ? txObjects.get(h) : doc.objects.get(h));
+      return !t || t === normalizeHandle(op.entity.handle);
+    });
+    if (keep.length === op.entity.reactors.length) continue;
+    if (base === ops) base = [...ops];
+    const entity = { ...op.entity, reactors: keep } as typeof op.entity;
+    if (!keep.length) delete (entity as { reactors?: string[] }).reactors;
+    (base as EditOp[])[i] = { ...op, entity };
+  }
+  if (!want.size && !drop.size) return base === ops ? null : [...base];
+  const p = new AssocPatch(doc, base);
+  let changed = false;
+  for (const h of new Set([...want.keys(), ...drop.keys()])) {
+    const e = p.entity(h);
+    if (!e || p.entityRemoved(h)) continue;
+    const cur = (e.reactors ?? []).map(normalizeHandle);
+    const add = [...(want.get(h) ?? [])].filter((x) => !cur.includes(x));
+    const rm = drop.get(h) ?? new Set();
+    const next = [...cur.filter((x) => !rm.has(x) || want.get(h)?.has(x)), ...add];
+    if (next.length === cur.length && next.every((x, i) => x === cur[i])) continue;
+    p.modifyEntity({ ...e, reactors: next } as typeof e);
+    changed = true;
+  }
+  return changed || base !== ops ? p.ops : null;
+}
+
+/** 객체 수정·삭제를 AutoCAD 그룹 캐시에 반영(acadCommitOps의 앞부분) */
+function groupCommitOps(doc: CadDocument, ops: readonly EditOp[]): EditOp[] | null {
   const touched = new Set<string>();
   for (const op of ops) {
     if (op.kind === 'modify') touched.add(op.after.handle);
     else if (op.kind === 'remove') touched.add(op.entity.handle);
   }
   if (!touched.size) return null;
+  // 이 트랜잭션에서 만들거나 고친 연관 객체(새 구속을 그룹에 쓴 것 — 캐시는 바뀌기 전 형상으로 쓰였다)
+  const assocChanged = new Map<string, CadObject | null>();
+  for (const op of ops) if (op.kind === 'object' && /^(ACDBASSOC|ASSOCDIM)/i.test((op.after ?? op.before)?.type ?? '')) assocChanged.set(normalizeHandle(op.key), op.after);
   const byTarget = groupsByTarget(doc);
-  if (!byTarget.size) return null;
   const groupsHit = new Set<string>();
   for (const h of touched) for (const g of byTarget.get(h) ?? []) groupsHit.add(g);
+  for (const [h, o] of assocChanged) if (o?.type.toUpperCase() === 'ACDBASSOC2DCONSTRAINTGROUP') groupsHit.add(h);
   if (!groupsHit.size) return null;
   const p = new AssocPatch(doc, ops);
+  // 바뀐 연관 객체를 얹은 도면(형상은 바뀌기 전 그대로) — 새 노드의 참조도 옛 형상으로 정한다
+  let view = doc;
+  if (assocChanged.size) {
+    const objects = new Map(doc.objects);
+    for (const [h, o] of assocChanged) {
+      if (o) objects.set(h, o);
+      else objects.delete(h);
+    }
+    view = { ...doc, objects } as CadDocument;
+  }
   let changed = false;
   for (const gh of groupsHit) {
-    const o = doc.objects.get(gh) as GenericObject | undefined;
-    const gi = o ? importGroup(doc, o) : null;
+    const o = view.objects.get(gh) as GenericObject | undefined;
+    const gi = o ? importGroup(view, o) : null;
     const cur = groupOf(p, gh);
     if (!gi || !cur) continue;
     let dirty = false;
@@ -390,13 +482,13 @@ export function acadCommitOps(doc: CadDocument, ops: readonly EditOp[]): EditOp[
       if (n.cls !== 'AcConstrainedBoundedLine' && n.cls !== 'AcConstrainedCircle' && n.cls !== 'AcConstrainedArc') continue;
       const ref = gi.refs.get(n.id);
       if (!ref || !touched.has(ref.h) || p.entityRemoved(ref.h)) continue;
-      if (refreshNode(doc, p, gi, cur.g, n)) dirty = true;
+      if (refreshNode(view, p, gi, cur.g, n)) dirty = true;
     }
     if (dirty) {
       saveGroup(p, gh, cur.head, cur.g);
       changed = true;
     }
-    if (refreshDims(doc, p, gi, cur.g, touched)) changed = true;
+    if (refreshDims(view, p, gi, cur.g, touched)) changed = true;
   }
   return changed ? p.ops : null;
 }

@@ -17,6 +17,7 @@ import { DocState } from './docstate';
 import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
+import { SELECT_HELP, SELECT_METHODS, runSelectMethod, selectMethodOf } from './selmethod';
 import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
 import { type Acquired, objectTrack, polarAngles, polarTrack } from './tracking';
 import { gripPoints } from '../edit/geom';
@@ -443,6 +444,9 @@ export class App {
       { key: 'A', label: '추가' },
       ...(opt.keywords ?? []),
     ];
+    // 선택 방식(W·C·BOX·WP·CP·F): 명령의 키워드가 먼저
+    for (const m of SELECT_METHODS) if (!kws.some((k) => k.key.toUpperCase() === m.key)) kws.push(m);
+    let removing = false;
     for (;;) {
       const r = await new Promise<{ handles: string[] } | { keyword: string }>((resolve, reject) => {
         if (signal.aborted) return reject(new CancelError());
@@ -450,16 +454,17 @@ export class App {
           kind: 'select',
           prompt,
           keywords: kws,
-          remove: false,
+          remove: removing,
           signal,
           resolve: (x) => {
             if (this.request === req) this.request = null;
+            removing = req.remove;
             resolve(x);
           },
           reject,
         };
         this.request = req;
-        this.cmd.setPrompt(prompt);
+        this.cmd.setPrompt(removing ? '객체 제거:' : prompt);
         this.view.overlay.tip = prompt.replace(/:\s*$/, '');
         signal.addEventListener('abort', () => this.dropRequest(req, reject), { once: true });
         this.view.requestOverlay();
@@ -485,6 +490,17 @@ export class App {
         const last = this.lastCreated.filter((h) => st.doc.entityIndex.has(h)).slice(-1);
         this.setSelection(last, 'add');
       } else if (opt.keywords?.some((x) => x.key.toUpperCase() === k)) return Promise.reject(Object.assign(new Error('keyword'), { keyword: k }));
+      else {
+        const m = selectMethodOf(k);
+        const pk = m ? this.picker() : null;
+        if (m && pk) {
+          const hs = await runSelectMethod(m, { getPoint: (p, o) => this.requestPoint(p, o, signal), print: (t, c) => this.cmd.print(t, c) }, pk);
+          if (hs) {
+            this.setSelection(this.expandPick(hs), removing ? 'remove' : 'add');
+            this.cmd.print(`${hs.length}개를 찾음`);
+          }
+        }
+      }
     }
   }
 
@@ -567,7 +583,7 @@ export class App {
         r.resolve({ keyword: kw.key });
         return;
       }
-      this.cmd.print('객체를 고르거나 옵션(ALL·P·L·R)을 입력하십시오.', 'err');
+      this.cmd.print(`*잘못된 선택* ${SELECT_HELP}`, 'err');
       return;
     }
     if (!t) {

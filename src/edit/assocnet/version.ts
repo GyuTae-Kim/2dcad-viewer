@@ -92,3 +92,89 @@ export function assocRawForVersion(o: GenericObject, fileVer: number, lookup: (h
   const raw = writeAssocObject(out);
   return sameTags(raw, o.raw) ? o.raw : raw;
 }
+
+// ---------------------------------------------------------------------------
+// DXF로 쓸 수 있는지(DWG에서 읽었는데 풀지 못한 객체는 원본 태그가 없다)
+// ---------------------------------------------------------------------------
+
+const isAssocType = (t: string | undefined) => !!t && /^(ACDBASSOC|ASSOCDIM)/i.test(t);
+
+/** 이 객체가 소유한 연관 객체와, 값 종속이 가리키는 변수 */
+function linked(d: AssocObjectData): string[] {
+  switch (d.kind) {
+    case 'action':
+    case 'variable':
+      return [d.head.body, ...d.head.deps, ...(d.head.params?.actionParams ?? [])].filter(Boolean);
+    case 'cgroup': {
+      try {
+        return [...d.head.deps, ...parseGroupRest(d.head.version, d.rest).deps].filter(Boolean);
+      } catch {
+        return d.head.deps;
+      }
+    }
+    case 'dependency':
+    case 'geomdep':
+      return d.dep.body ? [d.dep.body] : [];
+    case 'valuedep':
+      return [d.dep.body, d.dep.target].filter(Boolean);
+    case 'arraybody':
+      return d.body.paramBased?.lists.actionParams ?? [];
+    default:
+      return [];
+  }
+}
+
+const dxfOkCache = new WeakMap<object, boolean>();
+
+/**
+ * 연관 객체를 DXF로 쓸 수 있는지: 그 객체가 속한 동작(망 바로 아래)의 소유 나무 전체와 값 종속이 가리키는 변수가 모두 원본 태그로
+ * 풀려야 한다(하나라도 DWG 원본 비트뿐이면 동작을 통째로 빼고 망 목록에서도 뺀다 — DWG 쓰기의 assocWritable과 같은 규칙).
+ */
+export function assocDxfWritable(o: GenericObject, lookup: (h: string) => GenericObject | undefined): boolean {
+  if (!ASSOC_OBJECT_TYPES.has(o.type.toUpperCase())) return true;
+  if (o.type.toUpperCase() === 'ACDBASSOCNETWORK') return !!o.raw?.length;
+  let top = o;
+  for (let i = 0; i < 16; i++) {
+    const own = top.owner ? lookup(normalizeHandle(top.owner)) : undefined;
+    if (!own || !isAssocType(own.type) || own.type.toUpperCase() === 'ACDBASSOCNETWORK') break;
+    top = own;
+  }
+  const hit = dxfOkCache.get(top);
+  if (hit !== undefined) return hit;
+  const seen = new Set<string>();
+  const ok = (x: GenericObject, depth: number): boolean => {
+    if (depth > 16 || seen.has(x.handle)) return true;
+    seen.add(x.handle);
+    const d = parse(x);
+    // 풀지 못해도 원본 태그가 있으면 그대로 쓴다(DXF에서 읽은 모르는 꼴)
+    if (!d) return !!x.raw?.length;
+    for (const h of linked(d)) {
+      const y = lookup(normalizeHandle(h));
+      if (y && isAssocType(y.type) && !ok(y, depth + 1)) return false;
+    }
+    return true;
+  };
+  const r = ok(top, 0);
+  dxfOkCache.set(top, r);
+  return r;
+}
+
+/** DXF로 쓸 원본 태그: 판을 맞추고, 망은 DXF로 쓸 수 없는 동작을 목록에서 뺀다(풀 수 없으면 null) */
+export function assocDxfRaw(o: GenericObject, fileVer: number, lookup: (h: string) => GenericObject | undefined): readonly RawTag[] | null {
+  const raw = assocRawForVersion(o, fileVer, lookup);
+  if (!raw || o.type.toUpperCase() !== 'ACDBASSOCNETWORK') return raw;
+  let d: AssocObjectData | null = null;
+  try {
+    d = parseAssocObject(o.type, raw);
+  } catch {
+    return raw;
+  }
+  if (d?.kind !== 'network') return raw;
+  const keep = (r: { h: string }) => {
+    const x = lookup(normalizeHandle(r.h));
+    return !!x && (!isAssocType(x.type) || assocDxfWritable(x, lookup));
+  };
+  const actions = d.net.actions.filter(keep);
+  const tail = d.net.tail.filter(keep);
+  return actions.length === d.net.actions.length && tail.length === d.net.tail.length ? raw : writeAssocObject({ ...d, net: { ...d.net, actions, tail } });
+}

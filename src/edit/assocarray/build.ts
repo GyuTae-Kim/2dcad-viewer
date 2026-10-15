@@ -20,6 +20,9 @@ import { cachePath } from './layout';
 import { decompose, itemCount, pathSpacingOf } from './layout';
 import { encodeRecord, withRecord } from './record';
 import { acadArrayOps, withValueParam } from '../assocnet/array';
+import { type CurveData, pathCurve, writeCurve } from '../assocnet/curve';
+import { tryParseAssocObject, writeAssocObject } from '../assocnet/objects';
+import { sameTags } from '../assocnet/tags';
 import { type ArrayItem, type ArrayParams, type ArrayState, MAX_ITEMS, MAX_REMOVED, MAX_REPLACED } from './types';
 
 export interface BuildEnv {
@@ -197,15 +200,14 @@ export function createArrayOps(env: BuildEnv, input: CreateInput): Built | { err
   let acadOpsList: EditOp[] = [];
   if (input.acad !== false && spaceRecord) {
     const W = insertAffine(arr.def, ins);
-    let path: { entity: Entity; a: Vec3; b: Vec3 } | undefined;
+    let path: { entity: Entity; curve: CurveData } | undefined;
     let pathSpacing: number | undefined;
     if (p.kind === 'path' && p.path) {
       const pe = doc.entityIndex.get(p.path);
-      const inv = affInv(W);
-      if (pe?.type === 'LINE' && inv) {
-        const a = affApply(inv, pe.start);
-        const b = affApply(inv, pe.end);
-        path = { entity: pe, a: { x: a.x, y: a.y, z: pe.start.z }, b: { x: b.x, y: b.y, z: pe.end.z } };
+      // 곡선 캐시는 경로 객체의 공간 좌표 곡선(선·원·호·폴리선·스플라인)
+      const curve = pe ? pathCurve(pe) : null;
+      if (pe && curve) {
+        path = { entity: pe, curve };
         const ap = arrayPath(doc, p);
         pathSpacing = ap ? pathSpacingOf(p, ap.path) : p.spacing;
       }
@@ -437,6 +439,17 @@ function acadOps(doc: CadDocument, info: ArrayInfo, next: ArrayState, items: rea
   if (p.kind === 'rect') setVertex('Origin', { x: p.origin.x, y: p.origin.y, z: a.vertex.get('Origin')?.point.z ?? 0 });
   setVertex('basePoint', { x: p.base.x, y: p.base.y, z: a.vertex.get('basePoint')?.point.z ?? 0 });
   // BaseNormal은 레벨 방향(법선)이다 — 표본 28개는 레벨 간격(0.699, 0.75 …)과 상관없이 (0,0,1)이라 고치지 않는다
+  // 경로 곡선 캐시(RowProfile): 경로 객체가 바뀌었으면 새 곡선으로(공간 좌표)
+  if (p.kind === 'path' && p.path && a.edge) {
+    const pe = doc.entityIndex.get(p.path);
+    const o = objOf(a.edge.handle);
+    const curve = pe ? pathCurve(pe) : null;
+    const d = o?.raw ? tryParseAssocObject(o.type, o.raw) : null;
+    if (curve && d?.kind === 'edgeparam' && d.param.hasCurve) {
+      const tags = writeCurve(curve);
+      if (!sameTags(tags, d.param.curve, 1e-12)) patched.set(o!.handle, writeAssocObject({ ...d, param: { ...d.param, curve: tags } }));
+    }
+  }
   for (const [h, raw] of patched) {
     const before = objOf(h);
     if (!before) continue;

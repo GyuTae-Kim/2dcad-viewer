@@ -5,7 +5,7 @@
 import type { Interp } from './interp';
 import { badType, prin1, princ } from './printer';
 import { EOF, LispReader } from './reader';
-import { CatchAllError, CatchCall, Builtin, Call, Cons, Ename, Ev, type Gen, Lambda, LispError, MSG, PickSet, Real, Special, Sym, TailCall, TailEval, fromArray, isNum, numOf, toArray, type Value, wrap32 } from './types';
+import { CatchAllError, CatchCall, Builtin, Call, Cons, Ename, Ev, type Gen, Lambda, LispError, LispFile, MSG, PickSet, Real, Special, Sym, TailCall, TailEval, fromArray, isNum, numOf, toArray, type Value, wrap32 } from './types';
 
 // --------------------------------------------------------------------------- 인수 검사
 
@@ -607,6 +607,8 @@ export function installCore(it: Interp): void {
 
   // ----------------------------------------------------------------- 출력
   const fileArg = (f: Value | undefined) => {
+    // 읽기로 연 파일에는 쓸 수 없다(파일 쓰기는 웹 버전에 없다)
+    if (f instanceof LispFile) throw new LispError(`파일 쓰기: ${MSG.web}`);
     if (f !== undefined && f !== null) throw badType('filep', f);
   };
   def('PRINC', 0, 2, ([x, f]) => {
@@ -725,5 +727,6 @@ export function typeName(x: Value): string | null {
   if (x instanceof Ename) return 'ENAME';
   if (x instanceof PickSet) return 'PICKSET';
   if (x instanceof CatchAllError) return 'VL-CATCH-ALL-APPLY-ERROR';
+  if (x instanceof LispFile) return 'FILE';
   return null;
 }

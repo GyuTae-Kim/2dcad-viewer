@@ -133,7 +133,7 @@ describe('산술·비교', () => {
     expect(await ev('(1 2)')).toBe('ERR:잘못된 함수: 1');
     expect(await ev('(vla-get-name x)')).toBe('ERR:VLA-GET-NAME: 이 웹 버전에서는 쓸 수 없습니다');
     expect(await ev('(startapp "notepad")')).toBe('ERR:STARTAPP: 이 웹 버전에서는 쓸 수 없습니다');
-    expect(await ev('(open "a.txt" "w")')).toBe('ERR:OPEN: 이 웹 버전에서는 쓸 수 없습니다');
+    expect(await ev('(open "a.txt" "w")')).toBe('ERR:OPEN: 파일 쓰기(w)는 이 웹 버전에서는 쓸 수 없습니다');
   });
 
   it('비교·같음·술어', async () => {

@@ -100,12 +100,23 @@ export class PickSet {
   ) {}
 }
 
+/** (open 이름 "r")로 연 파일(이번 세션에 연 파일만, 읽기 전용) */
+export class LispFile {
+  /** 다음에 읽을 자리 */
+  pos = 0;
+  closed = false;
+  constructor(
+    readonly name: string,
+    readonly text: string,
+  ) {}
+}
+
 /** vl-catch-all-apply가 잡은 오류 */
 export class CatchAllError {
   constructor(readonly message: string) {}
 }
 
-export type Value = null | number | Real | string | Sym | Cons | Lambda | Builtin | Special | Ename | PickSet | CatchAllError;
+export type Value = null | number | Real | string | Sym | Cons | Lambda | Builtin | Special | Ename | PickSet | CatchAllError | LispFile;
 
 /** AutoLISP 오류. message는 "; 오류: " 뒤의 글이고 *error*에 넘긴다 */
 export class LispError extends Error {

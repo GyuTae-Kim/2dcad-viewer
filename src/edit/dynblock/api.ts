@@ -3,8 +3,11 @@
  * 모든 함수는 문서를 바꾸지 않고 편집 작업(EditOp)을 돌려준다 — 호출한 쪽이 세션에 한 트랜잭션으로 넣는다.
  */
 import type { CadDocument, Entity, InsertEntity, Vec2, Vec3 } from '../../core/model';
+import { cloneEntity, ownerBlockKey } from '../session';
 import { transformEntity } from '../geom/transform';
-import { affApply, affInv, affLin } from '../geom/math';
+import { type Affine, affApply, affInv, affLin, affMul } from '../geom/math';
+import { pathNearest, pathTangent } from '../geom/curve';
+import { entityPath } from '../geom/path';
 import { paramById } from './definition';
 import { DynError, DynEval, assertEditable, flipCell, flipStateName, valueChoices } from './evaluate';
 import { buildChangeOps, buildResetOps, insertAffine } from './build';
@@ -186,6 +189,7 @@ function run(doc: CadDocument, ins: InsertEntity, newHandle: () => string, body:
     assertEditable(ref.def);
     const ev = new DynEval(doc, ref);
     if (!body(ev)) return { ops: [], message: MSG_SAME };
+    ev.finish();
     ev.settleLookups();
     return buildChangeOps(doc, ins, ev, newHandle);
   } catch (e) {
@@ -226,7 +230,10 @@ export interface DynGrip {
   param: number;
   label: string;
   description: string;
-  /** menu = 목록에서 고르기(가시성·조회), toggle = 누르면 바로(뒤집기), drag = 끌기(선형·XY·회전), none = 지원하지 않음 */
+  /**
+   * menu = 목록에서 고르기(가시성·조회), toggle = 누르면 바로(뒤집기), drag = 끌기(선형·XY·회전·극좌표·점·정렬),
+   * none = 지원하지 않음. 정렬 그립 끌기는 참조를 옮기고, 근처 곡선이 있으면(opt.align) 그 접선 방향으로 돌린다.
+   */
   mode: 'menu' | 'toggle' | 'drag' | 'none';
   /** 선형·뒤집기 그립의 방향(도면 좌표 단위 벡터) */
   direction?: Vec2;
@@ -304,7 +311,7 @@ export function dynGrips(doc: CadDocument, ins: InsertEntity): DynGrip[] {
       if (p.kind === 'visibility') mode = 'menu';
       else if (p.kind === 'lookup') mode = ev.lookupEditable(p) && ev.lookupChoices(p).length ? 'menu' : 'none';
       else if (p.kind === 'flip') mode = 'toggle';
-      else if (p.kind === 'linear' || p.kind === 'xy' || p.kind === 'rotation' || p.kind === 'point') mode = 'drag';
+      else if (p.kind === 'linear' || p.kind === 'xy' || p.kind === 'rotation' || p.kind === 'point' || p.kind === 'alignment') mode = 'drag';
       // 극좌표는 끝점 그립만(첫 점을 옮기는 극좌표 신축은 확인하지 못했다)
       else if (p.kind === 'polar') mode = g.wx === 'end' ? 'drag' : 'none';
     }
@@ -317,6 +324,8 @@ export function dynGrips(doc: CadDocument, ins: InsertEntity): DynGrip[] {
       anchor = affApply(W, p.baseLocation === 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : g.wx === 'base' ? pts[1] : pts[0]);
     } else if ((p.kind === 'xy' || p.kind === 'rotation' || p.kind === 'polar') && pts[0] && pts[1]) {
       anchor = affApply(W, g.wx === 'base' && p.kind === 'xy' ? pts[1] : pts[0]);
+    } else if (p.kind === 'alignment' && pts[0] && pts[1]) {
+      direction = unit(affLin(W, { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y }));
     } else if (p.kind === 'flip' && pts[0] && pts[1]) {
       const o = g.node.orientation;
       const line = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
@@ -371,16 +380,97 @@ function dragGrip(ev: DynEval, g: GripInfo, P: Vec3): boolean {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 정렬 매개변수
+// ---------------------------------------------------------------------------
+
+/** 정렬 그립을 맞출 곡선 위 자리(도면 좌표) */
+export interface AlignTarget {
+  /** 곡선 위 가장 가까운 점 */
+  point: Vec2;
+  /** 그 점의 접선 방향(라디안) */
+  angle: number;
+}
+
+/** 그립 편집 선택 사항 */
+export interface DynGripOptions {
+  /** 정렬 그립: 근처 곡선(없으면 참조를 돌리지 않고 옮기기만 한다) */
+  align?: AlignTarget | null;
+}
+
+/** 곡선 객체(선·폴리선·호·원·타원·스플라인 …) 위에서 p에 가장 가까운 점과 접선 방향. 곡선이 아니면 null */
+export function alignTargetOn(e: Entity, p: Vec2): AlignTarget | null {
+  const path = entityPath(e);
+  if (!path?.pieces.length) return null;
+  const n = pathNearest(path, p);
+  const t = pathTangent(path, n.s);
+  if (!Number.isFinite(n.d) || !(Math.hypot(t.x, t.y) > 1e-12)) return null;
+  return { point: { x: n.p.x, y: n.p.y }, angle: Math.atan2(t.y, t.x) };
+}
+
 /**
- * 그립 편집 작업. 끌기 그립(선형·XY·회전)은 도면 점 to로 옮기고(값 집합에 맞춘다), 뒤집기 그립은 뒤집는다(to는 쓰지 않는다).
- * 가시성·조회 그립은 목록에서 고르는 것이므로 dynSetOps를 쓴다.
+ * 정렬 그립을 to로 끈 참조: 정렬 기준점이 to(곡선이 있으면 곡선 위 점)에 오게 옮기고, 곡선이 있으면 정렬 방향(첫 점 → 둘째 점)이
+ * 곡선 접선과 나란하게 돌린다(두 방향 중 지금 방향에 가까운 쪽). 블록 내용·캐시는 그대로(참조의 위치·회전만 — AutoCAD 정렬
+ * 매개변수는 참조의 회전 특성을 바꾼다). 정렬 종류(280)는 AutoCAD 예제 도면(문·변기, 280 = 1)의 정렬 방향이 벽 선을 따라
+ * 그려져 있어 접선에 나란히 맞추는 것으로 보았다(280 = 0의 뜻은 실물이 없어 같게 둔다).
  */
-export function applyDynGrip(doc: CadDocument, ins: InsertEntity, gripId: string, to: Vec2 | null, newHandle: () => string): DynEditResult {
+function alignedInsert(ref: DynRef, ins: InsertEntity, g: GripInfo, to: Vec2, target: AlignTarget | null | undefined): Affine | null {
+  const pts = ref.values.get(g.param.id)?.points ?? [];
+  const [a, b] = pts;
+  if (!a) return null;
+  const W = insertAffine(ref.defBlock, ins);
+  const Wi = affInv(W);
+  if (!Wi) return null;
+  const A = affApply(W, a);
+  const q = target ? target.point : to;
+  let turn = 0;
+  if (target && b) {
+    const dir = affLin(W, { x: b.x - a.x, y: b.y - a.y });
+    if (Math.hypot(dir.x, dir.y) > 1e-12) {
+      const cur = Math.atan2(dir.y, dir.x);
+      const wrap = (x: number) => Math.atan2(Math.sin(x), Math.cos(x));
+      const d1 = wrap(target.angle - cur);
+      const d2 = wrap(target.angle + Math.PI - cur);
+      turn = Math.abs(d1) <= Math.abs(d2) ? d1 : d2;
+    }
+  }
+  // D = 기준점 둘레로 turn 돌린 뒤 기준점을 q로
+  const c = Math.cos(turn);
+  const s2 = Math.sin(turn);
+  const D: Affine = [c, s2, -s2, c, q.x - (c * A.x - s2 * A.y), q.y - (s2 * A.x + c * A.y)];
+  return D;
+}
+
+/** 정렬 그립 끌기: 참조(속성 포함)를 옮기고 돌린 편집 작업 */
+function alignOps(doc: CadDocument, ref: DynRef, ins: InsertEntity, g: GripInfo, to: Vec2, opt: DynGripOptions): DynEditResult {
+  const D = alignedInsert(ref, ins, g, to, opt.align);
+  if (!D) return { ops: [], message: MSG_UNSUPPORTED };
+  const owner = ownerBlockKey(doc, ins.handle);
+  if (!owner) return { ops: [], message: '참조가 들어 있는 블록을 찾지 못했습니다.' };
+  if (Math.abs(D[0] - 1) < 1e-12 && Math.abs(D[1]) < 1e-12 && Math.hypot(D[4], D[5]) < 1e-12) return { ops: [], message: MSG_SAME };
+  const r = transformEntity(ins, D, doc);
+  const out = (r.replace?.[0] ?? r.add?.[0]) as InsertEntity | undefined;
+  if (!out || out.type !== 'INSERT') return { ops: [], message: MSG_UNSUPPORTED };
+  const after = cloneEntity(out);
+  after.handle = ins.handle;
+  delete after.dwgRaw;
+  return { ops: [{ kind: 'modify', block: owner, before: ins, after }] };
+}
+
+/**
+ * 그립 편집 작업. 끌기 그립(선형·XY·회전·극좌표·점)은 도면 점 to로 옮기고(값 집합에 맞춘다), 뒤집기 그립은 뒤집는다(to는 쓰지 않는다).
+ * 정렬 그립은 참조를 to로 옮기고 opt.align 곡선의 접선에 맞춰 돌린다. 가시성·조회 그립은 목록에서 고르는 것이므로 dynSetOps를 쓴다.
+ */
+export function applyDynGrip(doc: CadDocument, ins: InsertEntity, gripId: string, to: Vec2 | null, newHandle: () => string, opt: DynGripOptions = {}): DynEditResult {
   const ref = readReference(doc, ins);
   if (!ref) return { ops: [], message: MSG_NOT_DYNAMIC };
   const g = gripOf(ref, gripId);
   if (!g) return { ops: [], message: '그립을 찾지 못했습니다.' };
   if (g.param.kind === 'visibility' || g.param.kind === 'lookup') return { ops: [], message: '목록에서 상태를 고르십시오.' };
+  if (g.param.kind === 'alignment') {
+    if (ref.def.undecoded.length) return { ops: [], message: MSG_UNSUPPORTED };
+    return to ? alignOps(doc, ref, ins, g, to, opt) : { ops: [], message: MSG_UNSUPPORTED };
+  }
   const Wi = affInv(insertAffine(ref.defBlock, ins));
   return run(doc, ins, newHandle, (ev) => {
     if (g.param.kind === 'flip') return ev.setFlip(g.param, !ev.flipped(g.param));
@@ -391,7 +481,7 @@ export function applyDynGrip(doc: CadDocument, ins: InsertEntity, gripId: string
 }
 
 /** 그립을 to로 끌었을 때의 모양(도면 좌표 객체, 미리보기용). 지원하지 않으면 빈 배열 */
-export function previewDynGrip(doc: CadDocument, ins: InsertEntity, gripId: string, to: Vec2): Entity[] {
+export function previewDynGrip(doc: CadDocument, ins: InsertEntity, gripId: string, to: Vec2, opt: DynGripOptions = {}): Entity[] {
   const ref = readReference(doc, ins);
   if (!ref || ref.def.undecoded.length) return [];
   const g = gripOf(ref, gripId);
@@ -399,13 +489,26 @@ export function previewDynGrip(doc: CadDocument, ins: InsertEntity, gripId: stri
   const W = insertAffine(ref.defBlock, ins);
   const Wi = affInv(W);
   if (!Wi) return [];
+  if (g.param.kind === 'alignment') {
+    const D = alignedInsert(ref, ins, g, to, opt.align);
+    if (!D) return [];
+    const M = affMul(D, W);
+    const out: Entity[] = [];
+    for (const e of ref.block.entities) {
+      if (e.invisible || e.type === 'ATTDEF') continue;
+      const r = transformEntity(e, M, doc);
+      for (const x of [...(r.replace ?? []), ...(r.add ?? [])]) out.push(x);
+    }
+    return out;
+  }
   try {
     const ev = new DynEval(doc, ref);
     const q = affApply(Wi, to);
     if (g.param.kind === 'flip') ev.setFlip(g.param, !ev.flipped(g.param));
     else dragGrip(ev, g, { x: q.x, y: q.y, z: 0 });
+    ev.finish();
     const out: Entity[] = [];
-    for (const it of ev.items) {
+    for (const it of [...ev.items, ...ev.copies]) {
       if (it.entity.invisible || it.entity.type === 'ATTDEF') continue;
       const r = transformEntity(it.entity, W, doc);
       for (const e of [...(r.replace ?? []), ...(r.add ?? [])]) out.push(e);

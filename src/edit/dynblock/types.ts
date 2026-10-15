@@ -69,6 +69,11 @@ export interface LinearParam extends ParamBase {
   /** 177: 0 시작점 기준, 1 중간점 기준 */
   baseLocation: number;
   values: ValueSet;
+  /**
+   * 구속 매개변수(BLOCK…CONSTRAINTPARAMETER): 값은 블록의 구속 그룹을 풀어 정한다.
+   * dependency = 그 치수 구속의 연관 종속 핸들(AcDbBlockConstraintParameter 330)
+   */
+  constraint?: { dependency: string };
 }
 
 export interface PolarParam extends ParamBase {
@@ -200,7 +205,7 @@ export interface OtherAction extends ActionBase {
   stretchEntities?: string[];
   /** 극좌표 신축: 점이 묶인 객체 수(72, 0이 아니면 평가하지 않는다) */
   boundCount?: number;
-  /** 배열: 열·행 간격(140·141) */
+  /** 배열: 열 간격(141 — XY의 X, 선형·극좌표는 매개변수 방향)과 행 간격(140 — XY의 Y) */
   columnSpacing?: number;
   rowSpacing?: number;
 }
@@ -243,6 +248,8 @@ export interface DynDefinition {
   handleAt: Map<number, string>;
   /** 해석하지 못한(원본 태그가 모자란) 노드 종류 */
   undecoded: string[];
+  /** 구속 기반 정의(대리 노드·구속 매개변수가 있고 블록의 구속 그룹을 읽었다): 평가 뒤 구속을 다시 푼다 */
+  constrained: boolean;
 }
 
 /** 매개변수·동작 노드의 지금 값(참조 캐시 ACAD_ENHANCEDBLOCKDATA와 같은 뜻) */

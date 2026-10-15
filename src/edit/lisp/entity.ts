@@ -4,6 +4,8 @@
  * (67 . 0) (410 . "Model") (8 . "0") [6 62 420 370 48 60 440] (100 . "AcDbLine") (10 x y z) (11 x y z) (210 0.0 0.0 1.0).
  * 각도는 라디안, 좌표는 WCS(2D 객체는 OCS). 색이 ByLayer면 62를 넣지 않는다(AutoCAD와 같다).
  * 블록 참조의 속성(ATTRIB)과 옛 폴리선(POLYLINE)의 정점(VERTEX)·SEQEND는 entnext로 따라갈 수 있다(정점·SEQEND는 자리표시 이름).
+ * 블록 정의 안의 객체(nentsel·-2 그룹으로 얻은 이름)도 entget·entmod할 수 있다(소유자 330은 블록 레코드, 67·410은 없다).
+ * 확장 데이터(-3)·비도형 객체(사전·XRECORD)·표 기록은 objects.ts.
  */
 import type { AttribEntity, CadColor, Entity, InsertEntity, Layer, LwVertex, MTextEntity, PolylineEntity, TextEntity, Vec3 } from '../../core/model';
 import { MODEL_SPACE, entityDefaults, tableKey } from '../../core/model';
@@ -13,6 +15,7 @@ import type { LispDrawing } from './host';
 import type { Interp } from './interp';
 import { prin1 } from './printer';
 import { wcmatch } from './text';
+import { makeObject, mergeXData, modLayer, modObject, objectGroups, objectOf, readXData, recordXData, tableRecordGroups, xdataPair } from './objects';
 import { Cons, Ename, LispError, Real, fromArray, isNum, numOf, toArray, type Value } from './types';
 
 type Pair = [number, Value];
@@ -164,7 +167,9 @@ function common(it: Interp, d: LispDrawing, e: Entity, key: string, ownerHandle:
     [0, dxfType(e)],
   ];
   if (ownerHandle) out.push([330, it.ename(ownerHandle)]);
-  out.push([5, e.handle], [100, 'AcDbEntity'], [67, key === MODEL_SPACE ? 0 : 1], [410, layoutName(d, key)], [8, e.layer]);
+  out.push([5, e.handle], [100, 'AcDbEntity']);
+  if (isLayoutBlock(key)) out.push([67, key === MODEL_SPACE ? 0 : 1], [410, layoutName(d, key)]);
+  out.push([8, e.layer]);
   if (e.linetype && !/^bylayer$/i.test(e.linetype)) out.push([6, e.linetype]);
   colorGroups(e.color, out);
   if (e.lineweight !== -1) out.push([370, e.lineweight]);
@@ -222,11 +227,15 @@ export function entityGroups(it: Interp, d: LispDrawing, h: string): Pair[] | nu
   let key = topKey(d, h);
   let ownerH = e.owner;
   if (!key) {
-    if (e.type !== 'ATTRIB') return null;
-    const ins = parentInsert(d, e as AttribEntity);
-    if (!ins) return null;
-    key = topKey(d, ins.handle) ?? MODEL_SPACE;
-    ownerH = ins.handle;
+    const ins = e.type === 'ATTRIB' ? parentInsert(d, e as AttribEntity) : null;
+    if (ins) {
+      key = topKey(d, ins.handle) ?? MODEL_SPACE;
+      ownerH = ins.handle;
+    } else {
+      // 블록 정의 안의 객체
+      key = d.session.ownerOf(h);
+      if (!key) return null;
+    }
   }
   if (!ownerH) ownerH = d.doc.blocks.get(key)?.recordHandle;
   const out = common(it, d, e, key, ownerH);
@@ -334,9 +343,34 @@ export function toAssoc(pairs: Pair[]): Value {
   return fromArray(pairs.map(([c, v]) => new Cons(c, v)));
 }
 
-export function entget(it: Interp, d: LispDrawing, h: string): Value {
+/** entget: 객체·비도형 객체·표 기록. apps가 있으면 그 앱의 확장 데이터(-3)를 끝에 붙인다 */
+export function entget(it: Interp, d: LispDrawing, h: string, apps: readonly string[] = []): Value {
   const g = entityGroups(it, d, h);
-  return g ? toAssoc(g) : null;
+  if (g) {
+    const x = xdataPair(d.doc.entityIndex.get(h)?.xdata, apps);
+    return toAssoc(x ? [...g, x] : g);
+  }
+  const o = objectGroups(it, d.doc, h);
+  if (o) {
+    const x = xdataPair(objectOf(d.doc, h)?.xdata, apps);
+    return toAssoc(x ? [...o, x] : o);
+  }
+  const t = tableRecordGroups(it, d.doc, h);
+  if (t) {
+    const x = xdataPair(recordXData(it, d.doc, h), apps);
+    return toAssoc(x ? [...t, x] : t);
+  }
+  return null;
+}
+
+/** 목록의 확장 데이터(-3)를 객체에 넣는다. 등록하지 않은 앱이면 false */
+function applyXData(d: LispDrawing, e: Entity, pairs: Pair[]): boolean {
+  const x = pairs.find(([c]) => c === -3);
+  if (!x) return true;
+  const { list, unregistered } = readXData(d.doc, x[1]);
+  if (unregistered.length) return false;
+  e.xdata = mergeXData(e.xdata, list);
+  return true;
 }
 
 // --------------------------------------------------------------------------- 그룹 읽기
@@ -632,7 +666,7 @@ function applyGroups(d: LispDrawing, e: Entity, pairs: Pair[], ctx: Apply): void
 // --------------------------------------------------------------------------- entmod
 
 /** entmod: 바꾼 목록을 돌려준다. 실패하면 null */
-export function entmod(d: LispDrawing, list: Value): Value {
+export function entmod(it: Interp, d: LispDrawing, list: Value): Value {
   const pairs = readPairs(list);
   const self = pairs.find(([c]) => c === -1)?.[1];
   if (!(self instanceof Ename)) throw new LispError(`잘못된 인수 값: entmod 목록에 객체 이름(-1)이 없음: ${prin1(list)}`);
@@ -659,7 +693,11 @@ export function entmod(d: LispDrawing, list: Value): Value {
     return list;
   }
   const e = d.doc.entityIndex.get(h);
-  if (!e) return null;
+  if (!e) {
+    // 비도형 객체(사전·XRECORD)·표 기록(LAYER)
+    if (objectOf(d.doc, h)) return modObject(d, h, pairs) ? list : null;
+    return modLayer(it, d, h, pairs) ? list : null;
+  }
   const type = pairs.find(([c]) => c === 0)?.[1];
   if (typeof type === 'string' && type.toUpperCase() !== dxfType(e)) throw new LispError(`잘못된 인수 값: 객체 형식을 바꿀 수 없음: ${prin1(type)}`);
   if (e.type === 'ATTRIB') {
@@ -673,6 +711,7 @@ export function entmod(d: LispDrawing, list: Value): Value {
       if (err instanceof LispError && !err.message.startsWith('잘못된 DXF')) return null;
       throw err;
     }
+    if (!applyXData(d, a, pairs)) return null;
     const after = cloneEntity(ins);
     after.attribs = ins.attribs.map((x) => (x === e ? a : x));
     for (const l of ctx.layers) ops.push({ kind: 'layer', key: tableKey(l.name), before: null, after: l });
@@ -689,6 +728,7 @@ export function entmod(d: LispDrawing, list: Value): Value {
     if (err instanceof LispError && !err.message.startsWith('잘못된 DXF')) return null;
     throw err;
   }
+  if (!applyXData(d, after, pairs)) return null;
   for (const l of ctx.layers) ops.push({ kind: 'layer', key: tableKey(l.name), before: null, after: l });
   ops.push({ kind: 'modify', block: key, before: e, after });
   d.commit(ops, 'ENTMOD');
@@ -750,8 +790,8 @@ const REQUIRED: Record<string, number[]> = {
   RAY: [10, 11],
 };
 
-/** entmake: 만든 목록을 돌려준다. 만들 수 없으면 null */
-export function entmake(d: LispDrawing, list: Value): Value {
+/** entmake: 만든 목록을 돌려준다. 만들 수 없으면 null. 비도형 객체(XRECORD·DICTIONARY)는 made에 핸들을 알린다 */
+export function entmake(d: LispDrawing, list: Value, made?: (handle: string) => void): Value {
   if (list === null) {
     pendingInserts.delete(d.doc);
     return null;
@@ -761,6 +801,12 @@ export function entmake(d: LispDrawing, list: Value): Value {
   if (typeof t !== 'string') throw bad(list);
   const type = t.toUpperCase();
   if (type === 'LAYER') return makeLayer(d, pairs) ? list : null;
+  if (type === 'XRECORD' || type === 'DICTIONARY') {
+    const h = makeObject(d, type, pairs);
+    if (!h) return null;
+    made?.(h);
+    return list;
+  }
   const pend = pendingInserts.get(d.doc);
   if (type === 'SEQEND') {
     if (!pend) return null;
@@ -779,6 +825,7 @@ export function entmake(d: LispDrawing, list: Value): Value {
     throw err;
   }
   if (type === 'LWPOLYLINE' && (e as { vertices: LwVertex[] }).vertices.length < 1) return null;
+  if (!applyXData(d, e, pairs)) return null;
   e.handle = d.session.newHandle();
   if (type === 'ATTRIB') {
     if (!pend) return null;
@@ -933,7 +980,8 @@ function evalNode(n: Node, groups: Pair[], xdataApps: string[]): boolean {
     return !r.every(Boolean);
   }
   if (n.code === -3) {
-    const apps = toArray(n.value) ?? [n.value];
+    // (-3 ("APP1") ("APP2")) 또는 (-3 "APP")
+    const apps = (toArray(n.value) ?? [n.value]).map((a) => (a instanceof Cons ? a.car : a));
     return apps.every((a) => typeof a === 'string' && xdataApps.some((x) => wcmatch(x, a, true)));
   }
   let vals = groups.filter(([c]) => c === n.code).map(([, v]) => v);

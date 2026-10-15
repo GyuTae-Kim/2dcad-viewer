@@ -101,6 +101,8 @@ const KNOWN: Record<string, [string, string, number, boolean, number, number]> =
   BLOCKARRAYACTION: ['AcDbBlockArrayAction', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKLOOKUPACTION: ['AcDbBlockLookupAction', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKPOLARSTRETCHACTION: ['AcDbBlockPolarStretchAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  // 구속 기반 정의의 대리 노드(공개 짝 도면 Dynblocks·testDrawing의 클래스 목록 값 28/2)
+  ACDB_DYNAMICBLOCKPROXYNODE: ['AcDbDynamicBlockProxyNode', 'ObjectDBX Classes', 1153, false, 28, 2],
   // 연관 망(src/edit/assocnet/classes.ts)
   ...Object.fromEntries(ASSOC_CLASS_DEFS.map(([d, c, v, m]) => [d, [c, ASSOC_APP, ASSOC_PROXY_FLAGS, false, v, m] as [string, string, number, boolean, number, number]])),
 };

@@ -20,8 +20,9 @@
  *     - AcHorizontalConstraint·AcVerticalConstraint: + 90 기준선 노드 번호
  *     - AcDistanceConstraint: + 340 값 종속(→ ACDBASSOCVARIABLE), 340 치수 종속(→ 치수 객체), 280 방향 종류, [1이면 10 방향]
  *     - AcRadiusDiameterConstraint: + 340 값 종속, 340 치수 종속, 280 종류(0 반지름, 1 지름)
- *     - 나머지(일치·점–곡선·중심점·중간점·평행·직교·동일선상·동심·접선·같은 길이·고정): 자료 없음
- * 표본에 없던 클래스(각도·대칭·같은 반지름·부드러움·타원·스플라인·점 등)가 하나라도 있으면 그룹 전체를 풀지 않는다.
+ *     - 나머지(일치·점–곡선·중심점·중간점·평행·직교·동일선상·동심·접선·같은 길이·같은 반지름·고정): 자료 없음
+ *       (같은 반지름 AcEqualRadiusConstraint는 공개 DWG — 원·호 11쌍 — 에서 이 배치로 그룹이 남는 비트 없이 풀렸다)
+ * 표본에 없던 클래스(각도·대칭·부드러움·타원·스플라인·점 등)가 하나라도 있으면 그룹 전체를 풀지 않는다.
  */
 import type { RawTag, Vec3 } from '../../core/model';
 import { AssocFormatError, TagReader, TagWriter, fail } from './tags';
@@ -78,6 +79,7 @@ export const LAYOUTS: Readonly<Record<string, readonly FieldDef[]>> = {
   AcConcentricConstraint: CONSTRAINT,
   AcTangentConstraint: CONSTRAINT,
   AcEqualLengthConstraint: CONSTRAINT,
+  AcEqualRadiusConstraint: CONSTRAINT,
   AcFixedConstraint: CONSTRAINT,
   AcHorizontalConstraint: [...CONSTRAINT, { k: 'BL', code: 90, name: 'datum' }],
   AcVerticalConstraint: [...CONSTRAINT, { k: 'BL', code: 90, name: 'datum' }],

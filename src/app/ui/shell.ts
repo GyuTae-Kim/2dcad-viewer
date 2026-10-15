@@ -15,10 +15,11 @@ import { loadLispFile } from '../lisp';
 import { isoState, setIso } from '../viewtools-iso';
 import { maximized, maximizedLabel } from '../viewtools-vpmax';
 import { pickColor } from './colorpick';
-import { dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
+import { type MenuItem, dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
 import { icon } from './icons';
 import { RecentStore } from '../recent';
 import { type AnnoStatus, annoStatus } from '../annoscale-status';
+import { foldCount, layoutClasses, revealX, ribbonOverlay, statusHidden, watchViewport, wheelToHorizontal } from './layout';
 
 interface Btn {
   cmd?: string;
@@ -837,8 +838,14 @@ export class Shell implements UiHooks {
   readonly recent = new RecentStore();
   private readonly workspace: HTMLDivElement;
   private readonly guide: HTMLElement | null;
+  private readonly root: HTMLElement;
+  /** 리본을 작업 영역 위에 겹쳐 펼치는 배치(좁거나 낮은 화면) */
+  private overlayMode = false;
+  /** 넓은 화면에서 사용자가 리본을 접어 두었는지 */
+  private wideCollapsed = false;
 
   constructor(root: HTMLElement) {
+    this.root = root;
     // Keep the same useful guide for static crawlers and the running start screen.
     this.guide = root.querySelector<HTMLElement>('#viewer-guide');
     this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.lsp,.DXF,.DWG,.SCR,.LSP', multiple: true, hidden: true });
@@ -879,13 +886,20 @@ export class Shell implements UiHooks {
 
   attach(app: App): void {
     this.app = app;
-    // 좁은 화면에서는 리본을 접어 두고 탭을 누르면 펼친다
-    if (window.innerWidth < 760) this.ribbon.classList.add('collapsed');
+    // 좁거나 낮은 화면에서는 리본을 접어 두고, 탭을 누르면 작업 영역 위에 겹쳐 펼친다
+    this.applyLayout();
     let rt = 0;
     window.addEventListener('resize', () => {
+      this.applyLayout();
       clearTimeout(rt);
-      rt = window.setTimeout(() => this.buildRibbon(), 150);
+      rt = window.setTimeout(() => {
+        this.buildRibbon();
+        this.fitStatus();
+      }, 150);
     });
+    for (const el of [this.ribbonTabs, this.fileTabs, this.layoutTabs, this.status]) wheelToHorizontal(el);
+    new ResizeObserver(() => this.scheduleFitStatus()).observe(this.status);
+    watchViewport(this.workspace);
     this.palette = new Palette(app, this.workspace);
     this.buildTitle();
     this.buildRibbon();
@@ -976,19 +990,74 @@ export class Shell implements UiHooks {
     return h('button', { class: 'icon-btn', title: label, 'aria-label': label, html: icon(name), onclick: run });
   }
 
+  /** 창 크기에 맞춰 배치 클래스를 붙이고, 겹침 리본으로 바뀌거나 돌아올 때 펼침 상태를 맞춘다 */
+  private applyLayout(): void {
+    const w = window.innerWidth;
+    const hgt = window.innerHeight;
+    const want = layoutClasses(w, hgt);
+    for (const c of [...this.root.classList]) if ((c.startsWith('layout-') || c === 'ribbon-overlay') && !want.includes(c)) this.root.classList.remove(c);
+    this.root.classList.add(...want);
+    const overlay = ribbonOverlay(w, hgt);
+    if (overlay === this.overlayMode) return;
+    this.overlayMode = overlay;
+    // 겹침 리본은 닫힌 채로 시작하고, 넓은 화면으로 돌아오면 사용자가 고른 상태로
+    this.setRibbonOpen(overlay ? false : !this.wideCollapsed);
+  }
+
+  private ribbonOpen(): boolean {
+    return !this.ribbon.classList.contains('collapsed');
+  }
+
+  private offRibbon: ((ev: Event) => void) | null = null;
+
+  /** 리본 펼치기·접기. 겹침 리본은 바깥을 누르면 닫힌다 */
+  private setRibbonOpen(open: boolean): void {
+    this.ribbon.classList.toggle('collapsed', !open);
+    if (!this.overlayMode) this.wideCollapsed = !open;
+    if (this.offRibbon) {
+      window.removeEventListener('pointerdown', this.offRibbon, true);
+      window.removeEventListener('keydown', this.offRibbon, true);
+      this.offRibbon = null;
+    }
+    if (open && this.overlayMode) {
+      this.offRibbon = (ev: Event) => {
+        if (ev.type === 'keydown') {
+          if ((ev as KeyboardEvent).key === 'Escape' && !document.querySelector('.menu')) this.setRibbonOpen(false);
+          return;
+        }
+        const t = ev.target as Element | null;
+        if (t?.closest?.('.ribbon, .ribbon-tabs, .menu, .ribbon-pop, .dialog-back, .colorpick')) return;
+        // 도면을 눌러 리본을 닫을 때는 그 누름으로 객체를 고르거나 점을 찍지 않는다
+        if (t?.closest?.('.drawing')) ev.stopPropagation();
+        this.setRibbonOpen(false);
+      };
+      window.addEventListener('pointerdown', this.offRibbon, true);
+      window.addEventListener('keydown', this.offRibbon, true);
+    }
+  }
+
+  /** 겹침 리본에서 명령을 고르면 리본을 닫아 도면을 보이게 한다 */
+  private afterRibbonCommand(): void {
+    if (this.overlayMode) this.setRibbonOpen(false);
+  }
+
   private buildRibbon(): void {
     this.ribbonTabs.innerHTML = '';
     RIBBON.forEach((t, i) => {
-      const b = h('button', { class: `ribbon-tab ${i === this.activeTab ? 'active' : ''}`, role: 'tab' }, t.tab);
+      const b = h('button', { class: `ribbon-tab ${i === this.activeTab ? 'active' : ''}`, role: 'tab', 'aria-selected': i === this.activeTab ? 'true' : 'false' }, t.tab);
       b.addEventListener('click', () => {
-        if (this.activeTab === i) this.ribbon.classList.toggle('collapsed');
-        else this.ribbon.classList.remove('collapsed');
+        this.setRibbonOpen(this.activeTab === i ? !this.ribbonOpen() : true);
         this.activeTab = i;
         this.buildRibbon();
       });
-      b.addEventListener('dblclick', () => this.ribbon.classList.toggle('collapsed'));
+      b.addEventListener('dblclick', () => {
+        if (this.overlayMode) return;
+        this.setRibbonOpen(!this.ribbonOpen());
+        this.buildRibbon();
+      });
       this.ribbonTabs.append(b);
     });
+    revealX(this.ribbonTabs, this.ribbonTabs.children[this.activeTab] as HTMLElement | undefined ?? null);
     this.ribbon.innerHTML = '';
     const tab = RIBBON[this.activeTab]!;
     this.combos = null;
@@ -997,22 +1066,33 @@ export class Shell implements UiHooks {
       this.ribbon.append(el);
       return el;
     });
-    // 자리가 모자라면 오른쪽 패널부터 단추 하나로 접는다
-    for (let i = tab.panels.length - 1; i > 0 && this.ribbon.scrollWidth > this.ribbon.clientWidth + 1; i--) {
-      const p = tab.panels[i]!;
-      const folded = this.foldedPanel(p);
-      els[i]!.replaceWith(folded);
-      // 접힌 패널의 고르기 상자는 펼칠 때 다시 만든다
-      const cb = this.combos as Shell['combos'];
-      if (cb && p.custom === 'layer') {
-        delete cb.layer;
-        delete cb.layerState;
-      }
-      if (cb && p.custom === 'props') {
-        delete cb.color;
-        delete cb.linetype;
-        delete cb.lineweight;
-      }
+    // 자리가 모자라면 오른쪽 패널부터 단추 하나로 접는다(겹침 리본은 줄을 바꿔 다 보인다)
+    if (!this.overlayMode && this.ribbonOpen() && this.ribbon.scrollWidth > this.ribbon.clientWidth + 1) {
+      const cs = getComputedStyle(this.ribbon);
+      const avail = this.ribbon.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const full = els.map((e) => e.getBoundingClientRect().width);
+      const folds = tab.panels.map((p) => this.foldedPanel(p));
+      for (const f of folds) this.ribbon.append(f);
+      const folded = folds.map((f) => f.getBoundingClientRect().width);
+      const k = foldCount(full, folded, avail);
+      tab.panels.forEach((p, i) => {
+        if (i < tab.panels.length - k) {
+          folds[i]!.remove();
+          return;
+        }
+        els[i]!.replaceWith(folds[i]!);
+        // 접힌 패널의 고르기 상자는 펼칠 때 다시 만든다
+        const cb = this.combos as Shell['combos'];
+        if (cb && p.custom === 'layer') {
+          delete cb.layer;
+          delete cb.layerState;
+        }
+        if (cb && p.custom === 'props') {
+          delete cb.color;
+          delete cb.linetype;
+          delete cb.lineweight;
+        }
+      });
     }
     this.refreshRibbonState();
   }
@@ -1189,13 +1269,18 @@ export class Shell implements UiHooks {
     el.addEventListener('click', () => {
       if (b.menu) {
         const r = el.getBoundingClientRect();
+        const go = (cmd: string) => {
+          this.afterRibbonCommand();
+          void this.runCmd(cmd);
+        };
         showMenu(r.left, r.bottom + 2, [
-          ...b.menu.map((m) => ({ label: m.label, icon: m.icon, run: () => void this.runCmd(m.cmd) })),
+          ...b.menu.map((m) => ({ label: m.label, icon: m.icon, run: () => go(m.cmd) })),
           { separator: true },
-          { label: `${b.label} (${b.cmd})`, icon: b.icon, run: () => void this.runCmd(b.cmd!) },
+          { label: `${b.label} (${b.cmd})`, icon: b.icon, run: () => go(b.cmd!) },
         ]);
         return;
       }
+      this.afterRibbonCommand();
       if (b.run) b.run();
       else if (b.cmd) void this.runCmd(b.cmd);
     });
@@ -1246,6 +1331,7 @@ export class Shell implements UiHooks {
     const plus = h('button', { class: 'icon-btn', title: '열기', 'aria-label': '파일 열기', html: icon('plus') });
     plus.addEventListener('click', () => this.pickFiles());
     this.fileTabs.append(plus);
+    revealX(this.fileTabs, this.fileTabs.querySelector<HTMLElement>('.filetab.active'));
     this.refreshRibbonState();
   }
 
@@ -1282,8 +1368,10 @@ export class Shell implements UiHooks {
                 { label: '배치 복사…', run: () => void go('LAYOUT', 'C') },
                 { label: '이름 바꾸기…', run: () => void go('LAYOUT', 'R') },
                 { label: '삭제', run: () => void go('LAYOUT', 'D') },
+                { label: '다른 이름으로 저장…', run: () => void go('LAYOUT', 'SA') },
               ]
             : []),
+          { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
           { separator: true },
           { label: '페이지 설정…', run: () => void go('PAGESETUP') },
           { label: '플롯…', run: () => void go('PLOT') },
@@ -1291,6 +1379,7 @@ export class Shell implements UiHooks {
       });
       this.layoutTabs.append(b);
     }
+    revealX(this.layoutTabs, this.layoutTabs.querySelector<HTMLElement>('.layouttab.active'));
   }
 
   // -------------------------------------------------------------------------
@@ -1353,33 +1442,114 @@ export class Shell implements UiHooks {
     });
     const caret = h('button', { class: 'icon-btn', title: '객체 스냅 종류', 'aria-label': '객체 스냅 종류', style: 'width:14px;padding:0', html: '▾' });
     caret.addEventListener('click', (ev) => this.snapMenu(ev.clientX, ev.clientY - 260));
-    this.status.append(
-      this.coords,
-      h('span', { class: 'status-sep' }),
-      this.spaceLabel,
-      h('span', { class: 'status-sep' }),
-      osnap,
-      caret,
-      mk('grid', 'grid', '격자 표시 (F7)', () => app.toggleGrid()),
-      mk('snap', 'gridSnap', '스냅 모드 (F9) · 격자 간격으로 점을 맞춥니다', () => app.toggleSnap()),
-      mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()),
-      iso,
-      polar,
-      mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()),
-      mk('dyn', 'dyn', '동적 입력 (F12) · 커서 옆에 프롬프트·거리·입력 중인 값', () => app.toggleDyn()),
-      mk('lw', 'lineweight', '선가중치 표시', () => void app.run('LWDISPLAY')),
-      mk('bg', 'background', '배경색 전환', () => void app.run('BACKGROUND')),
-      h('span', { class: 'status-sep' }),
-      this.selLabel,
-      h('span', { class: 'status-spacer' }),
-      ...(this.annoItems = annoStatus(app)).elements,
-      h('span', { class: 'status-sep' }),
-      this.unitLabel,
-      mk('vpmax', 'viewport', '뷰포트 최대화·복원 (VPMAX·VPMIN) · 최대화 중 Ctrl+R로 다음 뷰포트', () => void app.run(maximized(app.active) ? 'VPMIN' : 'VPMAX')),
-      mk('ext', 'extents', '전체 보기', () => app.view.zoomExtents()),
-      mk('props', 'props', '특성 팔레트 (Ctrl+1)', () => this.openPalette('props')),
-    );
+    const sep = () => h('span', { class: 'status-sep' });
+    this.annoItems = annoStatus(app);
+    // 주석 축척 항목: 동기화 경고, 축척 단추, 표시, 자동 추가 순서
+    const annoPrio = [85, 65, 15, 15];
+    this.statusMore = h('button', { class: 'icon-btn status-more', title: '상태 막대의 나머지 항목', 'aria-label': '상태 막대의 나머지 항목', 'aria-haspopup': 'menu', hidden: true }, '⋯');
+    this.statusMore.addEventListener('click', () => this.statusMoreMenu());
+    // 넘치면 prio가 낮은 것부터 "⋯" 메뉴로 옮긴다(데스크톱 폭에서는 다 들어간다)
+    const items: [HTMLElement | undefined, number][] = [
+      [this.coords, 20],
+      [sep(), 0],
+      [this.spaceLabel, 10],
+      [sep(), 0],
+      [osnap, 100],
+      [caret, 45],
+      [mk('grid', 'grid', '격자 표시 (F7)', () => app.toggleGrid()), 60],
+      [mk('snap', 'gridSnap', '스냅 모드 (F9) · 격자 간격으로 점을 맞춥니다', () => app.toggleSnap()), 55],
+      [mk('ortho', 'ortho', '직교 (F8)', () => app.toggleOrtho()), 95],
+      [iso, 30],
+      [polar, 90],
+      [mk('otrack', 'otrack', '객체 스냅 추적 (F11) · 스냅점 위에 잠시 머물면 그 점에서 정렬선을 씁니다', () => app.toggleOtrack()), 50],
+      [mk('dyn', 'dyn', '동적 입력 (F12) · 커서 옆에 프롬프트·거리·입력 중인 값', () => app.toggleDyn()), 40],
+      [mk('lw', 'lineweight', '선가중치 표시', () => void app.run('LWDISPLAY')), 35],
+      [mk('bg', 'background', '배경색 전환', () => void app.run('BACKGROUND')), 25],
+      [sep(), 0],
+      [this.selLabel, 70],
+      [h('span', { class: 'status-spacer' }), 1000],
+      ...this.annoItems.elements.map((el, i): [HTMLElement, number] => [el, annoPrio[i] ?? 15]),
+      [sep(), 0],
+      [this.unitLabel, 12],
+      [mk('vpmax', 'viewport', '뷰포트 최대화·복원 (VPMAX·VPMIN) · 최대화 중 Ctrl+R로 다음 뷰포트', () => void app.run(maximized(app.active) ? 'VPMIN' : 'VPMAX')), 75],
+      [mk('ext', 'extents', '전체 보기', () => app.view.zoomExtents()), 80],
+      [mk('props', 'props', '특성 팔레트 (Ctrl+1)', () => this.openPalette('props')), 85],
+    ];
+    this.statusItems = items.filter((x): x is [HTMLElement, number] => !!x[0]).map(([el, prio]) => ({ el, prio }));
+    this.status.append(...this.statusItems.map((x) => x.el), this.statusMore);
     this.refreshStatus();
+  }
+
+  private statusItems: { el: HTMLElement; prio: number }[] = [];
+  private statusMore!: HTMLButtonElement;
+  private fitRaf = 0;
+
+  private scheduleFitStatus(): void {
+    if (!this.fitRaf) this.fitRaf = requestAnimationFrame(() => this.fitStatus());
+  }
+
+  /** 상태 막대가 넘치면 덜 중요한 항목을 숨기고 "⋯" 단추로 모은다 */
+  private fitStatus(): void {
+    cancelAnimationFrame(this.fitRaf);
+    this.fitRaf = 0;
+    const bar = this.status;
+    if (!bar.isConnected || !bar.clientWidth) return;
+    // 넘치지 않고 숨긴 것도 없으면 그대로 둔다(넓은 화면)
+    if (this.statusMore.hidden && bar.scrollWidth <= bar.clientWidth) return;
+    for (const it of this.statusItems) it.el.classList.remove('st-hidden');
+    this.statusMore.hidden = false;
+    const moreRect = this.statusMore.getBoundingClientRect();
+    this.statusMore.hidden = true;
+    const cs = getComputedStyle(bar);
+    const gap = parseFloat(cs.columnGap) || 0;
+    const avail = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const list = this.statusItems.map((it) => {
+      if (it.el.classList.contains('status-spacer')) return { w: 0, prio: it.prio };
+      const ics = getComputedStyle(it.el);
+      if (ics.display === 'none') return { w: 0, prio: it.prio };
+      // 구분선의 좌우 여백(margin)까지 센다
+      const w = it.el.getBoundingClientRect().width + (parseFloat(ics.marginLeft) || 0) + (parseFloat(ics.marginRight) || 0);
+      return { w: w + gap, prio: it.prio };
+    });
+    const moreW = moreRect.width + gap;
+    const hidden = statusHidden(list, avail, moreW);
+    // 숨긴 항목 양옆의 구분선이 겹치지 않게: 앞뒤에 보이는 내용이 없는 구분선도 숨긴다
+    this.statusItems.forEach((it, i) => it.el.classList.toggle('st-hidden', hidden.has(i)));
+    let prevContent = false;
+    for (const it of this.statusItems) {
+      if (it.el.classList.contains('st-hidden') || it.el.classList.contains('status-spacer')) continue;
+      if (it.el.classList.contains('status-sep')) {
+        if (!prevContent) it.el.classList.add('st-hidden');
+        prevContent = false;
+      } else if (it.el.getBoundingClientRect().width > 0) prevContent = true;
+    }
+    this.statusMore.hidden = hidden.size === 0;
+  }
+
+  /** "⋯" 메뉴: 숨긴 상태 막대 항목 */
+  private statusMoreMenu(): void {
+    const r = this.statusMore.getBoundingClientRect();
+    const items: MenuItem[] = [];
+    const texts: string[] = [];
+    for (const it of this.statusItems) {
+      const el = it.el;
+      if (!el.classList.contains('st-hidden') || el.classList.contains('status-sep')) continue;
+      if (el instanceof HTMLButtonElement) {
+        if (el.hidden || el.style.display === 'none') continue;
+        const title = (el.title || el.getAttribute('aria-label') || '').split(/ \(| · /)[0]!.trim();
+        const text = el.classList.contains('icon-btn') ? '' : (el.textContent ?? '').replace(/▾/g, '').trim();
+        const label = text ? `${title} ${text}` : title;
+        items.push({
+          label: `${el.classList.contains('on') ? '✓ ' : '\u2003'}${label}`,
+          disabled: el.disabled,
+          run: () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left, clientY: r.top })),
+        });
+      } else if (el.textContent?.trim()) texts.push(el.textContent.trim());
+    }
+    showMenu(r.left, r.top, [...(texts.length ? [{ heading: texts.join(' · ') }] : []), ...items]);
+    // 단추 바로 위에 붙인다(메뉴 높이는 손가락 입력에서 더 크다)
+    const m = [...document.querySelectorAll<HTMLElement>('.menu')].pop();
+    if (m) m.style.top = `${Math.max(4, r.top - m.getBoundingClientRect().height - 4)}px`;
   }
 
   private snapMenu(x: number, y: number): void {
@@ -1442,6 +1612,7 @@ export class Shell implements UiHooks {
     }
     this.annoItems?.refresh();
     this.refreshRibbonState();
+    this.scheduleFitStatus();
   }
 
   setCoords(text: string): void {

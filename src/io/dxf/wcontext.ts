@@ -33,6 +33,7 @@ import type {
   XData,
   XRecordObject,
 } from '../../core/model';
+import { assocDxfWritable } from '../../edit/assocnet/codec';
 import { MODEL_SPACE, PAPER_SPACE, tableKey } from '../../core/model';
 import { defaultLayout } from '../../core/finalize';
 import { type DxfVersion, rawTagsValid, versionNum } from './tagwriter';
@@ -964,6 +965,8 @@ export class WriteContext {
           this.warn('object.no_data', '내용을 알 수 없는 객체(DWG에서 해석하지 않은 종류)를 쓰지 않았습니다.', o.type);
           return false;
         }
+        // 연관 망 객체: 같은 동작의 다른 객체가 DWG 원본 비트뿐이면 동작을 통째로 빼고 망 목록에서도 뺀다(src/edit/assocnet/version.ts)
+        if (!assocDxfWritable(o as GenericObject, (h) => this.doc.objects.get(h) as GenericObject | undefined)) return false;
         if (!rawTagsValid(raw)) {
           this.warn('object.corrupt_dropped', '값이 잘못된 원본 자료를 담은 객체를 쓰지 않았습니다.', o.type);
           return false;

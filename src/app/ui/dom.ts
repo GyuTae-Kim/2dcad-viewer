@@ -1,5 +1,6 @@
 /** DOM 도우미: 요소 만들기, 알림, 메뉴, 대화상자 */
 import { icon } from './icons';
+import { clampBox } from './layout';
 
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -91,8 +92,13 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
   }
   document.body.append(m);
   const r = m.getBoundingClientRect();
-  m.style.left = `${Math.max(4, Math.min(x, window.innerWidth - r.width - 4))}px`;
-  m.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 4))}px`;
+  // 보이는 영역(소프트 키보드가 올라오면 그만큼 줄어든다) 안에 둔다. 데스크톱에서는 창 크기와 같다
+  const vv = window.visualViewport;
+  const ox = vv?.offsetLeft ?? 0;
+  const oy = vv?.offsetTop ?? 0;
+  const pos = clampBox(x - ox, y - oy, r.width, r.height, vv?.width ?? window.innerWidth, vv?.height ?? window.innerHeight);
+  m.style.left = `${pos.left + ox}px`;
+  m.style.top = `${pos.top + oy}px`;
   openMenu = m;
   setTimeout(() => {
     const off = (ev: Event) => {

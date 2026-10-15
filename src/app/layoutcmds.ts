@@ -1,5 +1,6 @@
 /**
- * 배치와 페이지 설정: LAYOUT(신규·복사·이름 바꾸기·삭제·설정·목록), PAGESETUP
+ * 배치와 페이지 설정: LAYOUT·-LAYOUT(신규·복사·템플릿·이름 바꾸기·다른 이름으로 저장·삭제·설정·목록), PAGESETUP.
+ * 템플릿(T)·다른 이름으로 저장(SA)은 layoutcmds-file.ts.
  */
 import type { BlockDef, BlockRecord, DictionaryObject, Entity, Layout, LayoutObject, PlotSettings, ViewportEntity } from '../core/model';
 import { MODEL_SPACE, entityDefaults, tableKey } from '../core/model';
@@ -11,6 +12,7 @@ import { PAPERS } from './plot';
 import { paperInfo } from './scene';
 import { ask, form } from './ui/dom';
 import { inScript } from './script';
+import { layoutSaveAs, layoutTemplate } from './layoutcmds-file';
 
 const STYLE_SHEETS = ['', 'monochrome.ctb', 'Grayscale.ctb', 'acad.ctb', 'Screening 50%.ctb', 'Fill Patterns.ctb'];
 
@@ -217,18 +219,28 @@ export function registerLayoutCommands(app: App): void {
       const curName = cur && tableKey(cur.blockName) !== MODEL_SPACE ? cur.name : (st.doc.layouts.find((l) => tableKey(l.blockName) !== MODEL_SPACE)?.name ?? '');
       let opt = arg?.trim().toUpperCase();
       if (!opt) {
-        const r = await ctx.getPoint('배치 옵션 입력 [복사(C)/삭제(D)/신규(N)/이름바꾸기(R)/설정(S)/?] <설정>:', {
+        const r = await ctx.getPoint('배치 옵션 입력 [복사(C)/삭제(D)/신규(N)/템플릿(T)/이름바꾸기(R)/다른 이름으로 저장(SA)/설정(S)/?] <설정>:', {
           keywords: [
             { key: 'C', label: '복사' },
             { key: 'D', label: '삭제' },
             { key: 'N', label: '신규' },
+            { key: 'T', label: '템플릿' },
             { key: 'R', label: '이름바꾸기' },
+            { key: 'SA', label: '다른 이름으로 저장' },
             { key: 'S', label: '설정' },
             { key: '?', label: '?' },
           ],
         });
         opt = 'keyword' in r ? r.keyword : 'S';
       }
+      opt = opt.replace(/^_+/, '');
+      if (opt === 'COPY') opt = 'C';
+      else if (opt === 'DELETE') opt = 'D';
+      else if (opt === 'NEW') opt = 'N';
+      else if (opt === 'TEMPLATE') opt = 'T';
+      else if (opt === 'RENAME') opt = 'R';
+      else if (opt === 'SAVEAS') opt = 'SA';
+      else if (opt === 'SET') opt = 'S';
       const paperLayouts = st.doc.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE);
       switch (opt) {
         case 'N': {
@@ -309,6 +321,12 @@ export function registerLayoutCommands(app: App): void {
           ctx.print(`배치 "${l.name}"을(를) 삭제했습니다.`);
           return;
         }
+        case 'T':
+          await layoutTemplate(app, ctx);
+          return;
+        case 'SA':
+          await layoutSaveAs(app, ctx, curName);
+          return;
         case '?':
           ctx.print(`배치: ${st.doc.layouts.map((l) => l.name).join(', ')}`, 'res');
           return;

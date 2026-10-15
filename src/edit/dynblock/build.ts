@@ -27,8 +27,14 @@ export function insertAffine(def: BlockDef, ins: Pick<InsertEntity, 'insert' | '
   return affMul(affTranslate(ins.insert.x, ins.insert.y), affMul(affRotate(ins.rotation), affMul(affScale(ins.scale.x, ins.scale.y), affTranslate(-def.basePoint.x, -def.basePoint.y))));
 }
 
-/** 공개 표본(ACadSharp MIT 표본 DXF, samples/dynamic-blocks 포함)에서 확인한 캐시 머리 값(클래스마다 고정) */
+/**
+ * 공개 표본(ACadSharp MIT 표본 DXF, samples/dynamic-blocks 포함)에서 확인한 캐시 머리 값(클래스마다 고정).
+ * 정렬 매개변수·정렬 그립·기준점 매개변수는 공개 짝 도면(LibreDWG test-data 2018/Dynblocks, AutoCAD가 저장한 DWG·DXF)의 값.
+ */
 const KNOWN_HEADERS: Record<string, [number, number]> = {
+  BLOCKALIGNMENTPARAMETER: [82446124, 112284408],
+  BLOCKALIGNMENTGRIP: [6886097, 9208651],
+  BLOCKBASEPOINTPARAMETER: [82437801, 112294725],
   BLOCKLINEARPARAMETER: [18597260, 25303744],
   BLOCKSCALEACTION: [2551693, 3435815],
   BLOCKVISIBILITYPARAMETER: [135625452, 184556386],
@@ -359,16 +365,16 @@ function etag(index: number, handle: string): XData['items'] {
   ];
 }
 
-/** 작업 객체로 새 표현 블록을 만든다 */
+/** 작업 객체로 새 표현 블록을 만든다(원본 다음에 배열 사본 — 사본은 원본의 ETag 색인, 1005는 제 핸들) */
 function representation(doc: CadDocument, ref: DynRef, ev: DynEval, newHandle: () => string): { record: BlockRecord; block: BlockDef } {
   const name = allocBlockName(doc, '*U');
   const recH = newHandle();
   const map = new Map<string, string>();
   const ents: Entity[] = [];
-  for (const it of ev.items) {
+  for (const it of [...ev.items, ...ev.copies]) {
     const e = cloneEntity(it.entity);
     const h = newHandle();
-    map.set(it.entity.handle.toUpperCase(), h);
+    if (!it.copy) map.set(it.entity.handle.toUpperCase(), h);
     e.handle = h;
     e.owner = recH;
     delete e.xdict;
@@ -382,6 +388,14 @@ function representation(doc: CadDocument, ref: DynRef, ev: DynEval, newHandle: (
         delete a.reactors;
       }
     e.xdata = withXData(e.xdata, ETAG_APP, etag(it.index, e.type === 'ATTDEF' ? '0' : h));
+    if (it.copy) {
+      // 사본은 원본의 연결(반응자·해치 경계)을 갖지 않는다
+      delete e.reactors;
+      if (e.type === 'HATCH' || e.type === 'MPOLYGON') {
+        for (const p of e.paths) delete p.sources;
+        if (e.type === 'HATCH') e.associative = false;
+      }
+    }
     ents.push(e);
   }
   // 블록 안 연결(연관 해치 경계·반응자)을 새 핸들로

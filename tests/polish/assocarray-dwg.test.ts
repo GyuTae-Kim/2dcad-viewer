@@ -51,8 +51,8 @@ describe('AutoCAD 연관 배열 DXF → DWG', () => {
       expect(p.items.size).toBe(6);
       const q = readArray(back, ins(back, s.path))!;
       const qp = q.state.params as PathParams;
-      // 경로 배열의 곡선 캐시가 복합 곡선(호 포함)이라 DWG 코덱이 쓰지 못한다(선분만 확인) → 그 동작은 통째로 빠지고 이 앱 기록으로 남는다
-      expect(q.origin).toBe('app');
+      // 경로 배열의 곡선 캐시(복합 곡선, 호 포함)도 DWG 코덱이 쓴다(곡선 경로 배열 DWG로 확인한 배치) → AutoCAD 기록으로 남는다
+      expect(q.origin).toBe('acad');
       expect([qp.items, qp.method]).toEqual([5, 'divide']);
       expect(q.items.size).toBe(5);
       // 원본 블록도 같다

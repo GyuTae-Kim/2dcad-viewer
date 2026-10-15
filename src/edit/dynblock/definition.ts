@@ -6,6 +6,7 @@
  */
 import type { BlockDef, BlockRecord, CadDocument, DictionaryObject, GenericObject, RawTag, Vec3 } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { blockConstraints } from './cblock';
 import { TagCursor, subclasses, tagHandle, tagInt, tagNum, tagStr, xdataOf } from './tags';
 import type {
   BaseAction,
@@ -15,6 +16,7 @@ import type {
   DynGripNode,
   DynParam,
   FlipAction,
+  LinearParam,
   LookupAction,
   LookupColumn,
   MoveAction,
@@ -42,10 +44,16 @@ const PARAM_KIND: Record<string, ParamKind> = {
 };
 
 /**
- * 구속 매개변수: 값은 블록 객체의 기하 구속(연관 망)을 풀어야 바뀐다. 거리·값 집합만 읽고(특성에 읽기 전용으로 보인다)
- * 정의는 고치지 않는다(undecoded에 "구속 매개변수 …"를 남긴다). DWG 배치는 표본이 없어 모른다(원본 비트만 남는다).
+ * 구속 매개변수: 값은 블록 객체의 기하 구속(블록 레코드의 연관 망)을 풀어야 바뀐다. AcDbBlockConstraintParameter의 330이
+ * 그 구속 그룹의 치수 구속 노드가 가리키는 연관 종속(ACDBASSOCDEPENDENCY, 몸체 BLOCKPARAMDEPENDENCYBODY)이다
+ * (공개 DXF architectural_example-imperial의 창 블록). 블록의 구속 그룹을 읽을 수 있고 그 종속의 치수 구속을 찾으면
+ * 고칠 수 있다(cblock.ts가 푼다). 못 찾으면 undecoded에 "구속 매개변수 …"를 남긴다. DWG 배치는 짝 도면이 없어 모른다
+ * (원본 비트만 남는다).
  */
 const CONSTRAINT_PARAMS = new Set(['BLOCKHORIZONTALCONSTRAINTPARAMETER', 'BLOCKVERTICALCONSTRAINTPARAMETER', 'BLOCKALIGNEDCONSTRAINTPARAMETER', 'BLOCKLINEARCONSTRAINTPARAMETER']);
+
+/** 구속 기반 정의의 대리 노드(평가 그래프 안에서 블록의 구속 망을 대신한다) */
+const PROXY_NODE = 'ACDB_DYNAMICBLOCKPROXYNODE';
 
 const ACTION_TYPES = new Set(['BLOCKMOVEACTION', 'BLOCKSTRETCHACTION', 'BLOCKPOLARSTRETCHACTION', 'BLOCKSCALEACTION', 'BLOCKROTATEACTION', 'BLOCKFLIPACTION', 'BLOCKARRAYACTION', 'BLOCKLOOKUPACTION']);
 
@@ -228,10 +236,13 @@ function readParam(type: string, handle: string, sc: Map<string, RawTag[]>): Dyn
       return { ...base, kind, base: p1, end: p2, baseState: tagStr(first(t, 307)), flippedState: tagStr(first(t, 308)) };
     }
     case 'linear': {
-      const t = need(sc, CONSTRAINT_PARAMS.has(type) ? 'AcDbBlockLinearConstraintParameter' : 'AcDbBlockLinearParameter');
+      const cp = CONSTRAINT_PARAMS.has(type);
+      const t = need(sc, cp ? 'AcDbBlockLinearConstraintParameter' : 'AcDbBlockLinearParameter');
       label(tagStr(first(t, 305)));
       base.description = tagStr(first(t, 306));
-      return { ...base, kind, base: p1, end: p2, baseLocation, values: valueSet(t, 96, 141, 142, 143, 144) };
+      const out: LinearParam = { ...base, kind, base: p1, end: p2, baseLocation, values: valueSet(t, 96, 141, 142, 143, 144) };
+      if (cp) out.constraint = { dependency: tagHandle(first(sc.get('AcDbBlockConstraintParameter'), 330) ?? '') };
+      return out;
     }
     case 'polar': {
       // 305 거리 레이블, 306 거리 설명, 307 각도 레이블, 308 각도 설명(공개 짝 도면·AutoCAD 예제 도면)
@@ -401,8 +412,9 @@ function readAction(type: string, handle: string, sc: Map<string, RawTag[]>): Dy
       // 배열: 92~95 + 301~304, 극좌표 신축: 92~97 + 301~306
       for (let k = 0; k < (array ? 4 : 6); k++) if (first(t, 92 + k) !== undefined) a.conns.push(conn(first(t, 92 + k), first(t, 301 + k)));
       if (array) {
-        a.columnSpacing = tagNum(first(t, 140));
-        a.rowSpacing = tagNum(first(t, 141));
+        // 141 열 간격(X·선형 방향), 140 행 간격(Y) — 공개 도면의 표현 블록으로 확인(XY 배열 140 = 20, 141 = 25 → X 25·Y 20)
+        a.columnSpacing = tagNum(first(t, 141));
+        a.rowSpacing = tagNum(first(t, 140));
         return a;
       }
       // 극좌표 신축: 73 + 틀 점(1011·1021)…, 72 점이 묶인 객체 수, 74 + 332…, 75 + (76, 78)…, 141, 140, 77
@@ -609,6 +621,7 @@ function parseDefinition(doc: CadDocument, key: string, block: BlockDef, rec: Bl
     const t = subclasses(o.raw).get('AcDbBlockGripExpr');
     if (t) exprs.set(n.id, conn(first(t, 91), first(t, 300)));
   }
+  let proxy = false;
   for (const { n, o } of objs) {
     if (!o) {
       undecoded.push('(없는 노드)');
@@ -616,11 +629,11 @@ function parseDefinition(doc: CadDocument, key: string, block: BlockDef, rec: Bl
     }
     const sc = subclasses(o.raw);
     try {
-      if (PARAM_KIND[o.type]) {
-        params.push(readParam(o.type, n.handle, sc));
-        if (CONSTRAINT_PARAMS.has(o.type)) undecoded.push(`구속 매개변수 ${o.type}`);
-      }
-      else if (ACTION_TYPES.has(o.type)) actions.push(readAction(o.type, n.handle, sc));
+      if (PARAM_KIND[o.type]) params.push(readParam(o.type, n.handle, sc));
+      else if (o.type === PROXY_NODE) {
+        if (!o.raw?.length) undecoded.push(o.type);
+        proxy = true;
+      } else if (ACTION_TYPES.has(o.type)) actions.push(readAction(o.type, n.handle, sc));
       else if (/^BLOCK.*GRIP$/.test(o.type)) grips.push(readGrip(o.type, n.handle, sc, exprs));
       else if (o.type !== 'BLOCKGRIPLOCATIONCOMPONENT') undecoded.push(o.type);
     } catch (e) {
@@ -645,6 +658,19 @@ function parseDefinition(doc: CadDocument, key: string, block: BlockDef, rec: Bl
     indexOf.set(e.handle.toUpperCase(), idx[i]!);
     handleAt.set(idx[i]!, e.handle.toUpperCase());
   });
+  // 구속 기반 정의: 블록의 구속 그룹을 읽고, 구속 매개변수마다 그 종속의 치수 구속을 찾는다
+  const cps = params.filter((p): p is LinearParam => p.kind === 'linear' && !!p.constraint);
+  let constrained = false;
+  if (proxy || cps.length) {
+    const bc = blockConstraints(doc, rec.handle);
+    if (!bc || bc.problem) {
+      if (proxy) undecoded.push(PROXY_NODE);
+      for (const p of cps) undecoded.push(`구속 매개변수 ${p.type}`);
+    } else {
+      constrained = true;
+      for (const p of cps) if (!bc.byDependency.has(p.constraint!.dependency)) undecoded.push(`구속 매개변수 ${p.type}`);
+    }
+  }
   const trueName = xdataOf(rec.xdata, TRUENAME_APP)?.find((i) => i.code === 1000)?.value;
   return {
     key,
@@ -660,6 +686,7 @@ function parseDefinition(doc: CadDocument, key: string, block: BlockDef, rec: Bl
     indexOf,
     handleAt,
     undecoded,
+    constrained,
   };
 }
 
