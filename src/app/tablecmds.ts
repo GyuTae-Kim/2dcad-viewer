@@ -59,7 +59,7 @@ function measurer(app: App, doc: CadDocument): (text: string, height: number, wi
   };
 }
 
-interface PickedTable {
+export interface PickedTable {
   entity: TableEntity | InsertEntity;
   space: string;
   data: TableData;
@@ -95,7 +95,7 @@ function readPicked(app: App, handle: string, point: Pt | null): PickedTable | n
   return { entity: e, space, data: rt.data, style: rt.style, styleHandle: rt.styleEntry?.handle, cell };
 }
 
-function lockedLayer(app: App, e: Entity): boolean {
+export function lockedLayer(app: App, e: Entity): boolean {
   const l = app.active!.doc.layers.get(tableKey(e.layer));
   if (l?.locked) {
     app.cmd.print('객체가 잠긴 도면층에 있습니다.', 'err');
@@ -105,7 +105,7 @@ function lockedLayer(app: App, e: Entity): boolean {
 }
 
 /** 표 셀 고르기(표가 아니거나 셀 밖이면 다시 묻는다). Enter면 null */
-async function pickCell(app: App, ctx: CommandContext, prompt: string, keywords: Keyword[] = []): Promise<PickedTable | { keyword: string } | null> {
+export async function pickCell(app: App, ctx: CommandContext, prompt: string, keywords: Keyword[] = []): Promise<PickedTable | { keyword: string } | null> {
   for (;;) {
     const r = await ctx.getEntity(prompt, keywords);
     if ('enter' in r) return null;
@@ -124,7 +124,7 @@ async function pickCell(app: App, ctx: CommandContext, prompt: string, keywords:
 }
 
 /** 표 정의를 적용한다(행 높이를 문자에 맞춘 뒤) */
-function commitTable(app: App, p: Pick<PickedTable, 'entity' | 'space' | 'style' | 'styleHandle'>, data: TableData, label: string, group?: number): TableEntity {
+export function commitTable(app: App, p: Pick<PickedTable, 'entity' | 'space' | 'style' | 'styleHandle'>, data: TableData, label: string, group?: number): TableEntity {
   const st = app.active!;
   const fitted = fitRowHeights(data, p.style, measurer(app, st.doc));
   const r = updateTableOps(st.doc, () => st.session.newHandle(), p.entity, p.space, fitted, p.style, p.styleHandle);

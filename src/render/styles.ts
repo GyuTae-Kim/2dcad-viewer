@@ -50,7 +50,7 @@ export const STYLE_FLAG_HIDDEN = 4;
 export const STYLE_FLAG_FIELD = 8;
 
 /** 화면 표시 설정(앱이 바꾼다). 바꾸면 styleData 캐시 열쇠도 달라진다 */
-export const displayFlags = { fieldBackground: true };
+export const displayFlags = { fieldBackground: true, /** 객체 투명도 표시(TRANSPARENCYDISPLAY). 끄면 화면에서 불투명하게 그린다(출력은 그대로) */ transparency: true };
 export const HIDDEN_STYLE = 0;
 
 export function hiddenStyleSpec(): StyleSpec {
@@ -219,7 +219,7 @@ export function resolveStyles(table: StyleTable, layers: readonly LayerState[], 
     if (lw < 0) lw = opt.defaultLineweight;
     if (pen?.lineweight != null) lw = pen.lineweight * 100;
     if (s.flags & STYLE_FLAG_HIDDEN) visible = false;
-    const alpha = s.alpha < 0 ? (L?.transparency ?? 255) : s.alpha;
+    const alpha = !opt.plot && !displayFlags.transparency ? 255 : s.alpha < 0 ? (L?.transparency ?? 255) : s.alpha;
     const o = i * 8;
     out[o] = ((rgb >> 16) & 255) / 255;
     out[o + 1] = ((rgb >> 8) & 255) / 255;

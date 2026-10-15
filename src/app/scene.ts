@@ -39,7 +39,7 @@ export class SpaceScene {
 
   /** 스타일 표(도면층 상태·배경·뷰포트 동결 기준). 같은 조건이면 캐시를 쓴다. */
   styleData(layers: LayerState[], key: string, dark: boolean, bg: number, lwDisplay: boolean, vpFrozen?: Set<number>, plot?: PlotStyle, ctb?: CtbTable): Float32Array {
-    const k = `${key}|${dark}|${bg}|${lwDisplay}|${vpFrozen ? [...vpFrozen].join(',') : ''}|${plot ?? ''}|${ctb?.name ?? ''}|${displayFlags.fieldBackground}`;
+    const k = `${key}|${dark}|${bg}|${lwDisplay}|${vpFrozen ? [...vpFrozen].join(',') : ''}|${plot ?? ''}|${ctb?.name ?? ''}|${displayFlags.fieldBackground}|${displayFlags.transparency}`;
     let d = this.styleCache.get(k);
     if (!d) {
       d = resolveStyles(this.styles, layers, { darkBackground: dark, backgroundRgb: bg, showLineweight: lwDisplay, defaultLineweight: 25, viewportFrozen: vpFrozen, plot: plot || ctb ? { style: plot ?? 'color', ctb } : undefined });

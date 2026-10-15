@@ -44,6 +44,7 @@ import { currentProps } from './draw';
 import { constraintEditHook } from './constraints-hook';
 import { arrayAssociativity, createAssocArray, setArrayAssociativity } from './assocarray';
 import { arrayGripEdit } from './assocarray-grips';
+import { stretchSelection } from './editcmds2-stretch';
 
 // ---------------------------------------------------------------------------
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
@@ -1533,28 +1534,11 @@ export function registerModifyCommands(app: App): void {
     title: '신축',
     async run(ctx) {
       const st = app.active!;
-      ctx.print('걸침 윈도우 또는 걸침 폴리곤으로 신축할 객체 선택...');
-      const a = await ctx.getPoint('첫 번째 구석 지정:');
-      if (!('point' in a)) return;
-      const p = a.point;
-      const b = await ctx.getPoint('반대 구석 지정:', { base: p, rubber: (q) => [{ pts: [p.x, p.y, q.x, p.y, q.x, q.y, p.x, q.y], closed: true, dashed: true, fill: true }] });
-      if (!('point' in b)) return;
-      const q = b.point;
-      const rect: [number, number, number, number] = [Math.min(p.x, q.x), Math.min(p.y, q.y), Math.max(p.x, q.x), Math.max(p.y, q.y)];
-      const pk = app.picker();
-      const hs = pk ? unlockedOnly(app, pk.select(rect, true)) : [];
-      if (!hs.length) {
-        ctx.print('선택된 객체가 없습니다.');
-        return;
-      }
-      app.setSelection(hs);
-      const ents = hs.map((h) => st.doc.entityIndex.get(h)).filter((e): e is Entity => !!e);
-      const poly = [
-        { x: rect[0], y: rect[1] },
-        { x: rect[2], y: rect[1] },
-        { x: rect[2], y: rect[3] },
-        { x: rect[0], y: rect[3] },
-      ];
+      // 걸침 윈도우·걸침 폴리곤(CP) 선택과 신축 영역(src/app/editcmds2-stretch.ts)
+      const sel = await stretchSelection(app, ctx);
+      if (!sel) return;
+      const ents = sel.handles.map((h) => st.doc.entityIndex.get(h)).filter((e): e is Entity => !!e);
+      const poly = sel.poly;
       const ghostOf = (d: Pt): OverlayGeom[] => (ents.length <= 400 ? resultGeom(app, stretch(ents, poly, d, st.doc)) : []);
       const r = await ctx.getPoint('기준점 지정 또는 [변위(D)] <변위>:', { keywords: [{ key: 'D', label: '변위' }] });
       let d: Pt | null = null;
