@@ -125,9 +125,19 @@ AutoCAD는 Autodesk의 상표이며, 이 프로젝트는 Autodesk와 관계가 �
 
 ## 검색 및 링크 공유
 
-대표 주소는 `https://gyutae-kim.github.io/2dcad-viewer/`입니다. `index.html`에 검색 설명, canonical, Open Graph·Twitter, WebApplication·탐색경로 구조화 데이터를 둡니다. 앱 실행 전에도 기능 안내와 포트폴리오 링크를 읽을 수 있고, 실행 후에는 같은 안내를 시작 화면에서 제공합니다. 공유 이미지는 `public/og-opencad.jpg`(1200×630)입니다.
+대표 주소는 `https://gyutae-kim.github.io/2dcad-viewer/`입니다. `site/metadata.json`에서 제목·검색 설명·대표 주소·공유 이미지·작성자를 관리하고 `tools/site-metadata.mjs`가 canonical, Open Graph·Twitter, WebApplication·탐색경로 구조화 데이터를 함께 생성합니다. `index.html`의 `<!-- site-metadata -->`가 개발·배포 빌드에서 같은 메타데이터로 치환되므로 개별 태그에 제목이나 설명을 중복 작성하지 않습니다. 앱 실행 전에도 기능 안내와 포트폴리오 링크를 읽을 수 있고, 실행 후에는 같은 안내를 시작 화면에서 제공합니다. 공유 이미지는 `public/og-opencad.jpg`(1200×630)입니다.
 
-`public/sitemap.xml`은 이 뷰어 주소를 포함합니다. 호스트 전체의 `robots.txt`와 통합 사이트맵은 포트폴리오 저장소에서 관리합니다. 하위 프로젝트의 `robots.txt`로 호스트 수집 규칙을 바꿀 수는 없습니다. 새 공개 도구를 추가하면 포트폴리오의 `OPENCAD_TOOLS`에도 실제 주소를 등록합니다.
+`sitemap.xml`은 같은 생성 코드에서 만들며 이 뷰어 주소와 `lastmod`를 포함합니다. 개발 서버에서도 같은 주소로 제공합니다. 호스트 전체의 `robots.txt`와 통합 사이트맵은 포트폴리오 저장소에서 관리합니다. 하위 프로젝트의 `robots.txt`로 호스트 수집 규칙을 바꿀 수는 없습니다. 새 공개 도구를 추가하면 포트폴리오의 `OPENCAD_TOOLS`에도 실제 주소를 등록합니다.
+
+`site/content-history.json`에 실제 수정 시각과 콘텐츠 지문을 기록합니다. 본문·메타데이터·공유 이미지·실행 코드 또는 CSS가 바뀌면 아래 명령으로 실제 수정 시각을 UTC로 지정하세요. 예시 시각은 작업 시각으로 바꿉니다.
+
+```sh
+npm run update:content-dates -- --at 2026-10-16T00:00:00Z
+npm run test:seo
+npm run build
+```
+
+내용이 그대로면 재빌드해도 날짜를 유지합니다. 미래 날짜와 이전 수정일보다 이른 날짜는 거부하고, 콘텐츠 지문만 바뀌었는데 날짜 기록을 갱신하지 않으면 빌드가 실패합니다. 사이트맵 `lastmod`와 WebApplication `dateModified`는 이 기록 하나를 사용합니다. 기록 파일을 소스와 함께 커밋하고, 뷰어 배포 뒤 포트폴리오에서 `npm run sync:viewer-date`를 실행해 통합 사이트맵에도 반영합니다. CI에서도 메타데이터·날짜 테스트와 실제 빌드 검사를 수행합니다.
 
 상단 ‘← 포트폴리오’는 작업 중에도 표시되며, 시작 화면에는 OpenCAD 도구 목록과 포트폴리오 링크가 있습니다.
 

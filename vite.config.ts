@@ -2,6 +2,21 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
+import { renderMetadata, sitemapXml } from './tools/site-metadata.mjs';
+
+function siteMetadata(): Plugin {
+  return {
+    name: 'opencad-site-metadata',
+    transformIndexHtml: { order: 'pre', handler: (html) => html.replace('<!-- site-metadata -->', renderMetadata()) },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (!/^\/(?:2dcad-viewer\/)?sitemap\.xml(?:\?|$)/.test(req.url ?? '')) return next();
+        res.setHeader('Content-Type', 'application/xml'); res.end(sitemapXml());
+      });
+    },
+    generateBundle() { this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml() }); },
+  };
+}
 
 /**
  * pdf.js가 필요할 때 받아 가는 자료(표준 글꼴, CMap, 그림 해독 wasm, ICC)를 `pdfjs/` 아래로 낸다.
@@ -40,7 +55,7 @@ function pdfjsAssets(): Plugin {
 export default defineConfig({
   // GitHub Pages 프로젝트 사이트 경로(https://gyutae-kim.github.io/2dcad-viewer/)
   base: './',
-  plugins: [pdfjsAssets()],
+  plugins: [siteMetadata(), pdfjsAssets()],
   build: {
     target: 'es2022',
     sourcemap: true,
