@@ -42,6 +42,8 @@ import { form } from './ui/dom';
 import { dynGripEdit } from './dynblock';
 import { currentProps } from './draw';
 import { constraintEditHook } from './constraints-hook';
+import { arrayAssociativity, createAssocArray, setArrayAssociativity } from './assocarray';
+import { arrayGripEdit } from './assocarray-grips';
 
 // ---------------------------------------------------------------------------
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
@@ -1254,7 +1256,7 @@ export function registerModifyCommands(app: App): void {
       const ext = extentsOf(app, hs) ?? [0, 0, 1, 1];
       const w = Math.max(ext[2] - ext[0], 1e-6);
       const hgt = Math.max(ext[3] - ext[1], 1e-6);
-      ctx.print('유형 = 직사각형  연관 = 아니오');
+      ctx.print(`유형 = 직사각형  연관 = ${arrayAssociativity() ? '예' : '아니오'}`);
       const v = await form(
         '직사각형 배열',
         [
@@ -1263,10 +1265,11 @@ export function registerModifyCommands(app: App): void {
           { key: 'dy', label: '행 사이 간격', type: 'number', value: +(hgt * 1.5).toPrecision(6) },
           { key: 'dx', label: '열 사이 간격', type: 'number', value: +(w * 1.5).toPrecision(6) },
           { key: 'angle', label: '행 축 각도(도)', type: 'number', value: 0 },
+          { key: 'assoc', label: '연관', type: 'check', value: arrayAssociativity() },
         ],
         {
           ok: '배열',
-          note: '연관 배열이 아니라 각 항목을 따로 만듭니다.',
+          note: '연관을 끄면 연관 배열이 아니라 각 항목을 따로 만듭니다.',
           validate: (x) => (Number(x.rows) >= 1 && Number(x.cols) >= 1 && Number(x.rows) * Number(x.cols) <= 100000 && Number(x.rows) * Number(x.cols) > 1 ? null : '행 × 열은 2에서 100000 사이여야 합니다.'),
         },
       );
@@ -1274,6 +1277,11 @@ export function registerModifyCommands(app: App): void {
       const rows = Math.round(Number(v.rows));
       const cols = Math.round(Number(v.cols));
       const a = (Number(v.angle) * Math.PI) / 180;
+      setArrayAssociativity(!!v.assoc);
+      if (v.assoc) {
+        createAssocArray(app, ctx, { kind: 'rect', handles: hs, rows, columns: cols, rowSpacing: Number(v.dy), columnSpacing: Number(v.dx), angle: a }, 'ARRAYRECT');
+        return;
+      }
       const ux = { x: Math.cos(a), y: Math.sin(a) };
       const uy = { x: -Math.sin(a), y: Math.cos(a) };
       const results: EditResult[] = [];
@@ -1298,7 +1306,7 @@ export function registerModifyCommands(app: App): void {
       const st = app.active!;
       const hs = await selectEditable(app, ctx);
       if (!hs.length) return;
-      ctx.print('유형 = 원형  연관 = 아니오');
+      ctx.print(`유형 = 원형  연관 = ${arrayAssociativity() ? '예' : '아니오'}`);
       const c = await ctx.getPoint('배열의 중심점 지정:');
       if (!('point' in c)) return;
       const center = c.point;
@@ -1308,6 +1316,7 @@ export function registerModifyCommands(app: App): void {
           { key: 'n', label: '항목 수', type: 'number', value: 6 },
           { key: 'fill', label: '채울 각도(도, 음수는 시계 방향)', type: 'number', value: 360 },
           { key: 'rotate', label: '배열할 때 항목 회전', type: 'check', value: true },
+          { key: 'assoc', label: '연관', type: 'check', value: arrayAssociativity() },
         ],
         { ok: '배열', validate: (x) => (Number(x.n) >= 2 && Number(x.n) <= 100000 && Number(x.fill) !== 0 ? null : '항목 수는 2 이상, 채울 각도는 0이 아니어야 합니다.') },
       );
@@ -1317,6 +1326,11 @@ export function registerModifyCommands(app: App): void {
       const full = Math.abs(Math.abs(fill) - 2 * Math.PI) < 1e-9;
       const step = full ? fill / n : fill / (n - 1);
       const rot = !!v.rotate;
+      setArrayAssociativity(!!v.assoc);
+      if (v.assoc) {
+        createAssocArray(app, ctx, { kind: 'polar', handles: hs, center, items: n, fill, rotate: rot }, 'ARRAYPOLAR');
+        return;
+      }
       // 회전하지 않을 때는 선택 범위의 중심을 기준으로 옮긴다
       const ext = extentsOf(app, hs) ?? [center.x, center.y, center.x, center.y];
       const ref = { x: (ext[0] + ext[2]) / 2, y: (ext[1] + ext[3]) / 2 };
@@ -1568,6 +1582,12 @@ export function registerModifyCommands(app: App): void {
       const hot = app.hotGrip;
       app.hotGrip = null;
       if (!hot) return;
+      const arr = hot.items.find((it) => it.id.startsWith('arr:'));
+      if (arr) {
+        await arrayGripEdit(app, ctx, arr.handle, arr.id);
+        app.refreshSelectionOverlay();
+        return;
+      }
       const dyn = hot.items.find((it) => it.id.startsWith('dyn:'));
       if (dyn) {
         await dynGripEdit(app, ctx, dyn.handle, dyn.id);

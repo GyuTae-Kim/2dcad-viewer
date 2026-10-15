@@ -1,6 +1,6 @@
 /**
- * 경로 배열 ARRAYPATH(비연관): `객체 선택:` → `경로 곡선 선택:` → `그립을 선택하여 배열을 편집하거나 [...] <종료>:`.
- * 옵션: 연관(AS — 예를 골라도 분해된 객체로 만든다고 안내), 방법(M 등분할·길이 분할), 기준점(B, 키 점 K), 접선 방향(T, 일반 N),
+ * 경로 배열 ARRAYPATH: `객체 선택:` → `경로 곡선 선택:` → `그립을 선택하여 배열을 편집하거나 [...] <종료>:`.
+ * 옵션: 연관(AS — 예면 연관 배열(src/app/assocarray), 기본은 ARRAYASSOCIATIVITY), 방법(M 등분할·길이 분할), 기준점(B, 키 점 K), 접선 방향(T, 일반 N),
  * 항목(I — 사이 거리·개수·전체 경로 채우기), 행(R — 수·간격·전체), 레벨(L — Z 방향 간격), 항목 정렬(A), Z 방향(Z), 종료(X).
  * 경로: 선·폴리선(2D·3D)·호·원·타원·스플라인·나선. 열린 경로는 고른 점에 가까운 끝에서 시작한다.
  * 프롬프트는 AutoCAD 2026 한국어판을 따른다. 자리 계산은 src/edit/arraypath.
@@ -15,6 +15,7 @@ import { MAX_ARRAY_ITEMS, type PathArraySpec, type PathMethod, defaultPathSpacin
 import type { App, CommandContext, Keyword } from './app';
 import { unlockedOnly } from './layers';
 import { Ghost, commitResults } from './modify';
+import { arrayAssociativity, createAssocArray, setArrayAssociativity } from './assocarray';
 import type { OverlayGeom, Pt } from './view';
 
 /** 이 모듈의 프롬프트에 쓰는 옵션 */
@@ -116,8 +117,10 @@ export function registerArrayPathCommand(app: App): void {
       const doc = st.doc;
       const hs = unlockedOnly(app, await ctx.getSelection()).filter((h) => doc.entityIndex.has(h));
       if (!hs.length) return;
-      ctx.print('유형 = 경로  연관 = 아니오');
+      let assoc = arrayAssociativity();
+      ctx.print(`유형 = 경로  연관 = ${assoc ? '예' : '아니오'}`);
       let path: Path | null = null;
+      let pathHandle = '';
       while (!path) {
         const r = await ctx.getEntity('경로 곡선 선택:');
         if (!('handle' in r)) return;
@@ -128,6 +131,7 @@ export function registerArrayPathCommand(app: App): void {
           continue;
         }
         path = orientPath(p, r.point);
+        pathHandle = r.handle;
       }
       app.clearSelection();
       const P0 = path;
@@ -180,8 +184,8 @@ export function registerArrayPathCommand(app: App): void {
         if (!('keyword' in r)) continue;
         const k = r.keyword;
         if (k === 'AS') {
-          const yes = await yesNo(ctx, '연관 배열 작성', false);
-          if (yes) ctx.print('이 웹 버전은 연관 배열을 만들지 않습니다. 배열 항목은 분해된(따로 떨어진) 객체로 만듭니다.');
+          assoc = await yesNo(ctx, '연관 배열 작성', assoc);
+          setArrayAssociativity(assoc);
         } else if (k === 'M') {
           const m = await ctx.getPoint(`경로 방법 입력 [등분할(D)/길이 분할(M)] <${spec.method === 'divide' ? '등분할' : '길이 분할'}>:`, {
             keywords: [
@@ -269,6 +273,10 @@ export function registerArrayPathCommand(app: App): void {
           // 평면 경로에서는 결과가 같다(값만 지닌다)
           zDir = await yesNo(ctx, '항목의 Z 방향을 유지하시겠습니까?', zDir);
         }
+      }
+      if (assoc) {
+        createAssocArray(app, ctx, { kind: 'path', handles: hs, pathHandle, path: P0, spec, levels, levelSpacing, zDir }, 'ARRAYPATH');
+        return;
       }
       const items = pathArrayItems(P0, spec);
       const n = items.length * Math.max(1, levels);

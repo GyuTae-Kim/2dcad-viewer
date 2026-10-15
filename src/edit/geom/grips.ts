@@ -16,6 +16,7 @@ import type {
   EllipseEntity,
   Entity,
   HatchEntity,
+  InsertEntity,
   LwPolylineEntity,
   MTextEntity,
   PolylineEntity,
@@ -46,6 +47,9 @@ export interface GripOptions {
 }
 
 const g = (id: string, point: Vec2, kind: GripPoint['kind']): GripPoint => ({ id, point: { x: point.x, y: point.y }, kind });
+
+/** 블록 참조에 다른 모듈이 더하는 그립(연관 배열 등 — id는 그 모듈의 접두어, 그 그립의 편집도 그 모듈이 한다) */
+export const insertGripProviders: ((e: InsertEntity, doc: CadDocument) => GripPoint[])[] = [];
 
 // ---------------------------------------------------------------------------
 // 그립 목록
@@ -126,6 +130,7 @@ export function gripPoints(e: Entity, doc: CadDocument): GripPoint[] {
       e.attribs.forEach((a, i) => {
         if (!(a.attFlags & 1) && !a.lockPosition) out.push(g('a' + i, insertionPoint(a)!, 'text'));
       });
+      for (const f of insertGripProviders) out.push(...f(e, doc));
       return out;
     }
     case 'DIMENSION':

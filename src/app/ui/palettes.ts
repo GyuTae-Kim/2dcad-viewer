@@ -12,6 +12,7 @@ import { pickColor } from './colorpick';
 import { h, showMenu } from './dom';
 import { icon } from './icons';
 import { dynPaletteGroup } from '../dynblock';
+import { arrayPaletteGroup } from '../assocarray-ui';
 import { annoCurrentRow, annoPaletteGroup } from '../annoscale-palette';
 
 type Tab = 'props' | 'layers' | 'dims' | 'find';
@@ -146,6 +147,8 @@ export class Palette {
       if (sel.length === 1 && t === 'INSERT') {
         const dyn = dynPaletteGroup(app, sel[0]!.handle);
         if (dyn) this.body.append(dyn);
+        const arr = arrayPaletteGroup(app, sel[0]!.handle);
+        if (arr) this.body.append(arr);
         const af = attribFields(sel[0] as InsertEntity);
         if (af.length) this.editGroup('속성', af, sel, handles);
       }

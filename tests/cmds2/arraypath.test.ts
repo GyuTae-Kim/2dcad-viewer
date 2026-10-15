@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathLength } from '../../src/edit/geom/curve';
 import { affApply } from '../../src/edit/geom/math';
 import { defaultPathSpacing, isIdentity, maxPathItems, orientPath, pathArrayItems, pathStations, type PathArraySpec } from '../../src/edit/arraypath';
 import { registerArrayPathCommand } from '../../src/app/arraypath';
+import { setArrayAssociativity } from '../../src/app/assocarray';
 import { arc, circle, line, lw } from '../edit/make';
 import { makeHarness, modelEntities } from './harness';
 
@@ -113,6 +114,10 @@ describe('경로 배열 항목 자리', () => {
 });
 
 describe('ARRAYPATH 명령', () => {
+  // 비연관 배열(ARRAYASSOCIATIVITY 0)의 흐름. 연관 배열은 tests/assocarray
+  beforeEach(() => setArrayAssociativity(false));
+  afterEach(() => setArrayAssociativity(true));
+
   it('길이 분할 기본값과 항목(I)·방법(M)·행(R)·연관(AS) 옵션', async () => {
     const h = makeHarness();
     registerArrayPathCommand(h.app);
@@ -122,7 +127,7 @@ describe('ARRAYPATH 명령', () => {
       { sel: [src.handle] },
       { pick: path.handle, at: [1, 0] },
       'AS',
-      'Y',
+      'N',
       'M',
       'D',
       'I',
@@ -133,7 +138,7 @@ describe('ARRAYPATH 명령', () => {
       '',
     ]);
     expect(h.printed).toContain('유형 = 경로  연관 = 아니오');
-    expect(h.printed.some((t) => t.includes('연관 배열을 만들지 않습니다'))).toBe(true);
+    expect(h.prompts).toContain('연관 배열 작성 [예(Y)/아니오(N)] <아니오>:');
     const lines = modelEntities(h.doc, 'LINE').filter((l) => l.handle !== path.handle);
     // 5 × 2행 = 10 항목(원본 포함)
     expect(lines.length).toBe(10);

@@ -308,7 +308,7 @@ export function registerTableCommands(app: App): void {
         return;
       }
       // 도면 비교 변수(COMPARECOLOR1 …)·XFADECTL·SETBYLAYERMODE·LAYERPMODE는 이 브라우저에 저장하고, 변수 이름이 곧 명령이다
-      if (compareVar(key.slice(1)) || key === '$XFADECTL' || key === '$SETBYLAYERMODE' || key === '$LAYERPMODE') {
+      if (compareVar(key.slice(1)) || key === '$XFADECTL' || key === '$SETBYLAYERMODE' || key === '$LAYERPMODE' || key === '$ARRAYASSOCIATIVITY') {
         await app.run(key.slice(1));
         return;
       }
