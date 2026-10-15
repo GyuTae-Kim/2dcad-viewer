@@ -699,7 +699,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
           { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
-        cols: [[{ cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' }]],
+        cols: [
+          [
+            { cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' },
+            { cmd: 'PLOTSTAMP', label: '플롯 스탬프', icon: 'settings', tip: '출력에 도면 이름·날짜 등을 찍기 (PLOTSTAMP)' },
+            { cmd: 'PLOTSTYLE', label: '플롯 스타일', icon: 'props', tip: '객체의 이름 있는 플롯 스타일 (PLOTSTYLE)' },
+          ],
+          [
+            { cmd: 'CONVERTCTB', label: 'CTB→STB', icon: 'paper', tip: '색상 종속 플롯 스타일 표를 이름 있는 표로 (CONVERTCTB)' },
+            { cmd: 'CONVERTPSTYLES', label: '스타일 모드 변환', icon: 'paper', tip: '도면을 색상 종속 ↔ 이름 있는 플롯 스타일로 (CONVERTPSTYLES)' },
+          ],
+        ],
       },
       {
         title: '내보내기',
@@ -712,6 +722,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'JPGOUT', label: 'JPEG', icon: 'exportPng', tip: '지금 화면을 JPEG로 저장' },
             { cmd: 'BMPOUT', label: 'BMP', icon: 'exportPng', tip: '지금 화면을 비트맵으로 저장' },
+            { cmd: 'WMFOUT', label: 'WMF', icon: 'exportSvg', tip: '고른 객체를 Windows 메타파일로 (WMFOUT)' },
           ],
         ],
       },
@@ -960,6 +971,8 @@ export class Shell implements UiHooks {
         { separator: true },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
         { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },
+        { label: '모두 닫기', icon: 'close', disabled: !app.active, run: () => void app.run('CLOSEALL') },
+        { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
         { label: '단축키·도움말', icon: 'help', kbd: 'F1', run: () => void app.run('HELP') },
         { label: '이 뷰어에 대하여', icon: 'info', run: () => void app.run('ABOUT') },
@@ -1372,6 +1385,7 @@ export class Shell implements UiHooks {
               ]
             : []),
           { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
+          { label: '배치 마법사…', run: () => void app.run('LAYOUTWIZARD') },
           { separator: true },
           { label: '페이지 설정…', run: () => void go('PAGESETUP') },
           { label: '플롯…', run: () => void go('PLOT') },

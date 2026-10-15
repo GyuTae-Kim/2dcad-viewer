@@ -19,7 +19,7 @@ const STYLE_SHEETS = ['', 'monochrome.ctb', 'Grayscale.ctb', 'acad.ctb', 'Screen
 const INCH_NAMES: Record<string, string> = { LETTER: 'Letter', LEGAL: 'Legal', TABLOID: 'ANSI_B', ANSIC: 'ANSI_C', ANSID: 'ANSI_D', ANSIE: 'ANSI_E' };
 
 /** AutoCAD식 용지 이름(가로면 긴 변이 먼저) */
-function mediaName(key: string, w: number, h: number): string {
+export function mediaName(key: string, w: number, h: number): string {
   if (/^A\d$/.test(key)) return `ISO_full_bleed_${key}_(${w.toFixed(2)}_x_${h.toFixed(2)}_MM)`;
   return `${INCH_NAMES[key] ?? key}_(${(w / 25.4).toFixed(2)}_x_${(h / 25.4).toFixed(2)}_Inches)`;
 }
@@ -39,7 +39,7 @@ function isLandscape(p: PlotSettings): boolean {
 }
 
 /** 새 배치의 기본 플롯 설정 */
-function defaultPlot(st: DocState): PlotSettings {
+export function defaultPlot(st: DocState): PlotSettings {
   const src = st.doc.layouts.find((l) => tableKey(l.blockName) !== MODEL_SPACE)?.plot;
   if (src) return structuredClone(src);
   const metric = Number(st.doc.header.get('$MEASUREMENT') ?? 1) === 1;
@@ -80,7 +80,7 @@ function layoutDict(st: DocState): DictionaryObject | null {
   return null;
 }
 
-function nextLayoutName(st: DocState): string {
+export function nextLayoutName(st: DocState): string {
   const names = new Set(st.doc.layouts.map((l) => l.name.toUpperCase()));
   const base = st.doc.layouts.some((l) => l.name.startsWith('배치')) ? '배치' : 'Layout';
   let n = 1;
@@ -96,7 +96,7 @@ function nextPaperBlock(st: DocState): string {
 }
 
 /** 배치를 만드는 작업들. entities가 없으면 전체 용지 뷰포트와 모형 범위를 보여 주는 뷰포트 하나 */
-function createLayoutOps(app: App, st: DocState, name: string, plot: PlotSettings, entities?: Entity[]): { ops: EditOp[]; layout: Layout } {
+export function createLayoutOps(app: App, st: DocState, name: string, plot: PlotSettings, entities?: Entity[]): { ops: EditOp[]; layout: Layout } {
   const s = st.session;
   const blockName = nextPaperBlock(st);
   const key = tableKey(blockName);

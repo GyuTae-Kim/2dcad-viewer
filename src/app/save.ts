@@ -44,6 +44,9 @@ export const SAVE_TYPES: { value: string; label: string; format: SaveFormat; ver
 
 const targets = new WeakMap<DocState, SaveTarget>();
 
+/** 저장한 뒤 알림(REVERT가 마지막으로 저장한 내용을 기억한다) */
+export const savedListeners = new Set<(st: DocState, data: Blob, name: string) => void>();
+
 /** 열린 파일과 같은 형식으로 저장할 수 있으면 그 설정 */
 export function sameFormat(st: DocState): SaveTarget | null {
   const d = st.doc;
@@ -92,6 +95,7 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
   } else download(blob, name);
   st.saveName = name;
   st.session.markSaved();
+  for (const f of savedListeners) f(st, blob, name);
   // 저장했으니 자동 저장본은 필요 없다
   forgetRecovery(st);
   targets.set(st, t);
@@ -147,18 +151,23 @@ function lastUnits(): 'metric' | 'imperial' {
   }
 }
 
+/** 문서 하나를 QSAVE처럼 저장한다(형식을 모르면 그 문서를 활성으로 하고 다른 이름으로 저장 상자). 저장했으면 true */
+export async function quickSave(app: App, ctx: CommandContext, st: DocState): Promise<boolean> {
+  const t = targets.get(st) ?? sameFormat(st);
+  if (!t) {
+    if (app.active !== st) app.activate(st);
+    await saveAs(app, ctx);
+    return !st.session.dirty;
+  }
+  return write(app, ctx, st, t, t.handle?.name ?? fileName(st, t));
+}
+
 export function registerSaveCommands(app: App): void {
   app.register({
     name: 'QSAVE',
     title: '저장',
     async run(ctx) {
-      const st = app.active!;
-      const t = targets.get(st) ?? sameFormat(st);
-      if (!t) {
-        await saveAs(app, ctx);
-        return;
-      }
-      await write(app, ctx, st, t, t.handle?.name ?? fileName(st, t));
+      await quickSave(app, ctx, app.active!);
     },
   });
   app.register({ name: 'SAVEAS', aliases: ['SAVE', 'DXFOUT'], title: '다른 이름으로 저장', run: (ctx) => saveAs(app, ctx) });
