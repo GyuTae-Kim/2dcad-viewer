@@ -3,6 +3,7 @@ import type { CadDocument } from '../core/model';
 import type { DisplayList, PackedBoxes } from '../render/displaylist';
 import type { LayerState, StyleSpec } from '../render/styles';
 import type { EditOp } from '../edit/session';
+import type { DocPart } from './doctransfer';
 
 export type ToWorker =
   | { type: 'init'; fontBase: string }
@@ -38,8 +39,10 @@ export interface SceneMessage {
 }
 
 export type FromWorker =
-  | { type: 'progress'; id: number; stage: 'read' | 'fonts' | 'build'; fraction: number }
-  | { type: 'document'; id: number; docId: number; doc: CadDocument; readMs: number }
+  | { type: 'progress'; id: number; stage: 'read' | 'fonts' | 'build' | 'document'; fraction: number }
+  /** 문서(장면 뒤에 온다). streamed가 있으면 doc은 그 블록들의 객체를 뺀 껍데기이고, 뒤따르는 docpart로 채운다([블록 열쇠, 객체 수]) */
+  | { type: 'document'; id: number; docId: number; doc: CadDocument; readMs: number; streamed: [string, number][] }
+  | { type: 'docpart'; id: number; part: DocPart }
   | { type: 'scene'; id: number; docId: number; space: string; scene: SceneMessage }
   | { type: 'saved'; id: number; data: ArrayBuffer; warnings: { code: string; message: string; count?: number }[]; ms: number }
   | { type: 'error'; id: number; code: string; message: string };

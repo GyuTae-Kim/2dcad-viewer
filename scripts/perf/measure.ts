@@ -2,10 +2,11 @@
  * 큰 도면 단계별 측정(개발 전용). 워커가 하는 일(읽기 → 글꼴 → 장면 만들기 → 메인으로 보내기)을 Node에서 따라 한다.
  *
  * 사용법(단계마다 깨끗한 최대 메모리를 보려면 파일마다 새 프로세스로):
- *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--hash] [--save dxf|dwg]
+ *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--no-old] [--each] [--hash] [--save dxf|dwg]
  *
  * 출력: 한 줄 JSON
- * - readMs·sceneMs·cloneDocMs·cloneSceneMs: 단계 시간
+ * - readMs·sceneMs·cloneSceneMs: 단계 시간
+ * - cloneDocCpu: 예전 방식(문서 통째 구조화 복제, --no-old면 생략), docSendCpu·docRecvCpu: 지금 방식(껍데기 + codec 묶음)의 워커 쪽·메인 쪽, docRecvWorstMs: 메인이 메시지 하나에 멈추는 가장 긴 시간
  * - heapAfterRead·heapAfterScene: GC 뒤 남은 JS 힙(MB) — 문서·장면이 실제로 차지하는 양
  * - peakRss: 프로세스 최대 상주 메모리(MB, 단계 누적 최대)
  * - sceneBuffers: 장면 표시 목록의 ArrayBuffer 합(MB, 힙 밖)
@@ -154,16 +155,61 @@ async function main(): Promise<void> {
     out.writeDxfMs = Math.round(performance.now() - t);
   }
 
-  // 2. 메인으로 문서 보내기(구조화 복제)
+  // 2. 메인으로 문서 보내기
   if (!noClone) {
-    t = performance.now();
+    // 예전 방식: 문서 통째 구조화 복제(비교용, --no-old면 건너뜀)
+    if (!argv.includes('--no-old')) {
+      t = performance.now();
+      c = cpuMs();
+      let copy: unknown = structuredClone(doc);
+      out.cloneDocMs = Math.round(performance.now() - t);
+      out.cloneDocCpu = Math.round(cpuMs() - c);
+      out.heapWithDocCopy = heapMB();
+      copy = null;
+      void copy;
+    }
+    // 지금: 껍데기 + 큰 블록 객체 묶음(codec). 워커 쪽(부호화 + 직렬화)과 메인 쪽(역직렬화 + 풀기)을 나눠 잰다
+    const { serialize, deserialize } = await import('node:v8');
+    const { sendDocument, DocAssembler } = await import('../../src/worker/doctransfer');
+    // postMessage 흉내: 형식 배열은 옮기므로(transfer) 직렬화하지 않고 그대로 넘기고, 나머지(문자열 표·모양·껍데기)만 직렬화
+    const msgs: { bytes: Buffer; enc?: import('../../src/worker/codec').Encoded }[] = [];
     c = cpuMs();
-    let copy: unknown = structuredClone(doc);
-    out.cloneDocMs = Math.round(performance.now() - t);
-    out.cloneDocCpu = Math.round(cpuMs() - c);
-    out.heapWithDocCopy = heapMB();
-    copy = null;
-    void copy;
+    t = performance.now();
+    sendDocument(
+      doc,
+      (d, streamed) => msgs.push({ bytes: serialize({ doc: d, streamed }) }),
+      (part) => msgs.push({ bytes: serialize({ ...part, enc: part.enc && { strs: part.enc.strs, shapes: part.enc.shapes } }), enc: part.enc }),
+    );
+    out.docSendMs = Math.round(performance.now() - t);
+    out.docSendCpu = Math.round(cpuMs() - c);
+    out.docParts = msgs.length - 1;
+    c = cpuMs();
+    t = performance.now();
+    let worst = 0;
+    const each: number[] = [];
+    let asm: InstanceType<typeof DocAssembler> | null = null;
+    let main: unknown = null;
+    for (const m of msgs) {
+      const t1 = performance.now();
+      const v = deserialize(m.bytes);
+      if (m.enc) v.enc = { ...m.enc, strs: v.enc.strs, shapes: v.enc.shapes };
+      if (!asm && !main) {
+        if (v.streamed.length) asm = new DocAssembler(v.doc, v.streamed);
+        else main = v.doc;
+      } else asm!.add(v);
+      worst = Math.max(worst, performance.now() - t1);
+      each.push(Math.round(performance.now() - t1));
+    }
+    if (argv.includes('--each')) out.docRecvEach = each;
+    msgs.length = 0;
+    out.docRecvMs = Math.round(performance.now() - t);
+    out.docRecvCpu = Math.round(cpuMs() - c);
+    // 메인이 한 번에 멈추는 가장 긴 시간(메시지 하나 처리)
+    out.docRecvWorstMs = Math.round(worst);
+    if (!argv.includes('--no-old')) out.heapWithDocParts = heapMB();
+    asm = null;
+    main = null;
+    void main;
     out.peakRssClone = peakRssMB();
   }
 

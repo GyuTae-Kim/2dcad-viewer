@@ -14,6 +14,7 @@ import { ShxLibrary } from '../text/shx';
 import { collectTextUsage } from '../text/collect';
 import type { FromWorker, SceneMessage, ToWorker } from './protocol';
 import { applyOps } from '../edit/session';
+import { sendDocument } from './doctransfer';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -58,6 +59,18 @@ function makeScene(
     ms: performance.now() - t0,
     annotative: s.annotative ?? 0,
   };
+}
+
+/**
+ * 문서를 메인으로 보낸다(장면 뒤에 — 장면이 먼저 보이게). 큰 블록의 객체는 묶음으로 부호화해 따로 보낸다(doctransfer).
+ */
+function postDocument(id: number, docId: number, doc: CadDocument, readMs: number): void {
+  sendDocument(
+    doc,
+    (d, streamed) => post({ type: 'document', id, docId, doc: d, readMs, streamed }),
+    (part, transfer) => post({ type: 'docpart', id, part }, transfer),
+    (f) => post({ type: 'progress', id, stage: 'document', fraction: f }),
+  );
 }
 
 /** 장면 메시지에서 옮길 버퍼(표시 목록 + 묶은 상자) */
@@ -106,10 +119,10 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
             void e;
           }
         }
-        post({ type: 'document', id: msg.id, docId, doc, readMs });
         post({ type: 'progress', id: msg.id, stage: 'build', fraction: 0 });
         const scene = makeScene(doc, '*Model_Space', undefined, undefined, undefined, (f) => post({ type: 'progress', id: msg.id, stage: 'build', fraction: f }));
         post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
+        postDocument(msg.id, docId, doc, readMs);
         break;
       }
       case 'edit': {
@@ -137,9 +150,9 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
             /* 대체 글꼴로 그린다 */
           }
         }
-        post({ type: 'document', id: msg.id, docId, doc, readMs: 0 });
         const scene = makeScene(doc, '*Model_Space');
         post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
+        postDocument(msg.id, docId, doc, 0);
         break;
       }
       case 'save': {
