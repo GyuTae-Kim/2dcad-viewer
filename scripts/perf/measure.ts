@@ -6,6 +6,7 @@
  *
  * 출력: 한 줄 JSON
  * - readMs·sceneMs·cloneSceneMs: 단계 시간
+ * - drawsFullBefore·drawsFullAfter: 전체 보기 선·채우기 그리기 호출 수(묶음마다 → 묶음 무리)
  * - cloneDocCpu: 예전 방식(문서 통째 구조화 복제, --no-old면 생략), docSendCpu·docRecvCpu: 지금 방식(껍데기 + codec 묶음)의 워커 쪽·메인 쪽, docRecvWorstMs: 메인이 메시지 하나에 멈추는 가장 긴 시간
  * - heapAfterRead·heapAfterScene: GC 뒤 남은 JS 힙(MB) — 문서·장면이 실제로 차지하는 양
  * - peakRss: 프로세스 최대 상주 메모리(MB, 단계 누적 최대)
@@ -241,6 +242,33 @@ async function main(): Promise<void> {
     const dl = s.list;
     const packedList = (dl as { packed?: unknown }).packed;
     out.chunks = dl.chunks.length;
+    // 전체 보기 그리기 호출(선·채우기): 묶음마다 vs 묶음 무리(chunkgroups)
+    {
+      const { planChunkGroups } = await import('../../src/render/chunkgroups');
+      const kinds = (c: { segCount: number; triCount: number; tsegCount: number; ttriCount: number }) => +!!c.segCount + +!!c.triCount + +!!c.tsegCount + +!!c.ttriCount;
+      out.drawsFullBefore = dl.chunks.reduce((a, c) => a + kinds(c), 0);
+      const plan = planChunkGroups(dl.chunks);
+      if (plan) {
+        let d = 0;
+        for (const g of plan.groups) {
+          const sum = { segCount: 0, triCount: 0, tsegCount: 0, ttriCount: 0 };
+          for (const m of g.members) {
+            const c = dl.chunks[m]!;
+            sum.segCount += c.segCount;
+            sum.triCount += c.triCount;
+            sum.tsegCount += c.tsegCount;
+            sum.ttriCount += c.ttriCount;
+          }
+          d += kinds(sum);
+        }
+        dl.chunks.forEach((c, i) => {
+          if (plan.groupOf[i]! < 0) d += kinds(c);
+        });
+        out.groups = plan.groups.length;
+        out.groupSize = plan.size;
+        out.drawsFullAfter = d;
+      }
+    }
     out.segs = dl.chunks.reduce((a, c) => a + c.segCount + c.tsegCount, 0);
     out.tris = dl.chunks.reduce((a, c) => a + c.triCount + c.ttriCount, 0);
     out.glyphInstances = dl.glyphs.instanceCount;
