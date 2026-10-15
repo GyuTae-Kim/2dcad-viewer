@@ -56,6 +56,15 @@ button {
   width: 100vw;
 }
 
+/* 접힌 리본(display:none) 때문에 뒤쪽 요소가 앞 행으로 당겨지지 않게 한다. */
+#app > .titlebar { grid-row: 1; }
+#app > .ribbon-tabs { grid-row: 2; }
+#app > .ribbon { grid-row: 3; }
+#app > .filetabs { grid-row: 4; }
+#app > .workspace { grid-row: 5; }
+#app > .layouttabs { grid-row: 6; }
+#app > .statusbar { grid-row: 7; }
+
 /* 제목 막대 */
 .titlebar {
   display: flex;
@@ -128,6 +137,21 @@ button {
 .title-right {
   display: flex;
   gap: 2px;
+}
+
+.portfolio-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 4px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.portfolio-link:hover { background: var(--bg-hover); }
+.portfolio-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 480px) {
+  .qat { display: none; }
 }
 
 /* 리본 */
@@ -700,6 +724,14 @@ table.grid tr.clickable {
   color: #ffcf6b;
 }
 
+.viewer-guide { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-soft); font-size: 13px; line-height: 1.7; }
+.viewer-guide h2 { margin: 0 0 8px; font-size: 17px; }
+.viewer-guide p { margin: 8px 0; color: var(--text-dim); }
+.viewer-guide details { padding: 11px 0; border-bottom: 1px solid var(--border-soft); }
+.viewer-guide summary { cursor: pointer; font-weight: 600; }
+.viewer-guide a { color: #8cc5ff; text-underline-offset: 3px; }
+.viewer-guide summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* 시작 화면 */
 .start {
   position: absolute;
@@ -853,6 +885,11 @@ table.grid tr.clickable {
   justify-content: center;
   background: rgba(20, 24, 30, 0.55);
   z-index: 8;
+}
+.busy.see-through {
+  align-items: flex-end;
+  padding-bottom: 56px;
+  background: transparent;
 }
 .busy-box {
   width: 300px;

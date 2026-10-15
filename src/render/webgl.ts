@@ -5,8 +5,9 @@
  * - 글리프는 모양을 한 번만 올리고 인스턴스(변환)로 그린다.
  * - 깊이 = 그리기 순서.
  */
-import type { DisplayList, EntityBox } from './displaylist';
+import type { ChunkData, DisplayList, EntityBox } from './displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from './displaylist';
+import { type ChunkGroup, type ChunkKind, drawWhole, elementBytes, mergeGroup, planChunkGroups, rebaseInto } from './chunkgroups';
 
 /** 화면 변환: px = A · (p − ref) + t  (A는 도면 단위 → 픽셀, y 아래로) */
 export interface ViewXf {
@@ -226,7 +227,8 @@ function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
   return p;
 }
 
-interface GpuChunk {
+/** 그릴 단위 하나(묶음 또는 묶음 무리): 원점 + 종류별 VAO·버퍼 */
+interface GpuDraw {
   ox: number;
   oy: number;
   minX: number;
@@ -241,15 +243,36 @@ interface GpuChunk {
   tsegCount: number;
   ttri: WebGLVertexArrayObject | null;
   ttriCount: number;
-  buffers: WebGLBuffer[];
   segBuf: WebGLBuffer | null;
   triBuf: WebGLBuffer | null;
   tsegBuf: WebGLBuffer | null;
   ttriBuf: WebGLBuffer | null;
 }
 
+interface GpuChunk extends GpuDraw {
+  /** 무리 번호(-1: 무리 없음 — 처음부터 올린다) */
+  group: number;
+  /** 무리에 든 묶음은 필요할 때(크게 확대해 무리 일부만 보일 때) 올리고, 오래 안 쓰면 내린다 */
+  lazy: { bufs: WebGLBuffer[]; vaos: WebGLVertexArrayObject[]; bytes: number; used: number } | null;
+}
+
+/** 묶음 무리(chunkgroups): 여러 작은 묶음을 무리 원점 기준으로 이어 붙인 버퍼 */
+interface GpuGroup extends GpuDraw {
+  info: ChunkGroup;
+  /** 종류별로 members[k] 묶음이 시작하는 요소 번호(편집 숨기기 패치용) */
+  at: Record<ChunkKind, Int32Array | null>;
+}
+
 export interface GpuScene {
   chunks: GpuChunk[];
+  /** 묶음 무리(묶음이 적으면 비어 있다) */
+  groups: GpuGroup[];
+  /** 무리 격자 칸 크기(도면 단위) */
+  groupSize: number;
+  /** 원본 묶음 자료(무리에 든 묶음을 나중에 올릴 때) */
+  src: ChunkData[];
+  /** 나중에 올린 묶음 바이트 합 */
+  lazyBytes: number;
   glyphFillVao: WebGLVertexArrayObject | null;
   glyphStrokeVao: WebGLVertexArrayObject | null;
   instBuf: WebGLBuffer | null;
@@ -281,6 +304,9 @@ interface GpuImage {
 }
 
 type Uniforms = Record<string, WebGLUniformLocation | null>;
+
+/** 장면마다 따로 올려 둘 무리 속 묶음 바이트 상한(넘으면 오래 안 쓴 것부터 내린다) */
+const LAZY_BUDGET = 160 << 20;
 
 export class GLRenderer {
   readonly gl: WebGL2RenderingContext;
@@ -437,6 +463,10 @@ export class GLRenderer {
     const gl = this.gl;
     const scene: GpuScene = {
       chunks: [],
+      groups: [],
+      groupSize: 0,
+      src: dl.chunks,
+      lazyBytes: 0,
       glyphFillVao: null,
       glyphStrokeVao: null,
       instBuf: null,
@@ -457,7 +487,8 @@ export class GLRenderer {
       scene.buffers.push(b);
       return b;
     };
-    for (const c of dl.chunks) {
+    const plan = planChunkGroups(dl.chunks);
+    dl.chunks.forEach((c, i) => {
       const g: GpuChunk = {
         ox: c.ox,
         oy: c.oy,
@@ -473,18 +504,64 @@ export class GLRenderer {
         tsegCount: c.tsegCount,
         ttri: null,
         ttriCount: c.ttriCount,
-        buffers: [],
         segBuf: null,
         triBuf: null,
         tsegBuf: null,
         ttriBuf: null,
+        group: plan ? plan.groupOf[i]! : -1,
+        lazy: null,
       };
-      if (c.segCount) g.seg = this.segVao((g.segBuf = mkBuf(c.segs)), 0);
-      if (c.triCount) g.tri = this.triVao((g.triBuf = mkBuf(c.tris)));
-      if (c.tsegCount) g.tseg = this.segVao((g.tsegBuf = mkBuf(c.tsegs)), 0);
-      if (c.ttriCount) g.ttri = this.triVao((g.ttriBuf = mkBuf(c.ttris)));
-      for (const v of [g.seg, g.tri, g.tseg, g.ttri]) if (v) scene.vaos.push(v);
+      if (g.group < 0) {
+        if (c.segCount) g.seg = this.segVao((g.segBuf = mkBuf(c.segs)), 0);
+        if (c.triCount) g.tri = this.triVao((g.triBuf = mkBuf(c.tris)));
+        if (c.tsegCount) g.tseg = this.segVao((g.tsegBuf = mkBuf(c.tsegs)), 0);
+        if (c.ttriCount) g.ttri = this.triVao((g.ttriBuf = mkBuf(c.ttris)));
+        for (const v of [g.seg, g.tri, g.tseg, g.ttri]) if (v) scene.vaos.push(v);
+      }
       scene.chunks.push(g);
+    });
+    if (plan) {
+      scene.groupSize = plan.size;
+      for (const info of plan.groups) {
+        const gg: GpuGroup = {
+          info,
+          ox: info.ox,
+          oy: info.oy,
+          minX: info.minX,
+          minY: info.minY,
+          maxX: info.maxX,
+          maxY: info.maxY,
+          seg: null,
+          segCount: 0,
+          tri: null,
+          triCount: 0,
+          tseg: null,
+          tsegCount: 0,
+          ttri: null,
+          ttriCount: 0,
+          segBuf: null,
+          triBuf: null,
+          tsegBuf: null,
+          ttriBuf: null,
+          at: { segs: null, tris: null, tsegs: null, ttris: null },
+        };
+        const put = (kind: ChunkKind) => {
+          const m = mergeGroup(dl.chunks, info, kind);
+          gg.at[kind] = m.at;
+          if (!m.count) return;
+          const buf = mkBuf(m.data);
+          if (kind === 'segs') [gg.segBuf, gg.seg, gg.segCount] = [buf, this.segVao(buf, 0), m.count];
+          else if (kind === 'tsegs') [gg.tsegBuf, gg.tseg, gg.tsegCount] = [buf, this.segVao(buf, 0), m.count];
+          else if (kind === 'tris') [gg.triBuf, gg.tri, gg.triCount] = [buf, this.triVao(buf), m.count];
+          else [gg.ttriBuf, gg.ttri, gg.ttriCount] = [buf, this.triVao(buf), m.count];
+        };
+        put('segs');
+        put('tris');
+        put('tsegs');
+        put('ttris');
+        for (const v of [gg.seg, gg.tri, gg.tseg, gg.ttri]) if (v) scene.vaos.push(v);
+        scene.groups.push(gg);
+      }
     }
     const gs = dl.glyphs;
     if (gs.instanceCount) {
@@ -623,18 +700,31 @@ export class GLRenderer {
       const c = src.chunks[box.chunk];
       const g = scene.chunks[box.chunk];
       if (c && g) {
-        const patch = (buf: ArrayBuffer, gbuf: WebGLBuffer | null, range: [number, number] | undefined, stride: number, styleOffset: number, verts: number) => {
-          if (!range || !range[1] || !gbuf) return;
+        const gr = g.group >= 0 ? scene.groups[g.group] : undefined;
+        const k = gr ? gr.info.members.indexOf(box.chunk) : -1;
+        const patch = (kind: ChunkKind, gbuf: WebGLBuffer | null, groupBuf: WebGLBuffer | null | undefined, range: [number, number] | undefined, stride: number, styleOffset: number, verts: number) => {
+          if (!range || !range[1]) return;
+          const buf = c[kind];
           const u = new Uint32Array(buf);
           const [start, n] = range;
           for (let i = start * verts; i < (start + n) * verts; i++) u[i * stride + styleOffset] = hidden;
-          gl.bindBuffer(gl.ARRAY_BUFFER, gbuf);
-          gl.bufferSubData(gl.ARRAY_BUFFER, start * verts * stride * 4, new Uint8Array(buf, start * verts * stride * 4, n * verts * stride * 4));
+          if (gbuf) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, gbuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, start * verts * stride * 4, new Uint8Array(buf, start * verts * stride * 4, n * verts * stride * 4));
+          }
+          // 무리 버퍼: 같은 요소를 무리 원점 기준으로 다시 만들어 그 자리에 쓴다
+          const at = gr?.at[kind];
+          if (gr && groupBuf && at && k >= 0) {
+            const part = new ArrayBuffer(n * elementBytes(kind));
+            rebaseInto(part, 0, c, kind, start, n, gr);
+            gl.bindBuffer(gl.ARRAY_BUFFER, groupBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, (at[k]! + start) * elementBytes(kind), part);
+          }
         };
-        patch(c.segs, g.segBuf, box.seg, SEG_STRIDE, 5, 1);
-        patch(c.tsegs, g.tsegBuf, box.tseg, SEG_STRIDE, 5, 1);
-        patch(c.tris, g.triBuf, box.tri, TRI_STRIDE, 3, 3);
-        patch(c.ttris, g.ttriBuf, box.ttri, TRI_STRIDE, 3, 3);
+        patch('segs', g.segBuf, gr?.segBuf, box.seg, SEG_STRIDE, 5, 1);
+        patch('tsegs', g.tsegBuf, gr?.tsegBuf, box.tseg, SEG_STRIDE, 5, 1);
+        patch('tris', g.triBuf, gr?.triBuf, box.tri, TRI_STRIDE, 3, 3);
+        patch('ttris', g.ttriBuf, gr?.ttriBuf, box.ttri, TRI_STRIDE, 3, 3);
       }
     }
     if (box.glyphs?.length && scene.instBuf) {
@@ -654,7 +744,63 @@ export class GLRenderer {
     for (const v of scene.vaos) gl.deleteVertexArray(v);
     scene.buffers.length = 0;
     scene.vaos.length = 0;
+    for (const c of scene.chunks) if (c.lazy) this.dropChunk(scene, c);
   }
+
+  /** 무리에 든 묶음을 따로 올린다(크게 확대해 무리 일부만 보일 때) */
+  private ensureChunk(scene: GpuScene, i: number): void {
+    const g = scene.chunks[i]!;
+    if (g.lazy) {
+      g.lazy.used = this.frame;
+      return;
+    }
+    const c = scene.src[i]!;
+    const gl = this.gl;
+    const lazy: NonNullable<GpuChunk['lazy']> = { bufs: [], vaos: [], bytes: 0, used: this.frame };
+    const mk = (data: ArrayBuffer) => {
+      const b = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      lazy.bufs.push(b);
+      lazy.bytes += data.byteLength;
+      return b;
+    };
+    if (c.segCount) g.seg = this.segVao((g.segBuf = mk(c.segs)), 0);
+    if (c.triCount) g.tri = this.triVao((g.triBuf = mk(c.tris)));
+    if (c.tsegCount) g.tseg = this.segVao((g.tsegBuf = mk(c.tsegs)), 0);
+    if (c.ttriCount) g.ttri = this.triVao((g.ttriBuf = mk(c.ttris)));
+    for (const v of [g.seg, g.tri, g.tseg, g.ttri]) if (v) lazy.vaos.push(v);
+    g.lazy = lazy;
+    scene.lazyBytes += lazy.bytes;
+  }
+
+  private dropChunk(scene: GpuScene, g: GpuChunk): void {
+    if (!g.lazy) return;
+    const gl = this.gl;
+    for (const b of g.lazy.bufs) gl.deleteBuffer(b);
+    for (const v of g.lazy.vaos) gl.deleteVertexArray(v);
+    scene.lazyBytes -= g.lazy.bytes;
+    g.lazy = null;
+    g.seg = g.tri = g.tseg = g.ttri = null;
+    g.segBuf = g.triBuf = g.tsegBuf = g.ttriBuf = null;
+  }
+
+  /** 따로 올린 묶음이 너무 많으면 이번 그림에 안 쓴 것부터(오래된 순) 내린다 */
+  private trimChunks(scene: GpuScene): void {
+    if (scene.lazyBytes <= LAZY_BUDGET) return;
+    const old = scene.chunks.filter((c) => c.lazy && c.lazy.used !== this.frame).sort((a, b) => a.lazy!.used - b.lazy!.used);
+    for (const c of old) {
+      if (scene.lazyBytes <= LAZY_BUDGET * 0.75) break;
+      this.dropChunk(scene, c);
+    }
+  }
+
+  /** 그림 번호(따로 올린 묶음을 언제 썼는지) */
+  private frame = 0;
+  /** 마지막 draw의 그리기 호출 수(선·채우기 묶음, 측정용) */
+  lastDraws = 0;
+  /** 묶음 무리를 통째로 그려도 되면 그렇게(false면 늘 원래 묶음 — 견주기용) */
+  mergeGroups = true;
 
   clear(rgb: [number, number, number]): void {
     const gl = this.gl;
@@ -739,8 +885,26 @@ export class GLRenderer {
     const ov = opt.override ?? [0, 0, 0, 0];
     const vis = opt.visible;
     const A = view.A;
-    const chunkVisible = (c: GpuChunk) => !vis || !(c.maxX < vis[0] || c.minX > vis[2] || c.maxY < vis[1] || c.minY > vis[3]);
-    const setM = (u: Uniforms, c: GpuChunk) => {
+    const seen = (c: GpuDraw) => !vis || !(c.maxX < vis[0] || c.minX > vis[2] || c.maxY < vis[1] || c.minY > vis[3]);
+    // 이번에 그릴 단위: 무리를 통째로 그리거나(전체 보기 등), 무리의 보이는 묶음만(크게 확대)
+    this.frame++;
+    const units: GpuDraw[] = [];
+    const pxPerUnit = Math.sqrt(Math.abs(A[0] * A[3] - A[1] * A[2]));
+    for (const g of scene.groups) {
+      if (!seen(g)) continue;
+      if (this.mergeGroups && drawWhole(g.info, scene.groupSize, pxPerUnit, vis)) units.push(g);
+      else
+        for (const m of g.info.members) {
+          const c = scene.chunks[m]!;
+          if (!seen(c)) continue;
+          this.ensureChunk(scene, m);
+          units.push(c);
+        }
+    }
+    for (const c of scene.chunks) if (c.group < 0 && seen(c)) units.push(c);
+    this.trimChunks(scene);
+    let draws = 0;
+    const setM = (u: Uniforms, c: GpuDraw) => {
       const dx = c.ox - view.refX;
       const dy = c.oy - view.refY;
       gl.uniform2f(u.u_m0!, A[0], A[1]);
@@ -754,13 +918,14 @@ export class GLRenderer {
       gl.uniform2f(u.u_size!, this.width, this.height);
       gl.uniform1i(u.u_styles!, 0);
       gl.uniform4f(u.u_override!, ov[0], ov[1], ov[2], ov[3]);
-      for (const c of scene.chunks) {
+      for (const c of units) {
         const vao = transparent ? c.ttri : c.tri;
         const n = transparent ? c.ttriCount : c.triCount;
-        if (!vao || !n || !chunkVisible(c)) continue;
+        if (!vao || !n) continue;
         setM(u, c);
         gl.bindVertexArray(vao);
         gl.drawArrays(gl.TRIANGLES, 0, n * 3);
+        draws++;
       }
       // 래스터 이미지(그리기 순서 깊이)
       if (!opt.override || opt.override[3] === 0) this.drawImages(scene, view, transparent, opt.bg ?? [1, 1, 1]);
@@ -771,13 +936,14 @@ export class GLRenderer {
       gl.uniform1i(u.u_styles!, 0);
       gl.uniform1f(u.u_lwScale!, opt.lwScale);
       gl.uniform4f(u.u_override!, ov[0], ov[1], ov[2], ov[3]);
-      for (const c of scene.chunks) {
+      for (const c of units) {
         const vao = transparent ? c.tseg : c.seg;
         const n = transparent ? c.tsegCount : c.segCount;
-        if (!vao || !n || !chunkVisible(c)) continue;
+        if (!vao || !n) continue;
         setM(u, c);
         gl.bindVertexArray(vao);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, n);
+        draws++;
       }
       // 글리프
       this.drawGlyphs(scene, view, opt.lwScale, ov, transparent, opt.minTextPx ?? 0.6);
@@ -790,6 +956,7 @@ export class GLRenderer {
     gl.depthMask(true);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(null);
+    this.lastDraws = draws;
     this.drawXlines(scene, view, opt.lwScale, ov);
   }
 

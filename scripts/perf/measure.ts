@@ -2,10 +2,13 @@
  * 큰 도면 단계별 측정(개발 전용). 워커가 하는 일(읽기 → 글꼴 → 장면 만들기 → 메인으로 보내기)을 Node에서 따라 한다.
  *
  * 사용법(단계마다 깨끗한 최대 메모리를 보려면 파일마다 새 프로세스로):
- *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--hash] [--save dxf|dwg]
+ *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--no-old] [--partial] [--each] [--hash] [--save dxf|dwg]
  *
  * 출력: 한 줄 JSON
- * - readMs·sceneMs·cloneDocMs·cloneSceneMs: 단계 시간
+ * - readMs·sceneMs·cloneSceneMs: 단계 시간
+ * - partials: --partial이면 점진 빌드 조각 수·첫 조각까지 ms·조각 바이트(MB, 1280×800 첫 화면에서 보이지 않을 것을 뺀 양)
+ * - drawsFullBefore·drawsFullAfter: 전체 보기 선·채우기 그리기 호출 수(묶음마다 → 묶음 무리)
+ * - cloneDocCpu: 예전 방식(문서 통째 구조화 복제, --no-old면 생략), docSendCpu·docRecvCpu: 지금 방식(껍데기 + codec 묶음)의 워커 쪽·메인 쪽, docRecvWorstMs: 메인이 메시지 하나에 멈추는 가장 긴 시간
  * - heapAfterRead·heapAfterScene: GC 뒤 남은 JS 힙(MB) — 문서·장면이 실제로 차지하는 양
  * - peakRss: 프로세스 최대 상주 메모리(MB, 단계 누적 최대)
  * - sceneBuffers: 장면 표시 목록의 ArrayBuffer 합(MB, 힙 밖)
@@ -154,16 +157,61 @@ async function main(): Promise<void> {
     out.writeDxfMs = Math.round(performance.now() - t);
   }
 
-  // 2. 메인으로 문서 보내기(구조화 복제)
+  // 2. 메인으로 문서 보내기
   if (!noClone) {
-    t = performance.now();
+    // 예전 방식: 문서 통째 구조화 복제(비교용, --no-old면 건너뜀)
+    if (!argv.includes('--no-old')) {
+      t = performance.now();
+      c = cpuMs();
+      let copy: unknown = structuredClone(doc);
+      out.cloneDocMs = Math.round(performance.now() - t);
+      out.cloneDocCpu = Math.round(cpuMs() - c);
+      out.heapWithDocCopy = heapMB();
+      copy = null;
+      void copy;
+    }
+    // 지금: 껍데기 + 큰 블록 객체 묶음(codec). 워커 쪽(부호화 + 직렬화)과 메인 쪽(역직렬화 + 풀기)을 나눠 잰다
+    const { serialize, deserialize } = await import('node:v8');
+    const { sendDocument, DocAssembler } = await import('../../src/worker/doctransfer');
+    // postMessage 흉내: 형식 배열은 옮기므로(transfer) 직렬화하지 않고 그대로 넘기고, 나머지(문자열 표·모양·껍데기)만 직렬화
+    const msgs: { bytes: Buffer; enc?: import('../../src/worker/codec').Encoded }[] = [];
     c = cpuMs();
-    let copy: unknown = structuredClone(doc);
-    out.cloneDocMs = Math.round(performance.now() - t);
-    out.cloneDocCpu = Math.round(cpuMs() - c);
-    out.heapWithDocCopy = heapMB();
-    copy = null;
-    void copy;
+    t = performance.now();
+    sendDocument(
+      doc,
+      (d, streamed) => msgs.push({ bytes: serialize({ doc: d, streamed }) }),
+      (part) => msgs.push({ bytes: serialize({ ...part, enc: part.enc && { strs: part.enc.strs, shapes: part.enc.shapes } }), enc: part.enc }),
+    );
+    out.docSendMs = Math.round(performance.now() - t);
+    out.docSendCpu = Math.round(cpuMs() - c);
+    out.docParts = msgs.length - 1;
+    c = cpuMs();
+    t = performance.now();
+    let worst = 0;
+    const each: number[] = [];
+    let asm: InstanceType<typeof DocAssembler> | null = null;
+    let main: unknown = null;
+    for (const m of msgs) {
+      const t1 = performance.now();
+      const v = deserialize(m.bytes);
+      if (m.enc) v.enc = { ...m.enc, strs: v.enc.strs, shapes: v.enc.shapes };
+      if (!asm && !main) {
+        if (v.streamed.length) asm = new DocAssembler(v.doc, v.streamed);
+        else main = v.doc;
+      } else asm!.add(v);
+      worst = Math.max(worst, performance.now() - t1);
+      each.push(Math.round(performance.now() - t1));
+    }
+    if (argv.includes('--each')) out.docRecvEach = each;
+    msgs.length = 0;
+    out.docRecvMs = Math.round(performance.now() - t);
+    out.docRecvCpu = Math.round(cpuMs() - c);
+    // 메인이 한 번에 멈추는 가장 긴 시간(메시지 하나 처리)
+    out.docRecvWorstMs = Math.round(worst);
+    if (!argv.includes('--no-old')) out.heapWithDocParts = heapMB();
+    asm = null;
+    main = null;
+    void main;
     out.peakRssClone = peakRssMB();
   }
 
@@ -185,7 +233,29 @@ async function main(): Promise<void> {
     c = cpuMs();
     g = gcMark();
     // 워커처럼 상자를 형식 배열로 만든다(있으면). 지문·전송 흉내는 아래에서 푼다
-    const s = buildSpace(doc, '*Model_Space', { text, packBoxes: true } as Parameters<typeof buildSpace>[2]);
+    // --partial: 워커처럼 점진 빌드 조각을 만든다(1280×800 화면의 첫 화면 기준, 조각 수·첫 조각까지 시간·조각 바이트)
+    const parts = { n: 0, firstMs: 0, MB: 0 };
+    const tb = performance.now();
+    let partialView: { origin: [number, number]; rect?: [number, number, number, number]; pxPerUnit?: number } | undefined;
+    if (argv.includes('--partial')) {
+      const { planPreview } = await import('../../src/render/preview');
+      const plan = planPreview(doc, '*Model_Space', 1280 / 800);
+      partialView = { origin: [0, 0] };
+      if (plan) {
+        const [x0, y0, x1, y1] = plan.visible;
+        const w = x1 - x0;
+        const h = y1 - y0;
+        partialView = { origin: [(x0 + x1) / 2, (y0 + y1) / 2], rect: [x0 - w / 2, y0 - h / 2, x1 + w / 2, y1 + h / 2], pxPerUnit: 1280 / w };
+      }
+    }
+    const onPartial = partialView
+      ? (p: { list: DisplayList }) => {
+          if (!parts.n++) parts.firstMs = Math.round(performance.now() - tb);
+          parts.MB += sceneBytes(p.list) / MB;
+        }
+      : undefined;
+    const s = buildSpace(doc, '*Model_Space', { text, packBoxes: true, onPartial, partialView } as Parameters<typeof buildSpace>[2]);
+    if (onPartial) out.partials = { ...parts, MB: Math.round(parts.MB) };
     out.sceneMs = Math.round(performance.now() - t);
     out.sceneCpu = Math.round(cpuMs() - c);
     // GC 기록은 비동기로 오므로 한 번 쉬었다가 센다
@@ -195,6 +265,33 @@ async function main(): Promise<void> {
     const dl = s.list;
     const packedList = (dl as { packed?: unknown }).packed;
     out.chunks = dl.chunks.length;
+    // 전체 보기 그리기 호출(선·채우기): 묶음마다 vs 묶음 무리(chunkgroups)
+    {
+      const { planChunkGroups } = await import('../../src/render/chunkgroups');
+      const kinds = (c: { segCount: number; triCount: number; tsegCount: number; ttriCount: number }) => +!!c.segCount + +!!c.triCount + +!!c.tsegCount + +!!c.ttriCount;
+      out.drawsFullBefore = dl.chunks.reduce((a, c) => a + kinds(c), 0);
+      const plan = planChunkGroups(dl.chunks);
+      if (plan) {
+        let d = 0;
+        for (const g of plan.groups) {
+          const sum = { segCount: 0, triCount: 0, tsegCount: 0, ttriCount: 0 };
+          for (const m of g.members) {
+            const c = dl.chunks[m]!;
+            sum.segCount += c.segCount;
+            sum.triCount += c.triCount;
+            sum.tsegCount += c.tsegCount;
+            sum.ttriCount += c.ttriCount;
+          }
+          d += kinds(sum);
+        }
+        dl.chunks.forEach((c, i) => {
+          if (plan.groupOf[i]! < 0) d += kinds(c);
+        });
+        out.groups = plan.groups.length;
+        out.groupSize = plan.size;
+        out.drawsFullAfter = d;
+      }
+    }
     out.segs = dl.chunks.reduce((a, c) => a + c.segCount + c.tsegCount, 0);
     out.tris = dl.chunks.reduce((a, c) => a + c.triCount + c.ttriCount, 0);
     out.glyphInstances = dl.glyphs.instanceCount;

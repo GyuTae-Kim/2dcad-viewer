@@ -6,14 +6,16 @@
 import type { CadDocument } from '../core/model';
 import { CadReadError } from '../core/errors';
 import { readCadFile } from '../io/index';
-import { buildSpace } from '../render/build';
+import { type PartialScene, type PartialView, SceneBuilder, buildSpace } from '../render/build';
+import { planPreview } from '../render/preview';
 import { packBoxes, transferables } from '../render/displaylist';
 import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
 import { ShxLibrary } from '../text/shx';
 import { collectTextUsage } from '../text/collect';
-import type { FromWorker, SceneMessage, ToWorker } from './protocol';
+import type { FromWorker, PreviewView, SceneMessage, ToWorker } from './protocol';
 import { applyOps } from '../edit/session';
+import { sendDocument } from './doctransfer';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -41,9 +43,22 @@ function makeScene(
   docId?: number,
   anno?: { annoScale?: string | null; annoAllVisible?: boolean },
   onProgress?: (fraction: number) => void,
+  partial?: { view: PartialView; post: (part: PartialScene) => void },
 ): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined, annoScale: anno?.annoScale, annoAllVisible: anno?.annoAllVisible, onProgress, packBoxes: true });
+  const s = buildSpace(doc, space, {
+    text,
+    images: imageKeys,
+    pdfPages,
+    ltFactor,
+    hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined,
+    annoScale: anno?.annoScale,
+    annoAllVisible: anno?.annoAllVisible,
+    onProgress,
+    packBoxes: true,
+    onPartial: partial?.post,
+    partialView: partial?.view,
+  });
   // 객체 상자는 형식 배열로 만들어 옮긴다(상자 객체를 만들지 않는다 — 메인에서 engine.ts가 푼다)
   const boxes = s.list.packed ?? packBoxes(s.list.entities);
   s.list.packed = undefined;
@@ -58,6 +73,18 @@ function makeScene(
     ms: performance.now() - t0,
     annotative: s.annotative ?? 0,
   };
+}
+
+/**
+ * 문서를 메인으로 보낸다(장면 뒤에 — 장면이 먼저 보이게). 큰 블록의 객체는 묶음으로 부호화해 따로 보낸다(doctransfer).
+ */
+function postDocument(id: number, docId: number, doc: CadDocument, readMs: number): void {
+  sendDocument(
+    doc,
+    (d, streamed) => post({ type: 'document', id, docId, doc: d, readMs, streamed }),
+    (part, transfer) => post({ type: 'docpart', id, part }, transfer),
+    (f) => post({ type: 'progress', id, stage: 'document', fraction: f }),
+  );
 }
 
 /** 장면 메시지에서 옮길 버퍼(표시 목록 + 묶은 상자) */
@@ -106,10 +133,33 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
             void e;
           }
         }
-        post({ type: 'document', id: msg.id, docId, doc, readMs });
         post({ type: 'progress', id: msg.id, stage: 'build', fraction: 0 });
-        const scene = makeScene(doc, '*Model_Space', undefined, undefined, undefined, (f) => post({ type: 'progress', id: msg.id, stage: 'build', fraction: f }));
+        // 점진 빌드: 첫 화면에 보이는 객체를 먼저(도면 일부만 보일 때), 이어서 만드는 동안 조각을 보낸다
+        const id = msg.id;
+        // view가 없으면(비교·외부 참조처럼 화면에 바로 보이지 않는 열기) 조각을 만들지 않는다
+        const v = msg.view;
+        const aspect = v && v.height > 0 ? v.width / v.height : 0;
+        const plan = v ? planPreview(doc, '*Model_Space', aspect > 0.1 && aspect < 10 ? aspect : undefined) : null;
+        const view: PreviewView | null = plan ? { rect: plan.rect, margin: plan.margin } : null;
+        // 조각 원점은 첫 화면 가운데, 화면 밖(넉넉히)과 너무 작은 것은 조각에서 뺀다(미리 보기는 움직이지 않는다)
+        let pv: PartialView = { origin: [0, 0] };
+        if (plan && v) {
+          const [x0, y0, x1, y1] = plan.visible;
+          const w = x1 - x0;
+          const h = y1 - y0;
+          pv = { origin: [(x0 + x1) / 2, (y0 + y1) / 2], rect: [x0 - w * 0.5, y0 - h * 0.5, x1 + w * 0.5, y1 + h * 0.5], pxPerUnit: w > 0 ? v.width / w : 0 };
+        }
+        const postPartial = (part: PartialScene) => post({ type: 'partial', id, part, view }, transferables(part.list));
+        if (plan?.only) {
+          try {
+            postPartial(new SceneBuilder(doc, { text, images: imageKeys, pdfPages }).buildPreview('*Model_Space', plan.only, pv));
+          } catch {
+            /* 미리 보기는 건너뛴다 */
+          }
+        }
+        const scene = makeScene(doc, '*Model_Space', undefined, undefined, undefined, (f) => post({ type: 'progress', id, stage: 'build', fraction: f }), v ? { view: pv, post: postPartial } : undefined);
         post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
+        postDocument(msg.id, docId, doc, readMs);
         break;
       }
       case 'edit': {
@@ -137,9 +187,9 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
             /* 대체 글꼴로 그린다 */
           }
         }
-        post({ type: 'document', id: msg.id, docId, doc, readMs: 0 });
         const scene = makeScene(doc, '*Model_Space');
         post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
+        postDocument(msg.id, docId, doc, 0);
         break;
       }
       case 'save': {

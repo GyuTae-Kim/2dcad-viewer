@@ -52,8 +52,8 @@ import {
 } from '../geom/matrix';
 import { TAU, arcPoints, bulgePoints, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { type DashPattern, dashPolyline } from './linetype';
-import { DisplayListBuilder, type DisplayList, clipConvex } from './displaylist';
-import { ColorKind, type LayerState, STYLE_FLAG_FIELD, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
+import { DisplayListBuilder, type DisplayList, type SnapshotView, clipConvex } from './displaylist';
+import { ColorKind, type LayerState, type StyleSpec, STYLE_FLAG_FIELD, STYLE_FLAG_NO_PLOT, StyleTable, WidthKind, hiddenStyleSpec, layerStates, plotStyleNames } from './styles';
 import { HATCH_LINE_LIMIT, hatchLoops, patternSegments, triangulateLoops, userPattern } from './hatch';
 import { builtinArrow } from './arrows';
 import { boundaryEdges, contourSegments, openRing, stripOutline, textLineBoxes } from './fillmode';
@@ -89,6 +89,28 @@ export interface BuildOptions {
   onProgress?: (fraction: number) => void;
   /** 객체 상자를 형식 배열(list.packed)로만 만든다(워커 → 메인 전송용, list.entities는 빈 배열) */
   packBoxes?: boolean;
+  /**
+   * 점진 빌드: 만드는 동안 지금까지 마감한 객체의 그림을 미리 보기 조각으로 넘긴다(처음 약 0.25초, 그 뒤 약 1초마다, 끝에 한 번 더).
+   * 조각은 묶음 하나(좌표는 partialView.origin 기준)라 화면이 바로 그릴 수 있다. 최종 표시 목록은 넘기지 않을 때와 같다.
+   */
+  onPartial?: (part: PartialScene) => void;
+  /** 미리 보기 화면: 조각 좌표 원점(보통 첫 화면 가운데)과, 있으면 보이지 않을 것을 뺄 범위·배율 */
+  partialView?: PartialView;
+  /** 조각 사이 시간(ms, 시험용 — 기본은 처음 250, 그 뒤 1000) */
+  partialInterval?: number;
+}
+
+export interface PartialView extends SnapshotView {
+  origin: readonly [number, number];
+}
+
+/** 점진 빌드의 미리 보기 조각(화면에 먼저 그리는 그림) */
+export interface PartialScene {
+  /** 묶음 하나와 글리프(객체 상자 없음) */
+  list: DisplayList;
+  /** 지금까지의 스타일 표(조각마다 처음부터 — 뒤 조각일수록 길다) */
+  styles: StyleSpec[];
+  layers: LayerState[];
 }
 
 export interface SpaceScene {
@@ -832,6 +854,21 @@ export class SceneBuilder {
   }
 
   build(blockName: string): SpaceScene {
+    this.run(blockName, null);
+    const warnings = [...this.warn.entries()].map(([code, count]) => ({ code, count }));
+    return { list: this.out.finish(this.opt.packBoxes), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings, annotative: this.anno?.annotative ?? 0 };
+  }
+
+  /**
+   * 미리 보기(점진 빌드의 첫 화면): only가 고른 최상위 객체만 그려 조각 하나로 돌려준다. 깊이(그리기 순서)는 전체를 그릴 때와 같다.
+   */
+  buildPreview(blockName: string, only: (index: number, e: Entity) => boolean, view: PartialView): PartialScene {
+    this.run(blockName, only);
+    return { list: this.out.snapshot(view.origin[0], view.origin[1], view), styles: this.styles.specs.slice(), layers: this.layers };
+  }
+
+  /** 최상위 객체를 차례로 그린다(only가 있으면 고른 것만, 깊이는 전체 순서로) */
+  private run(blockName: string, only: ((index: number, e: Entity) => boolean) | null): void {
     this.out = new DisplayListBuilder((s) => this.styles.isTransparent(s, this.layers));
     const block = this.doc.blocks.get(tableKey(blockName));
     const hidden = this.opt.hidden;
@@ -856,12 +893,17 @@ export class SceneBuilder {
     };
     const progress = this.opt.onProgress;
     const step = progress ? Math.max(1, Math.floor(N / 50)) : 0;
+    const partial = only ? undefined : this.opt.onPartial;
+    const pv: PartialView = this.opt.partialView ?? { origin: [0, 0] };
+    const gap = this.opt.partialInterval;
+    let nextPartial = partial ? performance.now() + (gap ?? 250) : 0;
     for (let i = 0; i < N; i++) {
       const e = ents[i]!;
+      if (step && i % step === 0) progress!(i / N);
+      if (only && !only(i, e)) continue;
       const z1 = 1 - (i + 1) / (N + 2);
       const z0 = 1 - (i + 2) / (N + 2);
       const ctx: Ctx = { ...top, z0, z1 };
-      if (step && i % step === 0) progress!(i / N);
       this.out.setDepth(z1);
       try {
         this.entity(e, ctx);
@@ -870,9 +912,12 @@ export class SceneBuilder {
         void err;
       }
       this.out.endEntity(e.handle);
+      if (partial && (i & 255) === 255 && performance.now() >= nextPartial) {
+        partial({ list: this.out.snapshot(pv.origin[0], pv.origin[1], pv), styles: this.styles.specs.slice(), layers: this.layers });
+        nextPartial = performance.now() + (gap ?? 1000);
+      }
     }
-    const warnings = [...this.warn.entries()].map(([code, count]) => ({ code, count }));
-    return { list: this.out.finish(this.opt.packBoxes), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings, annotative: this.anno?.annotative ?? 0 };
+    if (partial) partial({ list: this.out.snapshot(pv.origin[0], pv.origin[1], pv), styles: this.styles.specs.slice(), layers: this.layers });
   }
 
   /**

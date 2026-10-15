@@ -836,8 +836,11 @@ export class Shell implements UiHooks {
   palette!: Palette;
   readonly recent = new RecentStore();
   private readonly workspace: HTMLDivElement;
+  private readonly guide: HTMLElement | null;
 
   constructor(root: HTMLElement) {
+    // Keep the same useful guide for static crawlers and the running start screen.
+    this.guide = root.querySelector<HTMLElement>('#viewer-guide');
     this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.lsp,.DXF,.DWG,.SCR,.LSP', multiple: true, hidden: true });
     this.title = h('div', { class: 'titlebar' });
     this.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist' });
@@ -854,7 +857,7 @@ export class Shell implements UiHooks {
     this.layoutTabs = h('div', { class: 'layouttabs' });
     this.coords = h('span', { class: 'coords' });
     this.status = h('div', { class: 'statusbar' });
-    root.append(this.title, this.ribbonTabs, this.ribbon, this.fileTabs, this.workspace, this.layoutTabs, this.status, this.fileInput);
+    root.replaceChildren(this.title, this.ribbonTabs, this.ribbon, this.fileTabs, this.workspace, this.layoutTabs, this.status, this.fileInput);
     this.fileInput.addEventListener('change', () => {
       const files = [...(this.fileInput.files ?? [])];
       this.fileInput.value = '';
@@ -962,6 +965,7 @@ export class Shell implements UiHooks {
     const right = h(
       'div',
       { class: 'title-right' },
+      h('a', { class: 'portfolio-link', href: 'https://gyutae-kim.github.io/', title: '김규태 포트폴리오로 돌아가기' }, '← 포트폴리오'),
       this.iconBtn('help', '도움말 (F1)', () => void app.run('HELP')),
       this.iconBtn('fullscreen', '전체 화면', () => void app.run('FULLSCREEN')),
     );
@@ -1455,11 +1459,17 @@ export class Shell implements UiHooks {
   setBusy(text: string | null, fraction = 0): void {
     if (!text) {
       this.busy.hidden = true;
+      this.busy.classList.remove('see-through');
       return;
     }
     this.busy.hidden = false;
     this.busyText.textContent = text;
     this.busyBar.style.width = `${Math.round(Math.max(0.03, Math.min(1, fraction)) * 100)}%`;
+  }
+
+  /** 진행 상자 뒤로 그림이 보이게(도면을 여는 동안의 미리 보기). 화면은 여전히 덮어 조작은 막는다 */
+  setBusySeeThrough(on: boolean): void {
+    this.busy.classList.toggle('see-through', on);
   }
 
   // -------------------------------------------------------------------------
@@ -1491,8 +1501,8 @@ export class Shell implements UiHooks {
       h(
         'div',
         { class: 'start-inner' },
-        h('h1', {}, 'OpenCAD 2D 뷰어'),
-        h('p', { class: 'lead' }, 'CAD 프로그램 없이 브라우저에서 DXF·DWG 도면을 열어 보고, 치수를 확인하고, 거리와 면적을 잽니다. 파일은 서버로 보내지 않고 이 컴퓨터 안에서만 읽습니다.'),
+        h('h1', {}, 'OpenCAD 무료 캐드 뷰어'),
+        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열고, 치수를 재고, 고쳐서 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
         h(
           'div',
           { class: 'start-grid' },
@@ -1512,10 +1522,11 @@ export class Shell implements UiHooks {
         ),
         h(
           'div',
-          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
+          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
         ),
       ),
     );
+    if (this.guide) this.start.querySelector('.start-inner')!.append(this.guide);
   }
 
   private async refreshRecent(): Promise<void> {

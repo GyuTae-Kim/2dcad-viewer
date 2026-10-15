@@ -3,10 +3,13 @@ import type { CadDocument } from '../core/model';
 import type { DisplayList, PackedBoxes } from '../render/displaylist';
 import type { LayerState, StyleSpec } from '../render/styles';
 import type { EditOp } from '../edit/session';
+import type { DocPart } from './doctransfer';
+import type { PartialScene } from '../render/build';
 
 export type ToWorker =
   | { type: 'init'; fontBase: string }
-  | { type: 'open'; id: number; name: string; data: ArrayBuffer }
+  /** view: 그림 영역 크기(CSS 픽셀) — 점진 빌드의 첫 화면을 정한다 */
+  | { type: 'open'; id: number; name: string; data: ArrayBuffer; view?: { width: number; height: number } }
   /** ltFactor: 선종류 배율(PSLTSCALE), annoScale·annoAllVisible: 주석 축척 표현(배치 뷰포트의 모형 장면) */
   | { type: 'build'; id: number; docId: number; space: string; ltFactor?: number; annoScale?: string | null; annoAllVisible?: boolean }
   /** 메인에서 적용한 편집을 워커 문서에도 적용한다(응답 없음) */
@@ -24,6 +27,11 @@ export type ToWorker =
 
 export type SaveFormat = 'dxf' | 'dwg';
 
+export interface PreviewView {
+  rect: [number, number, number, number];
+  margin: number;
+}
+
 export interface SceneMessage {
   list: DisplayList;
   /** 워커가 보낼 때 객체 상자(list.entities)를 형식 배열로 묶은 것. 메인(engine.ts)이 받자마자 list.entities로 푼다 */
@@ -38,8 +46,12 @@ export interface SceneMessage {
 }
 
 export type FromWorker =
-  | { type: 'progress'; id: number; stage: 'read' | 'fonts' | 'build'; fraction: number }
-  | { type: 'document'; id: number; docId: number; doc: CadDocument; readMs: number }
+  | { type: 'progress'; id: number; stage: 'read' | 'fonts' | 'build' | 'document'; fraction: number }
+  /** 문서(장면 뒤에 온다). streamed가 있으면 doc은 그 블록들의 객체를 뺀 껍데기이고, 뒤따르는 docpart로 채운다([블록 열쇠, 객체 수]) */
+  | { type: 'document'; id: number; docId: number; doc: CadDocument; readMs: number; streamed: [string, number][] }
+  | { type: 'docpart'; id: number; part: DocPart }
   | { type: 'scene'; id: number; docId: number; space: string; scene: SceneMessage }
+  /** 점진 빌드의 미리 보기 조각(모형 공간). view: 첫 화면(맞춰 보일 사각형과 여백), 대표점이 없으면 null */
+  | { type: 'partial'; id: number; part: PartialScene; view: PreviewView | null }
   | { type: 'saved'; id: number; data: ArrayBuffer; warnings: { code: string; message: string; count?: number }[]; ms: number }
   | { type: 'error'; id: number; code: string; message: string };

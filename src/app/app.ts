@@ -12,6 +12,7 @@ import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
 import { collectTextUsage } from '../text/collect';
 import { EngineClient, EngineError, type OpenResult } from './engine';
+import { LoadPreview } from './loadpreview';
 import { DocState } from './docstate';
 import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
@@ -120,6 +121,8 @@ export interface UiHooks {
   refreshPalette(): void;
   showStart(show: boolean): void;
   setBusy(text: string | null, fraction?: number): void;
+  /** 진행 상자 뒤로 그림이 보이게(도면을 여는 동안의 미리 보기) */
+  setBusySeeThrough?(on: boolean): void;
   setCoords(text: string): void;
   openPalette(tab: string): void;
 }
@@ -625,11 +628,31 @@ export class App {
   async openFile(name: string, data: ArrayBuffer): Promise<DocState | null> {
     const size = data.byteLength;
     this.ui.setBusy(`${name} 여는 중…`, 0);
+    // 점진 빌드: 장면을 만드는 동안 오는 조각을 먼저 그린다(문서·장면이 다 오면 탭을 연다)
+    const preview = new LoadPreview(this.view.renderer);
+    const showPreview = () => {
+      this.ui.showStart(false);
+      this.ui.setBusySeeThrough?.(true);
+      this.view.setLoadPreview(preview);
+    };
     try {
-      const res = await this.engine.open(name, data, (stage, f) => {
-        const label = stage === 'read' ? '도면 읽는 중' : stage === 'fonts' ? '글꼴 받는 중' : stage === 'build' || stage === 'document' ? '화면 그리는 중' : '처리 중';
-        this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.7 : stage === 'fonts' ? 0.75 : stage === 'build' ? 0.78 + f * 0.17 : 0.78);
-      });
+      const res = await this.engine.open(
+        name,
+        data,
+        (stage, f) => {
+          const label = stage === 'read' ? '도면 읽는 중' : stage === 'fonts' ? '글꼴 받는 중' : stage === 'build' ? '화면 그리는 중' : stage === 'scene' || stage === 'document' ? '도면 정보 받는 중' : '처리 중';
+          this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.6 : stage === 'fonts' ? 0.62 : stage === 'build' ? 0.64 + f * 0.26 : stage === 'document' ? 0.9 + f * 0.1 : 0.9);
+        },
+        (part, view) => {
+          const first = preview.empty;
+          preview.add(part, view);
+          if (first && !preview.empty) showPreview();
+          this.view.requestRender();
+        },
+        { width: this.view.width, height: this.view.height },
+      );
+      this.view.setLoadPreview(null);
+      preview.dispose();
       const st = this.addDocument(res, name, size);
       const w = st.warnings.filter((x) => x.code !== 'entity.not_drawn' || (x.count ?? 0) > 0);
       this.cmd.print(`${name}: ${res.doc.format.toUpperCase()} ${res.doc.version}, 객체 ${res.doc.entityIndex.size.toLocaleString()}개, 읽기 ${Math.round(res.readMs)}ms, 그리기 ${Math.round(res.model.ms)}ms`);
@@ -643,6 +666,9 @@ export class App {
       this.cmd.print(`${name}: ${msg}`, 'err');
       return null;
     } finally {
+      this.view.setLoadPreview(null);
+      preview.dispose();
+      this.ui.showStart(!this.active);
       this.ui.setBusy(null);
     }
   }
@@ -705,7 +731,8 @@ export class App {
     this.ui.refreshStatus();
     this.ui.refreshPalette();
     this.refreshSelectionOverlay();
-    document.title = st ? `${st.name} - OpenCAD 2D 뷰어` : 'OpenCAD 2D 뷰어';
+    document.title = st ? `${st.name} - OpenCAD 2D 뷰어`
+      : document.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.content ?? 'OpenCAD 2D 뷰어';
   }
 
   /** 문서 닫기(저장하지 않은 변경이 있으면 먼저 묻는다) */

@@ -1,8 +1,10 @@
 /** 엔진 워커 클라이언트 */
 import type { CadDocument } from '../core/model';
-import type { FromWorker, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
+import type { FromWorker, PreviewView, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
+import type { PartialScene } from '../render/build';
 import type { EditOp } from '../edit/session';
 import { unpackBoxes } from '../render/displaylist';
+import { DocAssembler } from '../worker/doctransfer';
 
 export interface OpenResult {
   docId: number;
@@ -30,7 +32,14 @@ type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
   onProgress?: (stage: string, f: number) => void;
+  /** 점진 빌드의 미리 보기 조각 */
+  onPartial?: (part: PartialScene, view: PreviewView | null) => void;
+  /** 열기·받기: 문서(껍데기면 assembler가 묶음을 붙인다)와 장면이 모두 오면 끝난다 */
   doc?: { docId: number; doc: CadDocument; readMs: number };
+  assembler?: DocAssembler;
+  scene?: SceneMessage;
+  /** 장면과 문서를 함께 기다리는 요청(open·adopt) */
+  wantsDoc?: boolean;
 };
 
 export class EngineClient {
@@ -55,19 +64,38 @@ export class EngineClient {
       case 'progress':
         p.onProgress?.(m.stage, m.fraction);
         break;
+      case 'partial':
+        p.onPartial?.(m.part, m.view);
+        break;
       case 'document':
         p.doc = { docId: m.docId, doc: m.doc, readMs: m.readMs };
-        p.onProgress?.('document', 1);
+        if (m.streamed.length) p.assembler = new DocAssembler(m.doc, m.streamed);
+        this.settle(m.id, p);
+        break;
+      case 'docpart':
+        try {
+          p.assembler?.add(m.part);
+        } catch (e) {
+          this.pending.delete(m.id);
+          p.reject(e);
+          break;
+        }
+        this.settle(m.id, p);
         break;
       case 'scene':
-        this.pending.delete(m.id);
         // 워커가 묶어 보낸 객체 상자를 푼다(구조화 복제보다 훨씬 빠르다)
         if (m.scene.boxes) {
           m.scene.list.entities = unpackBoxes(m.scene.boxes);
           m.scene.boxes = undefined;
         }
-        if (p.doc) p.resolve({ ...p.doc, model: m.scene } satisfies OpenResult);
-        else p.resolve(m.scene);
+        if (p.wantsDoc) {
+          p.scene = m.scene;
+          p.onProgress?.('scene', 1);
+          this.settle(m.id, p);
+        } else {
+          this.pending.delete(m.id);
+          p.resolve(m.scene);
+        }
         break;
       case 'saved':
         this.pending.delete(m.id);
@@ -80,11 +108,22 @@ export class EngineClient {
     }
   }
 
-  open(name: string, data: ArrayBuffer, onProgress?: (stage: string, f: number) => void): Promise<OpenResult> {
+  /** 열기·받기: 장면과 (묶음까지 다 온) 문서가 모두 있으면 끝낸다 */
+  private settle(id: number, p: Pending): void {
+    if (!p.scene || !p.doc || (p.assembler && !p.assembler.complete)) return;
+    this.pending.delete(id);
+    p.resolve({ ...p.doc, model: p.scene } satisfies OpenResult);
+  }
+
+  /**
+   * 파일을 읽어 문서와 모형 장면을 받는다. onPartial: 장면을 만드는 동안 오는 미리 보기 조각(점진 빌드),
+   * view: 그림 영역 크기(첫 화면을 정한다)
+   */
+  open(name: string, data: ArrayBuffer, onProgress?: (stage: string, f: number) => void, onPartial?: (part: PartialScene, view: PreviewView | null) => void, view?: { width: number; height: number }): Promise<OpenResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress });
-      this.post({ type: 'open', id, name, data }, [data]);
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress, onPartial, wantsDoc: true });
+      this.post({ type: 'open', id, name, data, view }, [data]);
     });
   }
 
@@ -92,7 +131,7 @@ export class EngineClient {
   adopt(name: string, doc: CadDocument): Promise<OpenResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, wantsDoc: true });
       this.post({ type: 'adopt', id, name, doc });
     });
   }

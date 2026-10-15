@@ -8,6 +8,7 @@ import { MODEL_SPACE, type ViewportEntity, tableKey } from '../core/model';
 import earcut from 'earcut';
 import { GLRenderer, type GpuScene, type ViewXf } from '../render/webgl';
 import type { Camera, DocState, Tile } from './docstate';
+import type { LoadPreview } from './loadpreview';
 import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 import type { DisplayList } from '../render/displaylist';
 
@@ -495,10 +496,38 @@ export class CadView {
     return [c.cx - hw, c.cy - hh, c.cx + hw, c.cy + hh];
   }
 
+  /** 도면을 여는 동안의 미리 보기(점진 빌드). 있으면 문서 대신 이것을 그린다 */
+  private loadPreview: LoadPreview | null = null;
+
+  setLoadPreview(p: LoadPreview | null): void {
+    this.loadPreview = p;
+    this.requestRender();
+  }
+
+  private renderPreview(p: LoadPreview): void {
+    const r = this.renderer;
+    const bg = this.modelBg;
+    r.clear(rgbF(bg));
+    const a = { x: 0, y: 0, w: this.w, h: this.h };
+    const cam = p.camera(a.w, a.h);
+    if (!cam) return;
+    const xf = this.viewXf(cam, a);
+    const vis = this.visibleRect(cam, a);
+    // 조각들은 같은 깊이(그리기 순서)를 쓰므로 깊이를 지우지 않고 겹쳐 그린다
+    for (const d of p.drawables(isDark(bg), bg, this.lwDisplay)) {
+      r.setStyles(d.styles);
+      r.draw(d.gpu, xf, { lwScale: 3.78 * this.dpr, visible: vis, bg: rgbF(bg) });
+    }
+  }
+
   /** 지금 장면을 그린다(내보내기에서도 쓴다) */
   renderGL(): void {
     const r = this.renderer;
     const s = this.state;
+    if (this.loadPreview) {
+      this.renderPreview(this.loadPreview);
+      return;
+    }
     if (!s) {
       r.clear(rgbF(DARK_BG));
       return;
@@ -806,6 +835,7 @@ export class CadView {
     const d = this.dpr;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, this.ovCanvas.width, this.ovCanvas.height);
+    if (this.loadPreview) return;
     g.setTransform(d, 0, 0, d, 0, 0);
     const s = this.state;
     const o = this.overlay;
