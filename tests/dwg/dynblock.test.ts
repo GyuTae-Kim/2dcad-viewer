@@ -606,6 +606,8 @@ const HAND: [string, RawTag[]][] = [
     'BLOCKGRIPLOCATIONCOMPONENT',
     T([[100, 'AcDbEvalExpr'], [90, 3], [98, 33], [99, 329], [1, ''], [70, 70], [70, 1], [100, 'AcDbBlockGripExpr'], [91, 1], [300, 'UpdatedFlip']]),
   ],
+  // 구속 기반 정의의 대리 노드: 평가식만(공개 짝 도면 Dynblocks의 배치 — DWG 82비트, DXF 90·98·99)
+  ['ACDB_DYNAMICBLOCKPROXYNODE', T([[100, 'AcDbEvalExpr'], [90, 5], [98, 33], [99, 29]])],
 ];
 
 /** 손으로 만든 자료의 동적 블록 객체(지움 막기 객체의 블록 = 소유 사전의 소유자) */

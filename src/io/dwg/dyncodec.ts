@@ -6,6 +6,7 @@
  * - ACadSharp sample_AC1015~AC1032(my-dynamic-block): 그래프·가시성·선형·축척·그립·위치 식·지움 막기·표현 자료.
  * - 공개 도면(ACadSharp samples/dynamic-blocks, R2018 짝 10쌍, 그리고 다른 공개 짝 하나): 뒤집기·XY·회전·조회·점·
  *   기준점·정렬·극좌표 매개변수, 이동·신축·회전·뒤집기·배열·조회·극좌표 신축 동작과 그 그립.
+ * - 공개 짝 도면(LibreDWG test-data 2018/Dynblocks, R2018): 구속 기반 정의의 대리 노드(ACDB_DYNAMICBLOCKPROXYNODE).
  *
  * - 읽기(decodeDyn): 공통 자료 다음의 자료·문자열·핸들 흐름을 읽어 DXF 순서의 태그를 만든다. 배치가 맞지 않는 값
  *   (모르는 값 종류, DXF 코드를 확인하지 못한 목록 등)을 만나면 DynLayoutError를 던진다 — 부르는 쪽은 원본 비트만 남긴다.
@@ -26,6 +27,8 @@ export const DYN_TYPES = new Set([
   'ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION',
   'ACAD_EVALUATION_GRAPH',
   'BLOCKGRIPLOCATIONCOMPONENT',
+  // 구속 기반 정의의 대리 노드(평가식만)
+  'ACDB_DYNAMICBLOCKPROXYNODE',
   // 매개변수
   'BLOCKVISIBILITYPARAMETER',
   'BLOCKLINEARPARAMETER',
@@ -1062,7 +1065,10 @@ function wFlipAction(o: Out, s: Subs, ver: number): void {
   c.end();
 }
 
-/** AcDbBlockArrayAction: 연결 넷(DXF 92~95, 301~304), BD 140 열 간격, BD 141 행 간격 */
+/**
+ * AcDbBlockArrayAction: 연결 넷(DXF 92~95, 301~304), BD 140 행 간격(Y), BD 141 열 간격(X·선형 방향).
+ * 140·141의 뜻은 공개 도면의 표현 블록(XY 배열 20 × 25 → X 간격 25, Y 간격 20; 선형 배열은 141 간격)으로 확인했다.
+ */
 function rArray(i: In): void {
   rAction(i);
   i.sub('AcDbBlockArrayAction');
@@ -1297,6 +1303,8 @@ const CODECS: Record<string, Codec> = {
   ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION: [rPurge, (o, s, _v, ctx) => wPurge(o, s, ctx)],
   ACAD_EVALUATION_GRAPH: [rGraph, (o, s) => wGraph(o, s)],
   BLOCKGRIPLOCATIONCOMPONENT: [rGripExpr, (o, s) => wGripExpr(o, s)],
+  // 대리 노드: DWG 82비트 = 평가식(BL -1, BL 98, BL 99, BS -9999, BL 90)뿐, DXF도 AcDbEvalExpr 90·98·99뿐(Dynblocks 짝)
+  ACDB_DYNAMICBLOCKPROXYNODE: [rEvalExpr, (o, s) => wEvalExpr(o, s)],
   BLOCKVISIBILITYPARAMETER: [rVisibility, wVisibility],
   BLOCKLINEARPARAMETER: [rLinear, wLinear],
   BLOCKFLIPPARAMETER: [rFlip, wFlip],

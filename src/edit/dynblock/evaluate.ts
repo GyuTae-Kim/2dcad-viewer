@@ -6,12 +6,17 @@
  * - 뒤집기: 뒤집기 동작의 선택 객체를 지금 뒤집기 선(첫 점 → 둘째 점)에 대해 대칭(문자는 읽을 수 있게).
  * - 선형·XY·회전: 새 점 → 연결 속성(EndXDelta·Scale …) → 이동·신축·축척·회전 동작.
  * - 조회: 표의 행이 정하는 값(가시성·뒤집기·거리·XY)을 차례로 적용하고, 다른 조회 표는 일치하는 행으로 맞춘다.
+ * - 배열: 매개변수 기준점이 움직이면 선택 객체를 같이 옮기고, 끝낼 때(finish) 지금 매개변수 거리로 사본을 다시 만든다
+ *   (열 = floor(|거리| / 141 간격), XY는 행 = floor(|Y 거리| / 140 간격) — 공개 도면 표현 블록 50여 개로 확인).
+ * - 구속 기반 정의: 구속 매개변수는 블록의 구속 그룹을 풀어 값을 바꾸고, 동작이 구속된 객체를 옮기면 바로 구속을 다시 푼다
+ *   (방향 있는 거리는 뒤집힌 쪽을 따른다 — 공개 DXF의 창 블록 표현 *U6·*U7과 같은 형상).
  *
  * 모든 좌표는 블록 정의 좌표다. 지원하지 않는 경우는 DynError(MSG_UNSUPPORTED)로 거절한다(부분 결과를 남기지 않는다).
  */
 import type { CadDocument, Entity, Vec3 } from '../../core/model';
 import { transformEntity } from '../geom/transform';
 import { type Affine, affApply, affIdentity, affMirror, affMul, affRotate, affScale, affTranslate, pointInPolygon } from '../geom/math';
+import { blockConstraints, maintain, refPoint, solveParams } from './cblock';
 import { actionsOf, paramById } from './definition';
 import { type DynRef, type WorkItem, cloneValues, workItems } from './reference';
 import {
@@ -42,6 +47,15 @@ import {
 export class DynError extends Error {}
 
 const EPS = 1e-9;
+
+/** 배열 사본 수 한도(한 번 평가에서) */
+const MAX_COPIES = 20000;
+
+/** 배열 개수: 거리를 간격으로 나눈 몫(1 이상). 표현 블록에서 306 / 51 → 6, 316 / 24 → 13, 100.59 / 25 → 4 */
+export function arrayCount(distance: number, spacing: number): number {
+  if (!(spacing > EPS) || !Number.isFinite(distance)) return 1;
+  return Math.max(1, Math.floor(Math.abs(distance) / spacing + 1e-6));
+}
 
 const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
 const add = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
@@ -204,7 +218,10 @@ export interface EvalOptions {
  */
 export class DynEval {
   readonly def: DynDefinition;
+  /** 원본 객체(정의 객체와 짝). 배열 사본은 copies */
   readonly items: WorkItem[];
+  /** 배열 사본(원본 뒤에 붙는다). finish가 지금 값으로 다시 만든다 */
+  copies: WorkItem[];
   readonly values: RefValues;
   /** ETag 색인 → 블록 좌표에서 통째로 적용된 변환(속성 따라가기용) */
   readonly moved = new Map<number, Affine>();
@@ -213,6 +230,8 @@ export class DynEval {
   /** 객체(모양·보이지 않음)가 바뀌었는지 */
   geometryChanged = false;
   private readonly byDef = new Map<string, WorkItem>();
+  /** 동작이 바꾼 원본(정의 핸들) — 구속 기반 정의는 동작 뒤 구속을 다시 푼다 */
+  private readonly touched = new Set<string>();
 
   /** copy = 거짓이면 객체를 복사하지 않는다(값만 읽거나 조회 값만 맞출 때) */
   constructor(
@@ -221,7 +240,9 @@ export class DynEval {
     copy = true,
   ) {
     this.def = ref.def;
-    this.items = workItems(ref.def, ref.block, ref.direct).map((it) => (copy ? { ...it, entity: structuredClone(it.entity) } : it));
+    const all = workItems(ref.def, ref.block, ref.direct).map((it) => (copy ? { ...it, entity: structuredClone(it.entity) } : it));
+    this.items = all.filter((it) => !it.copy);
+    this.copies = all.filter((it) => it.copy);
     for (const it of this.items) if (it.defHandle) this.byDef.set(it.defHandle, it);
     this.values = cloneValues(ref.values);
   }
@@ -293,6 +314,7 @@ export class DynEval {
     it.entity = out;
     this.moved.set(it.index, affMul(m, this.moved.get(it.index) ?? affIdentity()));
     this.geometryChanged = true;
+    if (it.defHandle) this.touched.add(it.defHandle);
   }
 
   private transformEntities(handles: readonly string[], m: Affine): void {
@@ -395,7 +417,21 @@ export class DynEval {
 
   /** 매개변수 param이 old → now로 바뀌었을 때 연결된 동작을 실행한다 */
   private runActions(param: DynParam, old: Vec3[], now: Vec3[], extra?: { angle?: number }): void {
-    for (const a of actionsOf(this.def, param.id)) this.runAction(a, param, old, now, extra);
+    this.constrainedRun(() => {
+      for (const a of actionsOf(this.def, param.id)) this.runAction(a, param, old, now, extra);
+    });
+  }
+
+  /** 구속 기반 정의: 동작을 돌린 뒤 구속된 객체가 바뀌었으면 구속을 지키게 다시 푼다(AutoCAD: 동작 뒤 구속 풀이) */
+  private constrainedRun(fn: () => void): void {
+    if (!this.def.constrained) {
+      fn();
+      return;
+    }
+    const before = this.currentByDef();
+    this.touched.clear();
+    fn();
+    if (this.touched.size) this.maintainConstraints(before);
   }
 
   private baseOf(a: BaseAction, changed: number, old: Vec3[], now: Vec3[]): Vec3 {
@@ -448,6 +484,7 @@ export class DynEval {
           if (r !== it.entity) {
             it.entity = r;
             this.geometryChanged = true;
+            if (it.defHandle) this.touched.add(it.defHandle);
             // 한 점짜리 객체는 통째로 옮긴 것과 같다(속성이 따라간다)
             if (['TEXT', 'ATTDEF', 'MTEXT', 'INSERT', 'CIRCLE', 'POINT', 'ELLIPSE', 'SHAPE', 'TOLERANCE', 'ARC'].includes(r.type)) this.moved.set(it.index, affMul(m, this.moved.get(it.index) ?? affIdentity()));
           }
@@ -501,9 +538,178 @@ export class DynEval {
       case 'polar_stretch':
         this.polarStretch(a, param, old, now);
         return;
+      case 'array': {
+        // 기준점(Base → UpdatedBase)이 움직이면 선택 객체가 같이 움직인다(XY 배열 표본: 원본 원이 기준점을 따라갔다).
+        // 사본은 finish에서 지금 거리로 다시 만든다
+        if (param.kind !== 'linear' && param.kind !== 'xy' && param.kind !== 'polar') throw new DynError(MSG_UNSUPPORTED);
+        const [o0] = old;
+        const [n0] = now;
+        if (!o0 || !n0) throw new DynError(MSG_UNSUPPORTED);
+        const d = sub(n0, o0);
+        if (len(d) < EPS) return;
+        const m = affTranslate(d.x, d.y);
+        this.transformEntities(a.entities, m);
+        for (const n of a.nodes) this.transformNode(n, m, param.id);
+        return;
+      }
       default:
         throw new DynError(MSG_UNSUPPORTED);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 끝내기: 배열 사본
+  // -------------------------------------------------------------------------
+
+  /** 값을 다 바꾼 뒤 부른다: 배열 사본을 지금 값으로 다시 만든다 */
+  finish(): void {
+    this.regenerateArrays();
+  }
+
+  /** 배열 동작의 사본 변위(블록 좌표, 원본 자리 (0, 0)은 빼고 AutoCAD 순서 — XY는 행 바깥·열 안쪽) */
+  arrayOffsets(a: OtherAction): Vec3[] {
+    const p = a.conns[0] ? paramById(this.def, a.conns[0].node) : undefined;
+    if (!p) return [];
+    const [b, e] = this.points(p.id);
+    if (!b || !e) return [];
+    const col = a.columnSpacing ?? 0;
+    const row = a.rowSpacing ?? 0;
+    const out: Vec3[] = [];
+    if (p.kind === 'xy') {
+      const dx = e.x - b.x;
+      const dy = e.y - b.y;
+      const nc = arrayCount(dx, col);
+      const nr = arrayCount(dy, row);
+      if (nc * nr > MAX_COPIES) throw new DynError('배열 사본이 너무 많습니다.');
+      const sx = dx < 0 ? -1 : 1;
+      const sy = dy < 0 ? -1 : 1;
+      for (let r = 0; r < nr; r++) for (let c = 0; c < nc; c++) if (r || c) out.push({ x: c * col * sx, y: r * row * sy, z: 0 });
+      return out;
+    }
+    const L = len(sub(e, b));
+    const n = arrayCount(L, col);
+    if (n > MAX_COPIES) throw new DynError('배열 사본이 너무 많습니다.');
+    const u = L > EPS ? mul(sub(e, b), 1 / L) : { x: 1, y: 0, z: 0 };
+    for (let k = 1; k < n; k++) out.push({ x: u.x * col * k, y: u.y * col * k, z: 0 });
+    return out;
+  }
+
+  /**
+   * 배열 사본을 다시 만든다: 배열 동작마다(그래프 순서) 사본 자리마다 선택 객체(블록 순서)를 옮겨 붙인다.
+   * 사본은 원본의 ETag 색인·보이지 않음을 따른다(속성 정의는 사본을 만들지 않는다).
+   */
+  private regenerateArrays(): void {
+    const arrays = this.def.actions.filter((a): a is OtherAction => a.kind === 'array');
+    if (!arrays.length) return;
+    arrays.sort((a, b) => (this.def.order.get(a.id) ?? 0) - (this.def.order.get(b.id) ?? 0) || a.id - b.id);
+    const out: WorkItem[] = [];
+    for (const a of arrays) {
+      const offs = this.arrayOffsets(a);
+      if (!offs.length) continue;
+      const sel = new Set(a.entities.map((h) => h.toUpperCase()));
+      const src = this.items.filter((it) => it.defHandle && sel.has(it.defHandle) && it.entity.type !== 'ATTDEF');
+      if (out.length + offs.length * src.length > MAX_COPIES) throw new DynError('배열 사본이 너무 많습니다.');
+      for (const d of offs)
+        for (const it of src) {
+          const r = transformEntity(it.entity, affTranslate(d.x, d.y), this.doc);
+          const e = r.replace?.[0] ?? r.add?.[0];
+          if (!e) throw new DynError(MSG_UNSUPPORTED);
+          e.handle = it.entity.handle;
+          e.xdata = it.entity.xdata;
+          if (it.entity.invisible) e.invisible = true;
+          else delete e.invisible;
+          out.push({ index: it.index, defHandle: null, entity: e, copy: true });
+        }
+    }
+    if (out.length || this.copies.length) this.geometryChanged = true;
+    this.copies = out;
+  }
+
+  // -------------------------------------------------------------------------
+  // 구속 기반 정의
+  // -------------------------------------------------------------------------
+
+  /** 지금 원본(정의 핸들 → 객체) */
+  private currentByDef(): Map<string, Entity> {
+    const m = new Map<string, Entity>();
+    for (const it of this.items) if (it.defHandle) m.set(it.defHandle, it.entity);
+    return m;
+  }
+
+  /** 푼 객체(정의 핸들 → 새 객체)를 원본에 적용하고, 구속 매개변수의 점을 형상에 맞춰 옮긴다 */
+  private applySolved(before: ReadonlyMap<string, Entity>, solved: ReadonlyMap<string, Entity>, skip?: number): void {
+    for (const [h, e] of solved) {
+      const it = this.item(h);
+      if (!it) continue;
+      const out = { ...e, handle: it.entity.handle, xdata: it.entity.xdata } as Entity;
+      if (it.entity.invisible) out.invisible = true;
+      else delete out.invisible;
+      it.entity = out;
+      this.geometryChanged = true;
+    }
+    const bc = blockConstraints(this.doc, this.def.recordHandle);
+    if (!bc) return;
+    const after = this.currentByDef();
+    for (const p of this.def.params) {
+      if (p.kind !== 'linear' || !p.constraint || p.id === skip) continue;
+      const c = bc.byDependency.get(p.constraint.dependency);
+      const pts = this.points(p.id);
+      if (!c || c.refs.length < 2 || pts.length < 2) continue;
+      const P = c.refs.map((r) => refPoint(before.get(r.h), r.part));
+      const Q = c.refs.map((r) => refPoint(after.get(r.h), r.part));
+      if (P.some((x) => !x) || Q.some((x) => !x)) continue;
+      const [b, e] = pts as [Vec3, Vec3];
+      const d = (u: Vec3, v: { x: number; y: number }) => Math.hypot(u.x - v.x, u.y - v.y);
+      const swap = d(b, P[1]!) + d(e, P[0]!) < d(b, P[0]!) + d(e, P[1]!);
+      const [i0, i1] = swap ? [1, 0] : [0, 1];
+      const nb = { x: b.x + Q[i0]!.x - P[i0]!.x, y: b.y + Q[i0]!.y - P[i0]!.y, z: b.z };
+      const ne = { x: e.x + Q[i1]!.x - P[i1]!.x, y: e.y + Q[i1]!.y - P[i1]!.y, z: e.z };
+      if (len(sub(nb, b)) > EPS || len(sub(ne, e)) > EPS) this.setPoints(p.id, [nb, ne, ...pts.slice(2)]);
+    }
+  }
+
+  /** 구속 매개변수 값 바꾸기(블록의 구속 그룹을 푼다) */
+  private setConstraintParam(p: LinearParam, d: number): boolean {
+    const bc = blockConstraints(this.doc, this.def.recordHandle);
+    const c = bc && !bc.problem ? bc.byDependency.get(p.constraint!.dependency) : undefined;
+    if (!bc || !c) throw new DynError(MSG_UNSUPPORTED);
+    const before = this.currentByDef();
+    const r = solveParams(this.doc, before, bc, new Map([[c.id, d]]));
+    if (!r.ok) throw new DynError(r.message);
+    this.applySolved(before, r.entities, p.id);
+    // 이 매개변수의 점: 형상을 따라 옮기고 거리를 새 값으로(기준점 쪽 고정)
+    const old = this.points(p.id);
+    const [a, b] = old;
+    if (a && b) {
+      const P = c.refs.map((x) => refPoint(before.get(x.h), x.part));
+      const Q = c.refs.map((x) => refPoint(this.currentByDef().get(x.h), x.part));
+      let na = { ...a };
+      if (P[0] && P[1] && Q[0] && Q[1]) {
+        const swap = Math.hypot(a.x - P[1].x, a.y - P[1].y) < Math.hypot(a.x - P[0].x, a.y - P[0].y);
+        const k = swap ? 1 : 0;
+        na = { x: a.x + Q[k]!.x - P[k]!.x, y: a.y + Q[k]!.y - P[k]!.y, z: a.z };
+      }
+      const L = len(sub(b, a));
+      const u = L > EPS ? mul(sub(b, a), 1 / L) : { x: 1, y: 0, z: 0 };
+      this.setPoints(p.id, [na, add(na, mul(u, d)), ...old.slice(2)]);
+    }
+    this.changedNodes.add(p.id);
+    return true;
+  }
+
+  /** 동작이 구속된 객체를 옮긴 뒤: 구속을 지키게 다시 푼다(지킬 수 없으면 거절). before = 동작 전 원본 */
+  private maintainConstraints(before: ReadonlyMap<string, Entity>): void {
+    const bc = blockConstraints(this.doc, this.def.recordHandle);
+    if (!bc || bc.problem || !bc.constraints.length) return;
+    const changes = new Map<string, Entity>();
+    for (const h of this.touched) {
+      const it = this.item(h);
+      if (it) changes.set(h, it.entity);
+    }
+    const r = maintain(this.doc, before, changes, bc);
+    if (!r.ok) throw new DynError(r.message);
+    this.applySolved(before, r.entities);
+    this.touched.clear();
   }
 
   /**
@@ -563,6 +769,7 @@ export class DynEval {
         else delete r.invisible;
         it.entity = r;
         this.geometryChanged = true;
+        if (it.defHandle) this.touched.add(it.defHandle);
       }
       if (turns) this.transformItem(it, rot);
     }
@@ -627,11 +834,13 @@ export class DynEval {
     const [a, b] = this.points(p.id);
     if (!a || !b || len(sub(b, a)) < EPS) throw new DynError(MSG_UNSUPPORTED);
     const m = affMirror(a, b);
-    for (const act of actionsOf(this.def, p.id)) {
-      if (act.kind !== 'flip') throw new DynError(MSG_UNSUPPORTED);
-      this.transformEntities(act.entities, m);
-      for (const n of act.nodes) this.transformNode(n, m, p.id);
-    }
+    this.constrainedRun(() => {
+      for (const act of actionsOf(this.def, p.id)) {
+        if (act.kind !== 'flip') throw new DynError(MSG_UNSUPPORTED);
+        this.transformEntities(act.entities, m);
+        for (const n of act.nodes) this.transformNode(n, m, p.id);
+      }
+    });
     this.values.get(p.id)!.flipped = flipped;
     this.changedNodes.add(p.id);
     return true;
@@ -646,6 +855,7 @@ export class DynEval {
     const d0 = len(sub(b, a));
     const d = opt.exact ? distance : snapToValueSet(p.values, distance, this.drawnDistance(p));
     if (sameNum(d, d0, 1e-9)) return false;
+    if (p.constraint) return this.setConstraintParam(p, d);
     const u = d0 > EPS ? mul(sub(b, a), 1 / d0) : { x: 1, y: 0, z: 0 };
     let na: Vec3;
     let nb: Vec3;

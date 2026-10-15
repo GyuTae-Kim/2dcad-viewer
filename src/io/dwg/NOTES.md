@@ -118,7 +118,7 @@ DXF와 같은 원본 태그(`GenericObject.raw`, ACAD_TABLE은 `TableEntity.raw`
 - TABLESTYLE(모든 버전): AcDbTableStyle 태그(R2010+ 셀 스타일 _DATA·_TITLE·_HEADER → 옛 행 스타일 셋).
 - FIELD·FIELDLIST(사양 20.4.76·77): `field`(모델 값)도 채운다. 객체의 필드 코드는 `io/fields.ts`의 `fieldCodesOf(doc, entity)`.
 - DIMASSOC(사양에 없음, 표본 R14~R2018로 배치를 정함), 주석 축척 컨텍스트 데이터 14종(사양 20.4.89·71·86 + 표본 + 기능 명세, `ctxcodec.ts`).
-- 동적 블록 객체 30종(사양에 없음, 표본 R2000~R2018과 공개 짝 도면 R2018로 배치를 정함, `tests/dwg/dynblock.test.ts`): 아래 "동적 블록 객체" 절.
+- 동적 블록 객체 31종(사양에 없음, 표본 R2000~R2018과 공개 짝 도면 R2018로 배치를 정함, `tests/dwg/dynblock.test.ts`): 아래 "동적 블록 객체" 절.
 - 주석 축척의 AcDbContextDataManager·ACDB_ANNOTATIONSCALES는 보통 사전(DICTIONARY)이라 원래부터 `entries`로 읽힌다.
 
 ## 알려진 빈틈
@@ -173,7 +173,7 @@ ACAD_MATERIAL·ACAD_COLOR(R2004+)·ACAD_VISUALSTYLE(R2007+), 색상표 색의 DB
 MULTILEADER, MESH, MLEADERSTYLE, 해석하지 않는 비도형 객체)은 공통 자료 뒤의 자료·문자열·핸들 비트와 프록시 그림을 남긴다.
 쓰는 버전이 원본과 같고, 핸들이 같고, 모델 값의 지문이 같으면 공통 자료만 모델에서 다시 쓰고 본문은 그대로 붙인다.
 아니면 모델 값으로 쓸 수 있는 것은 쓰고(MULTILEADER·MESH·MLEADERSTYLE·DICTIONARYVAR·DBCOLOR·자리 표시자 등),
-ACAD_TABLE·TABLESTYLE·FIELD·FIELDLIST·DIMASSOC·주석 축척 자료 14종(`ctxcodec.ts`)·동적 블록 객체 30종(`dyncodec.ts`)은 모델 값(원본 태그)으로 쓰고,
+ACAD_TABLE·TABLESTYLE·FIELD·FIELDLIST·DIMASSOC·주석 축척 자료 14종(`ctxcodec.ts`)·동적 블록 객체 31종(`dyncodec.ts`)은 모델 값(원본 태그)으로 쓰고,
 나머지(ACIS, 프록시, 그 밖의 동적 블록 객체, VISUALSTYLE·MATERIAL 등)는
 빼고 경고(`dwg.write_entity_dropped`, `dwg.write_object_dropped`, `dwg.write_table_as_insert`)를 남긴다.
 자료가 하나도 없는 객체는 경고 없이 뺀다. TABLECONTENT·TABLEGEOMETRY·CELLSTYLEMAP(DXF·옛 버전의 표 왕복 보조 자료)은
@@ -228,7 +228,7 @@ R2007 이전으로 쓸 때 도면 코드 페이지로 못 쓰는 글자가 있�
 ### 쓰기의 알려진 빈틈
 
 - R2007(AC1021) 컨테이너는 쓰지 않는다(AC1018로 쓴다).
-- ACIS(REGION·3DSOLID·BODY·SURFACE), 프록시, OLE, 연관 객체, 아래 30종이 아닌 동적 블록 객체(구속 매개변수·프록시 노드 등)와
+- ACIS(REGION·3DSOLID·BODY·SURFACE), 프록시, OLE, 연관 객체, 아래 31종이 아닌 동적 블록 객체(구속 매개변수·블록 속성 표 등)와
   확인하지 못한 자료가 든 동적 블록 객체(값 목록이 있는 XY·극좌표 매개변수, 점이 묶인 극좌표 신축)는 같은 버전일 때만 남는다.
   동적 블록 정의는 평가 그래프의 노드를 하나라도 쓰지 못하면 그래프와 노드를 함께 빼서 보통 블록이 된다(`dwg.write_object_dropped`). R2013+ 자료 저장소
   (AcDb:AcDsPrototype_1b)는 쓰지 않아 같은 버전으로 되쓴 ACIS 도형도 형상 자료가 빠질 수 있다(`dataStore` 표지는 그대로).
@@ -257,6 +257,8 @@ R2007 이전으로 쓸 때 도면 코드 페이지로 못 쓰는 글자가 있�
   그래프 순서로 맞췄다), LukaStuurman/Techbase-autocad-plugin `validation/RT/RT blocks.dwg·.dxf`(독립 기준점 회전 동작 6개).
   DXF만 있는 공개 도면(EZstruct `drawings/template.dxf`, dxf-file-read `architectural_example-imperial.dxf`)으로 신축 동작의 노드 목록
   코드와 구속 매개변수 배치를 보았다.
+- 공개 짝 도면 LibreDWG `test/test-data/2018/Dynblocks.dwg·.dxf`(AutoCAD R2018, 동적 블록 6개): 대리 노드
+  (ACDB_DYNAMICBLOCKPROXYNODE)의 배치를 정했고, 102개 객체 모두 DWG에서 푼 태그가 DXF 태그와 같다.
 - 그다음 위 도면과 AutoCAD 예제 도면 14개(`all-samples`, R2007·R2018, DWG만)의 동적 블록 객체 1,954개 가운데 1,948개가 남는
   비트 없이 읽히고, 다시 쓴 자료·문자열·핸들 비트가 원본과 같다(남은 6개는 아래 "풀지 않는 경우").
 
@@ -299,7 +301,10 @@ DWG 자료 형식(공통 자료 다음, 핸들은 핸들 흐름). DXF와 순서�
   - AcDbBlockStretchAction: (BL 92, TV 301), (BL 93, TV 302), BL 72 + RD2 틀 점(DXF 1011·1021)…, BL 73 + (H 331, BL 74 + BL 94…)…,
     BL 75 + (BL 95 노드, BL 76 + BL 94…)…, BD 140, BD 141, RC 280. 노드 목록이 있는 예제 도면 신축 동작 63개로 DWG 배치를,
     architectural_example DXF로 코드를 확인했다.
-  - AcDbBlockFlipAction: (BL, TV) ×4 — DXF는 92~95, 그다음 301~304. AcDbBlockArrayAction: 같은 연결 넷 + BD 140 열 간격, BD 141 행 간격.
+  - AcDbBlockFlipAction: (BL, TV) ×4 — DXF는 92~95, 그다음 301~304. AcDbBlockArrayAction: 같은 연결 넷 + BD 140 행 간격(Y),
+    BD 141 열 간격(X, 선형·극좌표는 매개변수 방향). 뜻은 공개 도면의 AutoCAD 표현 블록으로 확인했다(아래 "배열 표현").
+  - ACDB_DYNAMICBLOCKPROXYNODE(구속 기반 정의의 대리 노드): 평가식뿐(BL −1, BL 98, BL 99, BS −9999, BL 90 = 82비트). DXF는 90·98·99.
+    클래스 목록 값 1153, 28/2(Dynblocks·testDrawing).
   - AcDbBlockLookupAction: BL 92 행 수, BL 93 열 수, TV 칸(행 우선, DXF 302)…, 열마다 BL 94 노드, BL 95 값 종류, BL 96, B 282,
     TV 305, B 281, TV 304; 끝에 B 280. DXF는 93 다음에 301, 열 기록 앞마다 303(빈 문자열)을 둔다.
   - AcDbBlockPolarStretchAction: (BL, TV) ×6(DXF 92+301 … 97+306, 섞어서), BL 73 + RD2 틀 점(1011·1021)…, BL 72 + (H, BL n + BL…)…,
@@ -322,8 +327,23 @@ DXF 짝이 없어 DXF 코드를 확인하지 못한 자료가 든 객체는 풀�
   XY X 145, Y 149, 극좌표 거리 144, 각도 148)로 짐작되지만 쓰지 않는다(DXF 리더 쪽 정의 해석은 이 짐작 코드로 읽는다).
 - 극좌표 신축의 BL 72 목록(점이 묶인 객체, 공개 짝 도면의 두 동작)과 BL 78이 0이 아닌 노드 기록.
 - 그 밖에 표본에 없던 값 종류의 평가식, 0이 아닌 축척 동작 끝 바이트.
-- 구속 기반 정의의 노드(BLOCK…CONSTRAINTPARAMETER, ACDB_DYNAMICBLOCKPROXYNODE, BLOCKPARAMDEPENDENCYBODY 등)와 블록 속성 표
-  (BLOCKPROPERTIESTABLE)는 DWG 실물이 없다(속성 표는 클래스 목록에만 있었다). 같은 버전이면 원본 비트로 남고, 다른 버전이면 그래프를 뺀다.
+- 구속 매개변수(BLOCK…CONSTRAINTPARAMETER)와 BLOCKPARAMDEPENDENCYBODY는 DXF 실물(architectural_example-imperial의 창 블록)만
+  있고 DWG 짝이 없다. 블록 속성 표(BLOCKPROPERTIESTABLE·BLOCKPROPERTIESTABLEGRIP)와 사용자 매개변수(BLOCKUSERPARAMETER)는 DWG 실물
+  (avbrakel/AutoCAD-UpdateBlockPropertyTable-Arx `testDrawing.dwg`·`testDrawingA.dwg`, R2010·R2013)만 있고 DXF 짝이 없다.
+  같은 버전이면 원본 비트로 남고, 다른 버전이면 그래프를 뺀다.
+- 값 목록이 있는 XY·극좌표 매개변수, 점이 묶인 극좌표 신축은 이번에 찾은 공개 도면(아래)에도 DXF 짝이 없었다.
+
+### 배열 표현(평가 규칙, `edit/dynblock/evaluate.ts`)
+
+공개 도면의 AutoCAD 표현 블록(*U)과 같은 규칙(ACadSharp BLOCKXYPARAMETER 짝, LetsBIMtogether/CADbaseDrawingTemplate
+`AG-TEMPLATE-v1-0.dwg`의 선형 배열 블록 넷·표현 50여 개, EZstruct 시험 DXF의 극좌표 배열)로 평가하면 표현 블록과 같은 형상이 된다:
+- 개수 = floor(|거리| / 간격)(1 이상). XY는 열 = floor(|X 거리| / 141), 행 = floor(|Y 거리| / 140), 사본은 끝점 쪽(거리 부호)으로.
+  선형·극좌표는 141 간격으로 첫 점 → 둘째 점 방향.
+- 사본은 원본 뒤에 배열 동작 차례로, XY는 행 바깥·열 안쪽 차례. 사본의 ETag 색인은 원본의 색인(표현 블록에 같은 색인이 여럿),
+  1005는 제 핸들, 보이지 않음은 원본을 따른다.
+- 매개변수 기준점이 움직이면 선택 객체가 같이 움직인다(XY 표본의 원).
+- 정의 블록의 XDATA AcDbBlockArrayActionBEDITTag 객체는 블록 편집기의 미리보기 사본으로, 표현 블록에는 들어가지 않는다.
+- 참조 캐시에는 배열 동작 레코드가 없다(XY 표본).
 
 ## 주석 축척 컨텍스트 데이터(`ctxcodec.ts`)
 
