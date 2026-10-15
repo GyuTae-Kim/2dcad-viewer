@@ -184,10 +184,20 @@ describe('DWG 코덱: 원본 태그 → 비트 → 원본 태그', () => {
     }
   });
 
-  it('치수 레코드의 15비트 묶음(298·291·70·292·71·280·295)이 0이 아니면 쓰지 않는다(뜻을 모른다)', () => {
+  it('치수 레코드의 15비트 묶음(293·298·291·70·292·71 B, 280 RC, 295 B): 값을 그대로 쓰고, 칸에 맞지 않는 값이면 쓰지 않는다', () => {
     const d = objs.find((o) => o.type === 'ACDB_ALDIMOBJECTCONTEXTDATA_CLASS')!;
-    const raw = d.raw!.map((t) => (t.code === 291 ? { code: 291, value: 1 } : t));
-    expect(encodeCtx(d.type, raw, 1032)).toBeNull();
+    const set = (code: number, value: number) => {
+      let seen = false;
+      return d.raw!.map((t) => {
+        // 머리의 70(판) 말고 치수 표지 뒤의 것
+        if (t.code === 100 && t.value === 'AcDbDimensionObjectContextData') seen = true;
+        return seen && t.code === code ? { code, value } : t;
+      });
+    };
+    expect(encodeCtx(d.type, set(291, 1), 1032)).toBeTruthy();
+    expect(encodeCtx(d.type, set(280, 16), 1032)).toBeTruthy();
+    expect(encodeCtx(d.type, set(291, 2), 1032)).toBeNull();
+    expect(encodeCtx(d.type, set(280, 256), 1032)).toBeNull();
   });
 });
 

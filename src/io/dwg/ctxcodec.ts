@@ -7,15 +7,21 @@
  *
  * 종류별 배치(DXF 그룹 = DWG 형식):
  * - TEXT: BS 70 수평 정렬, BD 50 회전(DXF는 도), 2RD 10 첫 점, 2RD 11 정렬점. AutoCAD DXF 실물과 태그가 같다.
- * - MTEXTATTRIBUTE: TEXT + B 290 여러 줄. 여러 줄(1, 포함 객체가 따른다)은 풀지 않는다.
+ * - MTEXTATTRIBUTE: TEXT + B 290 여러 줄. 여러 줄(1)이면 포함 객체(기능 명세 annotation-scale.md 6.1 — 실물 비트로 확인하지
+ *   못했다): BL 반응자 수(0), (R2004+) B 확장 사전 없음(1), (R2013+) B 자료 저장소(0); 핸들 H 소유자(0), (R2000, 또는 확장
+ *   사전이 있으면) H 확장 사전; 이어서 MTEXT 레코드(BS 판, B 기본, H 축척, MTEXT 필드). DXF 태그는 `290 1`, `101 Embedded Object`,
+ *   70 판, 290 기본, 340 축척, MTEXT 필드(하위 클래스 표지 없이 — 객체의 포함 MTEXT와 같은 꼴로 짐작).
  * - BLKREF: BD 50 회전(도), 3BD 10 삽입점, BD 41·42·43 축척.
  * - MTEXT: BL 70 부착점, 3BD 10 X축 방향, 3BD 11 위치, BD 40 폭, BD 41 정의 높이, BD 42·43 문자 범위, BL 71 열 종류,
- *   열이 있으면 BL 72 수, BD 44 폭, BD 45 거터, B 73 자동 높이, B 74 흐름 반전(손으로 높이를 준 열은 풀지 않는다).
+ *   열이 있으면 BL 72 수, BD 44 폭, BD 45 거터, B 73 자동 높이, B 74 흐름 반전, 그리고 동적 열(2)이고 자동 높이가 아니면
+ *   열마다 BD 46 높이(공개 도면 DWG·DXF 짝으로 확인 — AutoCAD는 정의 높이가 없는 MTEXT에 열 2·수 1·높이 하나를 쓴다).
  * - 치수 6종(ALDIM·ANGDIM·RADIM·DMDIM·ORDDIM·RADIMLRG): `100 AcDbDimensionObjectContextData`, 2 그 축척의 익명 블록
  *   (DWG는 블록 레코드 하드 포인터, DXF는 이름), 293, 10·20 문자 위치(2RD), 294 문자가 기본 자리(B), 140 문자 회전(BD,
- *   DXF도 라디안), 298·291·70·292·71·280·295(DWG 15비트, 실물은 모두 0 — 0이 아니면 풀지 않는다), 296·297 화살표 뒤집기(B),
+ *   DXF도 라디안), 293·298·291·70·292·71(B 여섯), 280(RC), 295(B) — 15비트 묶음, 296·297 화살표 뒤집기(B),
  *   종류 표지(`AcDbAlignedDimensionObjectContextData` …) 뒤 종류별 점(3BD): ALDIM·ANGDIM·RADIM 11, DMDIM·ORDDIM 11·12,
  *   RADIMLRG 11·12·13. DWG 순서는 10, 294, 140, (2는 핸들 흐름), 15비트, 296, 297, 점 — DXF에서 293은 10 앞에 있다.
+ *   15비트 묶음: 공개 도면 DWG·DXF 짝(AutoCAD R2013, 치수 레코드 54개)에서 71 = 1·280 = 16인 레코드 26개가 6번째 비트 1과
+ *   7~14번째 비트 RC 16으로 나타났다. 앞 다섯 비트(293·298·291·70·292)는 실물이 모두 0이라 DXF 순서로 둔다.
  * - HATCHSCALE: `100 AcDbHatchObjectContextData`, BL 78 패턴 선 수, 선마다 BD 53 각도(DXF는 도), BD 43·44 기준점,
  *   BD 45·46 간격띄우기, BS 79 대시 수, BD 49 대시…; BD 40 그 축척의 배율, 3BD 10 패턴 방향, BL 90 루프 수,
  *   루프마다 BL 90 종류와 B 290(실물은 모두 1 — 0이면 경계 자료가 따르므로 풀지 않는다).
@@ -26,13 +32,14 @@
  *   (170·92·340·171·40·341·93)은 DXF에 쓰지 않는다(AutoCAD DXF의 MULTILEADER와 같다).
  * - LEADER: BL 70 꼭짓점 수, 3BD 10 꼭짓점…, 3BD 11 수평 방향, B 290, 3BD 12·13 간격띄우기.
  *
- * 배치는 ODA 공개 사양(20.4.71·20.4.86·20.4.89)과 AutoCAD가 저장한 표본(문자·속성·블록 참조 레코드, 다중 지시선 객체의 같은
- * 컨텍스트 자료)으로 맞추었다. 치수·해치 레코드는 표본이 없어 기능 명세(annotation-scale.md 6.1)의 배치를 따른다.
+ * 배치는 ODA 공개 사양(20.4.71·20.4.86·20.4.89), AutoCAD가 저장한 표본(문자·속성·블록 참조 레코드, 다중 지시선 객체의 같은
+ * 컨텍스트 자료), 기능 명세(annotation-scale.md 6.1), 공개 도면(치수·해치·HATCHVIEW·MTEXT·LEADER 레코드, 일부는 같은 도면의
+ * DWG·DXF 짝)으로 맞추었다. 해치 루프의 290 = 0(경계 자료가 따른다)은 실물이 없어 풀지 않는다.
  * 읽다가 배치가 맞지 않으면 CtxLayoutError — 부르는 쪽은 원본 비트만 남긴다.
  */
 import type { RawTag, Vec3 } from '../../core/model';
 import type { BitReader } from './bitstream';
-import { R2004, R2010 } from './version';
+import { R2004, R2010, R2013 } from './version';
 
 export type CtxKind = 'text' | 'attrib' | 'blkref' | 'mtext' | 'dim' | 'hatch' | 'hatchview' | 'mleader' | 'leader';
 
@@ -88,6 +95,7 @@ const fail = (what: string): never => {
   throw new CtxLayoutError(what);
 };
 
+const HARD_OWNER = 3;
 const HARD_PTR = 5;
 const SOFT_PTR = 4;
 const RAD2DEG = 180 / Math.PI;
@@ -190,9 +198,23 @@ function rText(i: In, attrib: boolean): void {
   i.tag(21, i.RD());
   if (attrib) {
     const ml = i.B();
-    if (ml) fail('여러 줄 속성');
     i.tag(290, ml);
+    if (ml) rEmbeddedMText(i);
   }
+}
+
+/** 여러 줄 속성 레코드의 포함 MTEXT 레코드(포함 객체 머리 → MTEXT 레코드) */
+function rEmbeddedMText(i: In): void {
+  if (i.BL() !== 0) fail('포함 객체 반응자');
+  const noXdict = i.ver >= R2004 ? i.B() : 0;
+  if (i.ver >= R2013 && i.B()) fail('포함 객체 자료 저장소');
+  i.H(); // 소유자(0)
+  if (!noXdict) i.H(); // 확장 사전(0)
+  i.tag(101, 'Embedded Object');
+  i.tag(70, i.BS());
+  i.tag(290, i.B());
+  i.tag(340, i.H());
+  rMText(i);
 }
 
 function rBlkRef(i: In): void {
@@ -214,19 +236,24 @@ function rMText(i: In): void {
   const ct = i.BL();
   i.tag(71, ct);
   if (ct) {
-    i.tag(72, i.BL());
+    const n = i.r.checkCount(i.BL(), 2);
+    i.tag(72, n);
     i.tag(44, i.BD());
     i.tag(45, i.BD());
     const auto = i.B();
     i.tag(73, auto);
     i.tag(74, i.B());
-    if (ct === 2 && !auto) fail('열 높이');
+    // 동적 열이고 자동 높이가 아니면 열마다 높이
+    if (ct === 2 && !auto) for (let k = 0; k < n; k++) i.tag(46, i.BD());
   }
 }
 
-/** 치수의 15비트 묶음에 해당하는 DXF 그룹(순서) */
-const DIM_FLAG_CODES = [298, 291, 70, 292, 71, 280, 295] as const;
-const DIM_FLAG_BITS = 15;
+/**
+ * 치수의 15비트 묶음: DXF 그룹과 형식(DWG 순서 = DXF 순서). 71·280·295의 자리는 공개 도면 DWG·DXF 짝으로 확인했고
+ * (71 = 1·280 = 16 레코드), 293·298·291·70·292는 실물이 모두 0이라 DXF 순서로 둔다. DXF에서 293은 10 앞에 온다.
+ */
+export const DIM_FLAG_CODES = [293, 298, 291, 70, 292, 71, 280, 295] as const;
+const DIM_FLAG_RC = 280;
 
 function rDim(i: In, type: string): void {
   const spec = DIM_CTX[type]!;
@@ -235,18 +262,18 @@ function rDim(i: In, type: string): void {
   const def = i.B();
   const rot = i.BD();
   const block = i.H();
-  for (let k = 0; k < DIM_FLAG_BITS; k++) if (i.B()) fail('치수 플래그');
+  const flags = DIM_FLAG_CODES.map((c) => (c === DIM_FLAG_RC ? i.r.RC() : i.B()));
   const f1 = i.B();
   const f2 = i.B();
   i.sub('AcDbDimensionObjectContextData');
   // 블록은 핸들(읽기가 끝난 뒤 build.ts가 이름으로 바꾼다)
   i.tag(2, block);
-  i.tag(293, 0);
+  i.tag(293, flags[0]!);
   i.tag(10, tx);
   i.tag(20, ty);
   i.tag(294, def);
   i.tag(140, rot);
-  for (const c of DIM_FLAG_CODES) i.tag(c, 0);
+  DIM_FLAG_CODES.forEach((c, k) => k > 0 && i.tag(c, flags[k]!));
   i.tag(296, f1);
   i.tag(297, f2);
   i.sub(spec.marker);
@@ -569,7 +596,7 @@ function wHead(o: Out, c: Cur, ver: number): void {
   o.H(HARD_PTR, scale);
 }
 
-function wText(o: Out, c: Cur, attrib: boolean): void {
+function wText(o: Out, c: Cur, attrib: boolean, ver = 0): void {
   o.BS(c.int(70));
   o.BD(c.num(50) * DEG2RAD);
   const p = c.pt2(10);
@@ -580,9 +607,33 @@ function wText(o: Out, c: Cur, attrib: boolean): void {
   o.RD(a.y);
   if (attrib) {
     const ml = int(c.opt(290));
-    if (ml) fail('여러 줄 속성');
-    o.B(0);
+    o.B(ml);
+    if (ml) wEmbeddedMText(o, c, ver);
   }
+}
+
+/** 여러 줄 속성의 포함 MTEXT 레코드: 포함 객체 머리(반응자·확장 사전 없음, 소유자 0) → MTEXT 레코드 */
+function wEmbeddedMText(o: Out, c: Cur, ver: number): void {
+  c.need(101);
+  // AutoCAD DXF 실물을 보지 못했다: 하위 클래스 표지가 끼어 있어도 받는다
+  const skipMarkers = () => {
+    while (c.has(100)) c.need(100);
+  };
+  skipMarkers();
+  c.int(70);
+  const def = c.int(290);
+  skipMarkers();
+  const scale = c.handle(340);
+  skipMarkers();
+  o.BL(0);
+  if (ver >= R2004) o.B(1);
+  if (ver >= R2013) o.B(0);
+  o.H(SOFT_PTR, '0');
+  if (ver < R2004) o.H(HARD_OWNER, '0');
+  o.BS(ctxClassVersion(ver));
+  o.B(def);
+  o.H(HARD_PTR, scale);
+  wMText(o, c);
 }
 
 function wBlkRef(o: Out, c: Cur): void {
@@ -611,13 +662,19 @@ function wMText(o: Out, c: Cur): void {
   const ct = c.int(71);
   o.BL(ct);
   if (ct) {
-    o.BL(c.int(72));
+    const n = c.int(72);
+    o.BL(n);
     o.BD(c.num(44));
     o.BD(c.num(45));
     const auto = c.int(73);
     o.B(auto);
     o.B(c.int(74));
-    if (ct === 2 && !auto) fail('열 높이');
+    if (ct === 2 && !auto) {
+      // 열마다 높이(없으면 0 — AutoCAD도 0을 쓴 레코드가 있다)
+      const hs: number[] = [];
+      while (c.has(46)) hs.push(c.num(46));
+      for (let k = 0; k < n; k++) o.BD(hs[k] ?? 0);
+    } else while (c.has(46)) c.need(46);
   }
 }
 
@@ -630,14 +687,22 @@ function wDim(o: Out, c: Cur, type: string): void {
     const t = c.tags[c.i++]!;
     if (!seen.has(t.code)) seen.set(t.code, t.value);
   }
-  for (const code of [293, ...DIM_FLAG_CODES]) if (int(seen.get(code))) fail(`치수 플래그 ${code}`);
   o.RD(num(seen.get(10)));
   o.RD(num(seen.get(20)));
   o.B(int(seen.get(294)));
   o.BD(num(seen.get(140)));
   const name = String(seen.get(2) ?? '').trim();
   o.ops.push({ t: 'HB', code: HARD_PTR, name });
-  for (let k = 0; k < DIM_FLAG_BITS; k++) o.B(0);
+  for (const code of DIM_FLAG_CODES) {
+    const v = int(seen.get(code));
+    if (code === DIM_FLAG_RC) {
+      if (v < 0 || v > 255) fail(`치수 ${code} = ${v}`);
+      o.ops.push({ t: 'RC', v });
+    } else {
+      if (v !== 0 && v !== 1) fail(`치수 ${code} = ${v}`);
+      o.B(v);
+    }
+  }
   o.B(int(seen.get(296)));
   o.B(int(seen.get(297)));
   c.marker(spec.marker);
@@ -856,7 +921,7 @@ export function encodeCtx(type: string, raw: readonly RawTag[] | undefined, ver:
         wText(o, c, false);
         break;
       case 'attrib':
-        wText(o, c, true);
+        wText(o, c, true, ver);
         break;
       case 'blkref':
         wBlkRef(o, c);

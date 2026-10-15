@@ -30,6 +30,14 @@ export function ctxRawForVersion(raw: readonly RawTag[], ver: number, type = '')
     c[i + 1] = { code: 70, value: want };
     out = c;
   }
+  // 여러 줄 속성 레코드의 포함 MTEXT 레코드(101 Embedded Object 다음 70)도 같은 판
+  const ie = out.findIndex((x) => x.code === 101 && String(x.value).trim() === 'Embedded Object');
+  const te = ie >= 0 ? out[ie + 1] : undefined;
+  if (te && te.code === 70 && Number(te.value) !== want) {
+    const c = out.slice();
+    c[ie + 1] = { code: 70, value: want };
+    out = c;
+  }
   if (type === 'ACDB_MLEADEROBJECTCONTEXTDATA_CLASS' && ver < 1024) {
     const kept: RawTag[] = [];
     let inLine = false;

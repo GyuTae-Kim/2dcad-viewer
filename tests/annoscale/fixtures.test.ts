@@ -189,10 +189,12 @@ describe.skipIf(!hasPython)('ezdxf 오라클: 이 앱이 쓴 DXF의 컨텍스트
           records: { type: string; key: string; scales_dict: string; manager: string; entity_type: string; entity_xdict_ok: boolean; reactor_ok: boolean; scale_type: string; subclasses: string[] }[];
         };
         expect(j.audit_errors).toEqual([]);
-        // R2000은 이 버전에 없는 다중 지시선·호 길이 치수를 나누거나 블록으로 바꾸므로 그 레코드가 빠진다
-        expect(j.records.length).toBe(v === 'AC1015' ? 24 : 28);
+        // R2000은 이 버전에 없는 다중 지시선·호 길이 치수를 나누거나 블록으로 바꾸므로 그 레코드가 빠진다.
+        // 해치는 축척 레코드 둘 + 뷰포트별 표현(HATCHVIEW) 둘
+        expect(j.records.length).toBe(v === 'AC1015' ? 26 : 30);
+        expect(j.records.filter((r) => r.type === 'ACDB_HATCHVIEWCONTEXTDATA_CLASS')).toHaveLength(2);
         for (const r of j.records) {
-          expect(r.scales_dict, r.type).toBe('ACDB_ANNOTATIONSCALES');
+          expect(r.scales_dict, r.type).toBe(r.type === 'ACDB_HATCHVIEWCONTEXTDATA_CLASS' ? 'ACDB_ANNOTATIONSCALE_VIEW_COLLECTION' : 'ACDB_ANNOTATIONSCALES');
           expect(r.manager, r.type).toBe('AcDbContextDataManager');
           expect(r.key, r.type).toMatch(/^\*A\d+$/);
           expect(r.entity_xdict_ok, r.type).toBe(true);
@@ -204,6 +206,7 @@ describe.skipIf(!hasPython)('ezdxf 오라클: 이 앱이 쓴 DXF의 컨텍스트
         const kinds = new Map(j.records.map((r) => [r.type, r.entity_type]));
         expect(kinds.get('ACDB_ALDIMOBJECTCONTEXTDATA_CLASS')).toBe('DIMENSION');
         expect(kinds.get('ACDB_HATCHSCALECONTEXTDATA_CLASS')).toBe('HATCH');
+        expect(kinds.get('ACDB_HATCHVIEWCONTEXTDATA_CLASS')).toBe('HATCH');
         if (v !== 'AC1015') expect(kinds.get('ACDB_MLEADEROBJECTCONTEXTDATA_CLASS')).toBe('MULTILEADER');
       } finally {
         rmSync(src, { force: true });

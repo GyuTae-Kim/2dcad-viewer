@@ -334,18 +334,22 @@ DXF 짝이 없어 DXF 코드를 확인하지 못한 자료가 든 객체는 풀�
 | 클래스 | DWG(공통 다음) | DXF 태그 | 확인 |
 | --- | --- | --- | --- |
 | TEXT | BS 70, BD 50(라디안), 2RD 10, 2RD 11 | 70, 50(도), 10·20, 11·21 | 표본 6개(R2010~R2018) 비트·AutoCAD DXF 태그 같음 |
-| MTEXTATTRIBUTE | TEXT + B 290 여러 줄(1이면 포함 객체 — 풀지 않음) | TEXT + 290 | 예제 도면 118개(R2007·R2018) 비트 같음 |
+| MTEXTATTRIBUTE | TEXT + B 290 여러 줄. 1이면 포함 객체: BL 반응자 0, (R2004+) B 확장 사전 없음, (R2013+) B 0, H 소유자, (R2000 또는 확장 사전이 있으면) H 확장 사전, MTEXT 레코드(BS 판, B 기본, H 축척, MTEXT 필드) | TEXT + 290, 여러 줄이면 `101 Embedded Object`·70·290·340·MTEXT 필드(표지 없이 — 짐작) | 한 줄: 예제 도면 118개(R2007·R2018)·공개 DXF 252개. 여러 줄: 실물 없음(기능 명세 6.1), 왕복 |
 | BLKREF | BD 50, 3BD 10, BD 41·42·43 | 50(도), 10·20·30, 41·42·43 | 예제 도면 52개 비트 같음 |
-| MTEXT | BL 70, 3BD 10, 3BD 11, BD 40~43, BL 71(열이면 BL 72, BD 44·45, B 73·74 — 손으로 높이를 준 열은 풀지 않음) | 같은 순서 | 표본 없음(기능 명세), 왕복 |
-| ALDIM·ANGDIM·RADIM·DMDIM·ORDDIM·RADIMLRG | 2RD 10 문자 위치, B 294, BD 140, H 2 블록(하드 포인터), 15비트(모두 0 — 아니면 풀지 않음), B 296·297, 3BD 점(11 / 11·12 / 11·12·13) | `100 AcDbDimensionObjectContextData`, 2 블록 이름, 293, 10·20, 294, 140, 298·291·70·292·71·280·295, 296·297, `100 종류 표지`, 점 | 표본 없음(기능 명세 annotation-scale.md 6.1), 왕복. 2는 읽은 뒤 build.ts가 블록 이름으로 바꾼다 |
-| HATCHSCALE | BL 78, 선마다 BD 53·43·44·45·46, BS 79, BD 49…; BD 40, 3BD 10, BL 90, 루프마다 BL 90·B 290(0이면 풀지 않음) | `100 AcDbHatchObjectContextData` + 같은 순서(53은 도) | 표본 없음(기능 명세), 왕복 |
-| HATCHVIEW | HATCHSCALE + H 330 뷰포트(소프트), 3BD 10, BD 51, B 290 | + `100 AcDbHatchViewContextData` | 표본 없음. 읽고 그대로 둔다(편집은 이 모음을 지운다) |
+| MTEXT | BL 70, 3BD 10, 3BD 11, BD 40~43, BL 71(열이면 BL 72, BD 44·45, B 73·74, 동적 열(2)이고 자동 높이가 아니면 열마다 BD 46) | 같은 순서 | 공개 도면 DWG 4개(R2018, 하나는 DXF 짝)의 비트·태그 같음, 공개 DXF 161개 왕복. AutoCAD는 정의 높이가 없는 MTEXT에 71 = 2·72 = 1·73 = 0과 46 하나를 쓴다 |
+| ALDIM·ANGDIM·RADIM·DMDIM·ORDDIM·RADIMLRG | 2RD 10 문자 위치, B 294, BD 140, H 2 블록(하드 포인터), B 293·298·291·70·292·71, RC 280, B 295(15비트), B 296·297, 3BD 점(11 / 11·12 / 11·12·13) | `100 AcDbDimensionObjectContextData`, 2 블록 이름, 293, 10·20, 294, 140, 298·291·70·292·71·280·295, 296·297, `100 종류 표지`, 점 | 공개 도면 DWG·DXF 짝 2개(R2013, ALDIM 52·DMDIM 2)의 태그·비트 같음, 공개 DWG(R2018) ALDIM·ANGDIM·DMDIM 4개 비트 같음. 71 = 1·280 = 16 레코드 26개로 71·280의 자리를 정했다(앞 다섯 비트는 실물이 모두 0이라 DXF 순서). RADIM·ORDDIM·RADIMLRG는 실물 없음. 2는 읽은 뒤 build.ts가 블록 이름으로 바꾼다 |
+| HATCHSCALE | BL 78, 선마다 BD 53·43·44·45·46, BS 79, BD 49…; BD 40, 3BD 10, BL 90, 루프마다 BL 90·B 290(0이면 풀지 않음 — 실물 없음) | `100 AcDbHatchObjectContextData` + 같은 순서(53은 도) | 공개 도면 DWG(R2018) 3개 비트 같음 |
+| HATCHVIEW | HATCHSCALE + H 330 뷰포트(소프트), 3BD 10, BD 51, B 290 | + `100 AcDbHatchViewContextData` | 공개 도면 DWG(R2018) 3개 비트 같음: 관리자 사전의 `ACDB_ANNOTATIONSCALE_VIEW_COLLECTION`(`ACDB_ANNOTATIONSCALES` 앞)에 축척 레코드마다 하나, 축척·기본·패턴 선·루프는 축척 레코드와 같고 40 = 1, 10 = 0 벡터, 330 = 0, 시선 (0, 0, 1), 51 = 0, 290 = 0. 편집은 이 꼴로 다시 만든다(`edit/annoscale/context.ts` `syncHatchViewsOps`) |
 | MLEADER | 다중 지시선 컨텍스트 자료(사양 20.4.86): 지시선 루트 → 내용 → 기준 평면 → (R2010+) BS 273·272 | MULTILEADER의 `CONTEXT_DATA{` 안 태그와 같은 순서(내용 → 지시선 → 272·273), 재지정 없는 지시선 선은 91 뒤 특성 없음 | MULTILEADER 본문의 같은 자료로 확인: 표본 R2004~R2018 각 15개가 AutoCAD DXF 태그와 같고 다시 쓴 비트도 같다(R2000은 CMC가 ACI만이라 트루컬러 배경색이 다르다) |
-| LEADER | BL 70, 3BD 10…, 3BD 11, B 290, 3BD 12·13 | 같은 순서 | 표본 없음(기능 명세) |
+| LEADER | BL 70, 3BD 10…, 3BD 11, B 290, 3BD 12·13 | 같은 순서 | 공개 도면 DWG·DXF 짝 2개(R2010·R2018)와 DWG 2개의 태그·비트 같음(290 = 0, 13이 0이 아닌 것도 있다) |
 
 - 사양과 다른 점: MLeaderAnnotContext의 "문자가 없으면 B 296"은 문자가 있을 때도 B 하나(늘 0)가 있다 — 문자 다음에 B 296을 읽으면
   표본 비트와 맞는다. R2010+ 지시선 선의 재지정 특성은 재지정이 없어도 늘 있다(BS 1, CMC ByBlock, H 0, BL −2, BD 0, H 0, BL 0).
 - 클래스 목록 값: 모두 `ObjectDBX Classes`, 프록시 플래그 1153, 만든 버전 27/0(표본의 TEXT·BLKREF·MTEXTATTRIBUTE·ALDIM).
+  공개 도면의 ALDIM·ANGDIM·DMDIM·HATCHSCALE·HATCHVIEW·MTEXT 클래스도 `ObjectDBX Classes`·1153.
+- 공개 도면에서 본 15번째 종류 `ACDB_FCFOBJECTCONTEXTDATA_CLASS`(공차, DWG 1개·DXF 짝 없음)는 풀지 않는다(원본 비트만).
+- 실물 대조 도구(개발 중, 저장소 밖 `.runtime/annoreal/`): 공개 도면 DWG의 레코드를 풀어 같은 도면 DXF의 태그와 맞추고, 다시 쓴
+  비트를 원본 본문 비트와 맞춘다(R2010+ 핸들 흐름 끝의 바이트 맞춤 비트는 빼고). 82개 모두 같다.
 - 쓰기: R2000부터 쓴다(AutoCAD SAVEFIDELITY 0과 같다). 판은 저장 버전 값. R2018 주석 MTEXT(이 파일에 쓰는 MTEXT 레코드가 있는 것)는
   "주석 아님" 비트 0, 인라인 기록 없음. 주석 치수의 DSTYLE 40은 AutoCAD 값(주석 스타일이면 없음, 아니면 0, `io/annoscale.ts`).
 - 코드 페이지 고르기(R2007 이전)에 다중 지시선 문자(객체와 레코드의 304)도 넣는다.

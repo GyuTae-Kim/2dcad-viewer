@@ -8,13 +8,17 @@
  * 레코드 원시 태그(DXF 그룹 = DWG 비트 순서): `100 AcDbObjectContextData`, `70 판`(AC1024+ 4, 그 전 3), `290 기본`,
  * `100 AcDbAnnotScaleObjectContextData`, `340 축척`, 그 뒤 종류별 필드.
  * - TEXT: 70 수평 정렬, 50 회전(도), 10·20 첫 점, 11·21 정렬점
- * - MTEXTATTRIBUTE(속성): TEXT의 필드 + 290 여러 줄
+ * - MTEXTATTRIBUTE(속성): TEXT의 필드 + 290 여러 줄(1이면 `101 Embedded Object`와 포함 MTEXT 레코드가 따른다 — 읽기만)
  * - BLKREF(블록 참조): 50 회전(도), 10·20·30 삽입점, 41·42·43 축척(예전 빌드의 42·43·44는 읽기만)
- * - MTEXT: 70 부착점, 10 X축 방향, 11 위치, 40 폭, 41 정의 높이, 42·43 문자 범위, 71 열 종류(열이 있으면 72·44·45·73·74)
+ * - MTEXT: 70 부착점, 10 X축 방향, 11 위치, 40 폭, 41 정의 높이, 42·43 문자 범위, 71 열 종류(열이 있으면 72·44·45·73·74,
+ *   동적 열이고 자동 높이가 아니면 열마다 46 높이). AutoCAD는 정의 높이가 없는 MTEXT에도 71 = 2(동적), 72 = 1을 쓴다.
  * - 치수(ALDIM 등): `100 AcDbDimensionObjectContextData`, 2 그 축척의 익명 블록 이름, 293, 10·20 문자 위치, 294 기본 자리,
- *   140 문자 회전(라디안), 298·291·70·292·71·280·295(0), 296·297 화살표 뒤집기, 종류 표지 뒤 종류별 점 11(·12·13)
+ *   140 문자 회전(라디안), 298·291·70·292·71·280·295(뜻을 모르는 값 — 다시 쓸 때 이어받는다), 296·297 화살표 뒤집기,
+ *   종류 표지 뒤 종류별 점 11(·12·13)
  * - HATCHSCALE: `100 AcDbHatchObjectContextData`, 78 패턴 선 수, 선마다 53·43·44·45·46·79·49…, 40 배율, 10 패턴 방향,
  *   90 루프 수, 루프마다 90 종류·290 1
+ * - HATCHVIEW(관리자의 ACDB_ANNOTATIONSCALE_VIEW_COLLECTION, 축척 레코드마다 하나): HATCHSCALE의 필드(40 = 1, 10 = 0 벡터),
+ *   `100 AcDbHatchViewContextData`, 330 뷰포트(0), 10 시선(0, 0, 1), 51 비틀림 0, 290 0
  * - MLEADER: 다중 지시선 컨텍스트 자료(mlctx.ts)
  * DWG 비트 배치는 src/io/dwg/ctxcodec.ts.
  * 객체 자체 데이터는 기본 레코드(290 = 1)의 축척 표현이다(TEXT 레코드에는 높이가 없다: 높이 = 용지 높이 × 배율).
@@ -225,6 +229,8 @@ export interface MTextFields {
   gutter?: number;
   autoHeight?: boolean;
   flowReversed?: boolean;
+  /** 동적 열(2)이고 자동 높이가 아닐 때 열마다 높이(46) */
+  columnHeights?: number[];
 }
 
 export function mtextFields(r: ContextRecord): MTextFields | null {
@@ -246,6 +252,13 @@ export function mtextFields(r: ContextRecord): MTextFields | null {
     f.gutter = num(first(b, 45));
     f.autoHeight = num(first(b, 73)) === 1;
     f.flowReversed = num(first(b, 74)) === 1;
+    // 포함 MTEXT 레코드(여러 줄 속성)가 없는 꼴이므로 74 다음의 46만 높이다
+    const i74 = b.findIndex((t) => t.code === 74);
+    if (i74 >= 0) {
+      const hs: number[] = [];
+      for (let i = i74 + 1; i < b.length && b[i]!.code === 46; i++) hs.push(num(b[i]!.value));
+      if (hs.length) f.columnHeights = hs;
+    }
   }
   return f;
 }
@@ -258,9 +271,17 @@ export interface DimFields {
   /** 296·297 화살표 뒤집기 */
   flip1?: boolean;
   flip2?: boolean;
+  /** 뜻을 모르는 값(DIM_FLAG_CODES 순서) */
+  flags?: number[];
   /** 종류 표지 뒤의 점(11·12·13 순서) */
   points?: Vec3[];
 }
+
+/**
+ * 치수 레코드의 뜻을 모르는 값(DXF 그룹 순서 — DWG에서는 B 여섯, RC 280, B 295의 15비트). 공개 도면의 AutoCAD 레코드에는
+ * 71 = 1·280 = 16인 것이 있다. 새 레코드는 0(AutoCAD가 만든 치수 레코드 대부분과 같다), 다시 쓰는 레코드는 그 값을 이어받는다.
+ */
+export const DIM_FLAG_CODES = [293, 298, 291, 70, 292, 71, 280, 295] as const;
 
 export function dimFields(r: ContextRecord): DimFields | null {
   const b = r.body;
@@ -273,6 +294,14 @@ export function dimFields(r: ContextRecord): DimFields | null {
     flip1: num(first(b, 296)) === 1,
     flip2: num(first(b, 297)) === 1,
   };
+  // 표지(AcDbDimensionObjectContextData) 다음 태그의 값(70은 앞 머리의 판과 겹치므로 표지 뒤에서 찾는다)
+  const im0 = b.findIndex((t) => t.code === 100 && String(t.value).trim() === 'AcDbDimensionObjectContextData');
+  if (im0 >= 0) {
+    const tail = b.slice(im0 + 1);
+    const end = tail.findIndex((t) => t.code === 100);
+    const part = end >= 0 ? tail.slice(0, end) : tail;
+    out.flags = DIM_FLAG_CODES.map((c) => num(first(part, c)));
+  }
   const spec = DIM_CLASSES[r.type];
   const im = spec ? b.findIndex((t) => t.code === 100 && String(t.value).trim() === spec.marker) : -1;
   if (spec && im >= 0) {
@@ -443,7 +472,9 @@ export function mtextRecordRaw(ver: number, isDefault: boolean, scale: string, f
     { code: 71, value: f.columnType },
   ];
   if (f.columnType) {
-    out.push({ code: 72, value: f.columnCount ?? 0 }, { code: 44, value: f.columnWidth ?? 0 }, { code: 45, value: f.gutter ?? 0 }, { code: 73, value: f.autoHeight ? 1 : 0 }, { code: 74, value: f.flowReversed ? 1 : 0 });
+    const n = f.columnCount ?? 0;
+    out.push({ code: 72, value: n }, { code: 44, value: f.columnWidth ?? 0 }, { code: 45, value: f.gutter ?? 0 }, { code: 73, value: f.autoHeight ? 1 : 0 }, { code: 74, value: f.flowReversed ? 1 : 0 });
+    if (f.columnType === 2 && !f.autoHeight) for (let k = 0; k < n; k++) out.push({ code: 46, value: f.columnHeights?.[k] ?? 0 });
   }
   return out;
 }
@@ -455,27 +486,24 @@ export interface DimRecord {
   textRotation: number;
   flip1?: boolean;
   flip2?: boolean;
+  /** 뜻을 모르는 값(DIM_FLAG_CODES 순서, 없으면 0) */
+  flags?: readonly number[];
   points: Vec3[];
 }
 
 export function dimRecordRaw(ver: number, isDefault: boolean, scale: string, cls: string, f: DimRecord): RawTag[] {
   const spec = DIM_CLASSES[cls] ?? DIM_CLASSES.ACDB_ALDIMOBJECTCONTEXTDATA_CLASS!;
+  const flag = (k: number): number => f.flags?.[k] ?? 0;
   const out: RawTag[] = [
     ...head(ver, isDefault, scale),
     { code: 100, value: 'AcDbDimensionObjectContextData' },
     { code: 2, value: f.block },
-    { code: 293, value: 0 },
+    { code: 293, value: flag(0) },
     { code: 10, value: f.textPos.x },
     { code: 20, value: f.textPos.y },
     { code: 294, value: f.textDefault ? 1 : 0 },
     { code: 140, value: f.textRotation },
-    { code: 298, value: 0 },
-    { code: 291, value: 0 },
-    { code: 70, value: 0 },
-    { code: 292, value: 0 },
-    { code: 71, value: 0 },
-    { code: 280, value: 0 },
-    { code: 295, value: 0 },
+    ...DIM_FLAG_CODES.slice(1).map((code, k) => ({ code, value: flag(k + 1) })),
     { code: 296, value: f.flip1 ? 1 : 0 },
     { code: 297, value: f.flip2 ? 1 : 0 },
     { code: 100, value: spec.marker },
@@ -665,18 +693,89 @@ export function rewriteRecordOps(doc: CadDocument, rec: ContextRecord, raw: RawT
   ops.push({ kind: 'object', key: rec.handle, before: cur, after: changed(cur, { raw }) });
 }
 
+/** 같은 변경(ops) 뒤의 사전(사전이 아니거나 없으면 null) */
+function pendingDict(doc: CadDocument, ops: readonly EditOp[], h: string | undefined): DictionaryObject | null {
+  const o = h ? pendingObject<DictionaryObject>(doc, ops, h) : null;
+  return o && (o.type === 'DICTIONARY' || o.type === 'ACDBDICTIONARYWDFLT') ? o : null;
+}
+
 /**
- * 해치의 뷰포트별 표현 모음(ACDB_ANNOTATIONSCALE_VIEW_COLLECTION)을 지운다. 축척 레코드를 이 앱이 다시 만들면 그 모음은
- * 낡은 패턴 선을 갖게 되므로 빼고, AutoCAD가 필요할 때 다시 만들게 둔다.
+ * 해치 축척 레코드 → 그 축척의 뷰포트별 표현(HATCHVIEW) 원시 태그. AutoCAD가 주석 해치마다 만드는 꼴(공개 도면 DWG의 레코드,
+ * 기능 명세 annotation-scale.md 6.1): 축척·기본 표지·패턴 선·루프는 축척 레코드와 같고 40 = 1, 10 = 0 벡터, 그 뒤
+ * `100 AcDbHatchViewContextData`, 330 뷰포트 0, 10 시선 (0, 0, 1), 51 비틀림 0, 290 0. 해치 레코드가 아니면 null.
+ */
+export function hatchViewRaw(scaleRaw: readonly RawTag[]): RawTag[] | null {
+  const im = scaleRaw.findIndex((t) => t.code === 100 && String(t.value).trim() === 'AcDbHatchObjectContextData');
+  const i78 = scaleRaw.findIndex((t, i) => i > im && t.code === 78);
+  if (im < 0 || i78 < 0) return null;
+  // 패턴 선 뒤(40·10·20·30)를 찾는다
+  const n = num(scaleRaw[i78]!.value);
+  let i = i78 + 1;
+  for (let k = 0; k < n && i < scaleRaw.length; k++) {
+    for (const c of [53, 43, 44, 45, 46]) if (scaleRaw[i]?.code === c) i++;
+    const nd = scaleRaw[i]?.code === 79 ? num(scaleRaw[i++]!.value) : 0;
+    for (let d = 0; d < nd && scaleRaw[i]?.code === 49; d++) i++;
+  }
+  if (scaleRaw[i]?.code !== 40) return null;
+  const out = scaleRaw.map((t) => ({ ...t }));
+  out[i] = { code: 40, value: 1 };
+  for (let j = i + 1; j < i + 4 && j < out.length; j++) if ([10, 20, 30].includes(out[j]!.code)) out[j] = { code: out[j]!.code, value: 0 };
+  out.push(
+    { code: 100, value: 'AcDbHatchViewContextData' },
+    { code: 330, value: '0' },
+    { code: 10, value: 0 },
+    { code: 20, value: 0 },
+    { code: 30, value: 1 },
+    { code: 51, value: 0 },
+    { code: 290, value: 0 },
+  );
+  return out;
+}
+
+/**
+ * 해치의 뷰포트별 표현 모음(ACDB_ANNOTATIONSCALE_VIEW_COLLECTION)을 지금(같은 변경 ops 뒤) 축척 레코드에 맞춰 다시 만든다:
+ * 옛 모음과 그 레코드를 지우고, 축척 레코드마다 HATCHVIEW 하나(hatchViewRaw)를 키 *A1…로 둔 새 모음을 관리자 사전의
+ * ACDB_ANNOTATIONSCALES 앞에 둔다(AutoCAD의 사전 순서 — 대소문자를 무시하면 `_`가 `S`보다 앞이다). 축척 레코드가 없으면 지우기만.
+ * 한 변경에서 객체마다 한 번만 부른다.
+ */
+export function syncHatchViewsOps(doc: CadDocument, e: { xdict?: string }, alloc: () => string, ops: EditOp[]): void {
+  if (!e.xdict) return;
+  removeViewCollectionOps(doc, e, ops);
+  const xdict = pendingDict(doc, ops, e.xdict);
+  const mgrH = entryOf(xdict, MANAGER_KEY);
+  const mgr = pendingDict(doc, ops, mgrH);
+  const sc = pendingDict(doc, ops, entryOf(mgr, SCALES_KEY));
+  if (!mgr || !sc) return;
+  const views: RawTag[][] = [];
+  for (const h of sc.entries.values()) {
+    const o = pendingObject<GenericObject>(doc, ops, h);
+    if (!o || o.type.toUpperCase() !== CLASS_HATCH || !o.raw) continue;
+    const v = hatchViewRaw(o.raw);
+    if (v) views.push(v);
+  }
+  if (!views.length) return;
+  const vh = alloc();
+  const entries: [string, string][] = views.map((raw, k) => {
+    const rh = alloc();
+    ops.push({ kind: 'object', key: rh, before: null, after: { type: CLASS_HATCHVIEW, handle: rh, owner: vh, reactors: [vh], raw } as GenericObject });
+    return [`*A${k + 1}`, rh];
+  });
+  ops.push({ kind: 'object', key: vh, before: null, after: newDict(vh, upper(mgr.handle), entries) });
+  const rest = [...mgr.entries].filter(([k]) => k.toUpperCase() !== VIEWS_KEY);
+  const at = rest.findIndex(([k]) => k.toUpperCase() === SCALES_KEY);
+  rest.splice(at < 0 ? rest.length : at, 0, [VIEWS_KEY, vh]);
+  setDictEntries(doc, ops, mgr, rest);
+}
+
+/**
+ * 해치의 뷰포트별 표현 모음(ACDB_ANNOTATIONSCALE_VIEW_COLLECTION)을 지운다(주석 아님으로 바꿀 때, 그리고 다시 만들기 전에).
  */
 export function removeViewCollectionOps(doc: CadDocument, e: { xdict?: string }, ops: EditOp[]): void {
-  const xdict = dictOf(doc, e.xdict);
-  const mgrH = entryOf(xdict, MANAGER_KEY);
-  const mgr = mgrH ? pendingObject<DictionaryObject>(doc, ops, mgrH) : null;
+  const mgr = pendingDict(doc, ops, entryOf(pendingDict(doc, ops, e.xdict), MANAGER_KEY));
   const vh = entryOf(mgr, VIEWS_KEY);
   if (!mgr || !vh) return;
-  const views = pendingObject<DictionaryObject>(doc, ops, vh);
-  if (views && (views.type === 'DICTIONARY' || views.type === 'ACDBDICTIONARYWDFLT')) {
+  const views = pendingDict(doc, ops, vh);
+  if (views) {
     for (const h of views.entries.values()) {
       const o = pendingObject(doc, ops, h);
       if (o) ops.push({ kind: 'object', key: upper(h), before: o, after: null });
