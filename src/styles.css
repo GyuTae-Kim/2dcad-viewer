@@ -56,6 +56,15 @@ button {
   width: 100vw;
 }
 
+/* 접힌 리본(display:none) 때문에 뒤쪽 요소가 앞 행으로 당겨지지 않게 한다. */
+#app > .titlebar { grid-row: 1; }
+#app > .ribbon-tabs { grid-row: 2; }
+#app > .ribbon { grid-row: 3; }
+#app > .filetabs { grid-row: 4; }
+#app > .workspace { grid-row: 5; }
+#app > .layouttabs { grid-row: 6; }
+#app > .statusbar { grid-row: 7; }
+
 /* 제목 막대 */
 .titlebar {
   display: flex;
