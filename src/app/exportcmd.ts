@@ -11,6 +11,7 @@ const FORMATS = [
   ['PNG', 'PNG (*.png)', 'PNGOUT'],
   ['JPG', 'JPEG (*.jpg)', 'JPGOUT'],
   ['BMP', '비트맵 (*.bmp)', 'BMPOUT'],
+  ['WMF', 'Windows 메타파일 (*.wmf) — 고른 객체', 'WMFOUT'],
   ['DWG', '도면 (*.dwg) — 다른 이름으로 저장', 'SAVEAS'],
   ['DXF', 'DXF (*.dxf) — 다른 이름으로 저장', 'SAVEAS'],
   ['LAYOUT', '배치를 모형으로 (*.dwg)', 'EXPORTLAYOUT'],

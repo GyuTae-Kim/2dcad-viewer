@@ -48,7 +48,24 @@ export const refHooks: {
   onXrefReload: ((key: string, prev: { name: string; doc: CadDocument }, next: { name: string; doc: CadDocument }) => void) | null;
   /** 외부 참조 창의 행 오른쪽 클릭 메뉴 항목 */
   rowMenu: ((item: RefItem, closeDialog: () => void) => MenuItem[]) | null;
-} = { onXrefReload: null, rowMenu: null };
+  /** PDF 페이지('pdf:파일#쪽')를 그릴 때 끌 PDF 도면층 식별자(PDFLAYERS) */
+  pdfHiddenLayers: ((key: string) => ReadonlySet<string> | undefined) | null;
+} = { onXrefReload: null, rowMenu: null, pdfHiddenLayers: null };
+
+/** 연결한 PDF 파일의 바이트(열쇠 = 파일 이름 소문자). 연결하지 않았으면 undefined */
+export function pdfFileBytes(fileKey: string): Uint8Array | undefined {
+  return pdfData.get(fileKey);
+}
+
+/** 연결한 PDF 페이지 그림을 바꾼다(PDFLAYERS로 도면층을 켜고 끈 뒤 다시 그린 페이지, 크기는 같다) */
+export function replacePdfRaster(app: App, key: string, bitmap: ImageBitmap): void {
+  bitmaps.get(key)?.close();
+  bitmaps.set(key, bitmap);
+  pixelCache.delete(key);
+  urlCache.delete(key);
+  app.view.renderer.setImage(key, bitmap);
+  app.view.requestRender();
+}
 
 /** 외부 참조 블록이 찾는 파일 열쇠(파일 이름 소문자) */
 export function xrefFileKey(b: { name: string; xrefPath?: string }): string {
@@ -356,7 +373,7 @@ export async function renderPdfPages(app: App): Promise<{ rendered: number; fail
       try {
         for (const n of pages) {
           const key = `pdf:${fk}#${n}`;
-          const page = await r.rasterPage(opened.pdf, n, max).catch(() => null);
+          const page = await r.rasterPage(opened.pdf, n, max, refHooks.pdfHiddenLayers?.(key)).catch(() => null);
           if (!page) continue;
           bitmaps.get(key)?.close();
           bitmaps.set(key, page.bitmap);

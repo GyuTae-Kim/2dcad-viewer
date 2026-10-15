@@ -32,9 +32,30 @@ export async function openPdf(data: Uint8Array): Promise<{ pdf: PDFDocumentProxy
   return { pdf: await task.promise, close: () => task.destroy() };
 }
 
-/** 페이지(1부터)를 긴 변 maxPx 화소 이하로 그린다. 없는 페이지면 null */
-export async function rasterPage(pdf: PDFDocumentProxy, pageNo: number, maxPx: number): Promise<PdfPageRaster | null> {
+/** PDF 도면층(선택 내용 그룹): 식별자·이름·처음 보임 */
+export interface PdfLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+}
+
+/** PDF의 도면층 목록(선택 내용이 없으면 빈 배열) */
+export async function pdfLayers(pdf: PDFDocumentProxy): Promise<PdfLayer[]> {
+  const cfg = await pdf.getOptionalContentConfig();
+  const out: PdfLayer[] = [];
+  for (const [id, g] of cfg as Iterable<[string, { name?: string | null; visible?: boolean }]>) out.push({ id: String(id), name: String(g?.name ?? id), visible: g?.visible !== false });
+  return out;
+}
+
+/** 페이지(1부터)를 긴 변 maxPx 화소 이하로 그린다. hidden은 끌 PDF 도면층 식별자. 없는 페이지면 null */
+export async function rasterPage(pdf: PDFDocumentProxy, pageNo: number, maxPx: number, hidden?: ReadonlySet<string>): Promise<PdfPageRaster | null> {
   if (pageNo < 1 || pageNo > pdf.numPages) return null;
+  let optionalContentConfigPromise: ReturnType<PDFDocumentProxy['getOptionalContentConfig']> | undefined;
+  if (hidden?.size) {
+    const cfg = await pdf.getOptionalContentConfig();
+    for (const [id] of cfg as Iterable<[string, unknown]>) cfg.setVisibility(id, !hidden.has(String(id)));
+    optionalContentConfigPromise = Promise.resolve(cfg);
+  }
   const page = await pdf.getPage(pageNo);
   try {
     const base = page.getViewport({ scale: 1 });
@@ -48,7 +69,7 @@ export async function rasterPage(pdf: PDFDocumentProxy, pageNo: number, maxPx: n
     canvas.height = Math.max(1, Math.round(vp.height));
     // pdf.js가 만드는 문맥은 알파가 없어 투명 배경이 검게 된다: 알파 있는 문맥을 직접 준다
     const ctx = canvas.getContext('2d', { alpha: true })!;
-    await page.render({ canvas: null, canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)' }).promise;
+    await page.render({ canvas: null, canvasContext: ctx, viewport: vp, background: 'rgba(0,0,0,0)', optionalContentConfigPromise }).promise;
     const bitmap = await createImageBitmap(canvas);
     canvas.width = canvas.height = 0;
     return { bitmap, width, height };

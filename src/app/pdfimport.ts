@@ -23,6 +23,13 @@ async function pickPdf(): Promise<File | null> {
   }
 }
 
+let preset: File | null = null;
+
+/** 다음 PDFIMPORT가 파일 고르기 대신 이 파일을 쓴다(IMPORT가 이미 고른 파일) */
+export function presetPdfImportFile(f: File): void {
+  preset = f;
+}
+
 export function registerPdfImportCommands(app: App): void {
   app.register({
     name: 'PDFIMPORT',
@@ -31,7 +38,8 @@ export function registerPdfImportCommands(app: App): void {
     async run(ctx) {
       const st = app.active!;
       const doc = st.doc;
-      const file = await pickPdf();
+      const file = preset ?? (await pickPdf());
+      preset = null;
       if (!file) return;
       const data = new Uint8Array(await file.arrayBuffer());
       ctx.print(`${file.name} 읽는 중…`);

@@ -12,6 +12,7 @@
 import type { BlockDef, CadDocument, CadObject, DictionaryObject, GenericObject, GroupObject, Layer, LayoutObject, RawTag, TableRecordBase, XData, XDataItem, XRecordObject } from '../../core/model';
 import { normalizeHandle, tableKey } from '../../core/model';
 import type { EditOp } from '../session';
+import { regAppOp, validAppName } from '../editcmds2/appid';
 import type { LispDrawing } from './host';
 import type { Interp } from './interp';
 import { prin1 } from './printer';
@@ -793,9 +794,10 @@ export function modLayer(it: Interp, d: LispDrawing, h: string, pairs: readonly 
 
 /** regapp: 앱 이름 등록. 새로 등록했으면 true(이미 있거나 이름이 틀리면 false) */
 export function regApp(d: LispDrawing, name: string): boolean {
-  const n = name.trim();
-  if (!n || n.length > 255 || /[<>/\\":;?*|,=`]/.test(n) || appRegistered(d.doc, n)) return false;
-  // APPID 표는 편집 기록이 없다: 도면 문서에 바로 넣는다(저장할 때 확장 데이터가 쓰는 앱은 어차피 APPID로 쓴다)
-  d.doc.appIds.set(tableKey(n), { name: n, handle: d.session.newHandle(), flags: 0 });
+  if (!validAppName(name) || appRegistered(d.doc, name.trim())) return false;
+  // APPID 표 기록 작업: 명령 취소(U)로 등록이 되돌아간다
+  const op = regAppOp(d.doc, name, d.session.newHandle());
+  if (!op) return false;
+  d.commit([op], 'REGAPP');
   return true;
 }

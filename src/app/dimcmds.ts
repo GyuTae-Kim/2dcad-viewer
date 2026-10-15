@@ -137,12 +137,12 @@ function circleEntity(e: Entity | undefined): Entity | undefined {
 }
 
 /** 문서 기본 치수 스타일 옵션(문자 재지정) */
-interface DimOpts {
+export interface DimOpts {
   text?: string;
 }
 
 /** 미리보기 형상 */
-function preview(app: App, make: (p: Pt) => DimensionEntity | null): (p: Pt) => OverlayGeom[] {
+export function preview(app: App, make: (p: Pt) => DimensionEntity | null): (p: Pt) => OverlayGeom[] {
   return (p) => {
     const pk = app.picker();
     const d = make(p);
@@ -157,7 +157,7 @@ function preview(app: App, make: (p: Pt) => DimensionEntity | null): (p: Pt) => 
 }
 
 /** 문자(T)·여러 줄 문자(M) 옵션 처리. 계속하면 true */
-async function textOption(ctx: CommandContext, key: string, o: DimOpts): Promise<boolean> {
+export async function textOption(ctx: CommandContext, key: string, o: DimOpts): Promise<boolean> {
   if (key === 'T') {
     const r = await ctx.getPoint(`치수 문자를 입력 <${o.text ? o.text : '<>'}>:`, { allowText: true });
     if ('text' in r) o.text = r.text;
@@ -172,7 +172,7 @@ async function textOption(ctx: CommandContext, key: string, o: DimOpts): Promise
 }
 
 /** 선택한 객체에서 두 치수보조선 원점(선·폴리선 세그먼트·호) */
-function originsFromEntity(e: Entity | undefined, pick: Pt): [Pt, Pt] | null {
+export function originsFromEntity(e: Entity | undefined, pick: Pt): [Pt, Pt] | null {
   if (!e) return null;
   if (e.type === 'LINE') return [e.start, e.end];
   if (e.type === 'ARC') {

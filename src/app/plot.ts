@@ -9,6 +9,7 @@ import type { DocState } from './docstate';
 import { type Page, type PageOptions, PT_PER_MM, baseName, download, exportPageSvg, layoutPage, modelPage, pdfDocument } from './export';
 import { dialog, form, h } from './ui/dom';
 import { ctbByName, ctbList, pickCtbFiles } from './ctblib';
+import { plotStampOn, setPlotStampOn, stampPages } from './filecmds-stamp';
 
 /** 용지(mm, 세로 방향 폭 × 높이) */
 export const PAPERS: { key: string; label: string; w: number; h: number }[] = [
@@ -96,8 +97,14 @@ function pageOptions(s: PlotSettings): PageOptions {
   return ctb ? { ctb, lineweights: s.lineweights } : { plotStyle: s.plotStyle, lineweights: s.lineweights };
 }
 
-/** 설정대로 페이지들을 만든다(배치 장면이 없으면 그려 온다) */
+/** 설정대로 페이지들을 만든다(배치 장면이 없으면 그려 온다). 플롯 스탬프를 켰으면 각 쪽에 적는다(화면에는 그리지 않는다) */
 export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Promise<Page[]> {
+  const pages = await drawPages(app, st, s, unitsPerMm);
+  if (pages.length && plotStampOn()) await stampPages(app, st, s, pages, unitsPerMm);
+  return pages;
+}
+
+async function drawPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Promise<Page[]> {
   await app.edits.flush(st);
   const opt = pageOptions(s);
   const pages: Page[] = [];
@@ -211,6 +218,7 @@ export function registerPlotCommands(app: App): void {
             ],
           },
           { key: 'lineweights', label: '선가중치 출력', type: 'check', value: prev?.lineweights ?? true },
+          { key: 'stamp', label: '플롯 스탬프 켜기', type: 'check', value: plotStampOn() },
           {
             key: 'format',
             label: '파일 형식',
@@ -226,6 +234,7 @@ export function registerPlotCommands(app: App): void {
         { ok: '플롯', note: '파일은 이 컴퓨터에서 만들어 바로 내려받습니다. 플롯하지 않는 도면층과 Defpoints는 빠집니다.' },
       );
       if (!v) return;
+      setPlotStampOn(!!v.stamp);
       let styleKey = String(v.plotStyle);
       if (styleKey === 'load') {
         const loaded = await pickCtbFiles();

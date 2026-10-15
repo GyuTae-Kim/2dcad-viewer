@@ -320,7 +320,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'BURST', label: '속성 남기고 분해', icon: 'explode' },
             { cmd: 'BLOCKREPLACE', label: '블록 대치', icon: 'insert' },
           ],
-          [{ cmd: 'ADCENTER', label: '디자인센터', icon: 'blocks', tip: '다른 도면의 블록·도면층·스타일 가져오기 (Ctrl+2)' }],
+          [
+            { cmd: 'ADCENTER', label: '디자인센터', icon: 'blocks', tip: '다른 도면의 블록·도면층·스타일 가져오기 (Ctrl+2)' },
+            { cmd: 'BLOCKSPALETTE', label: '블록 팔레트', icon: 'blocks', tip: '현재 도면·최근·라이브러리 블록을 미리보기로 삽입 (BLOCKSPALETTE)' },
+          ],
+          [
+            { cmd: 'ATTOUT', label: '속성 내보내기', icon: 'list', tip: '블록 속성을 탭 구분 파일로 (ATTOUT)' },
+            { cmd: 'ATTIN', label: '속성 가져오기', icon: 'list', tip: '고친 속성 파일을 읽어 값 바꾸기 (ATTIN)' },
+            { cmd: 'ATTEXT', label: '속성 추출', icon: 'table', tip: 'CDF·SDF·DXF로 속성 추출 (ATTEXT)' },
+          ],
           [
             { cmd: 'DYNPROPS', label: '동적 특성', icon: 'props', tip: '동적 블록 참조의 매개변수 값' },
             { cmd: 'RESETBLOCK', label: '블록 재설정', icon: 'redo', tip: '동적 블록 참조를 정의 기본값으로' },
@@ -336,6 +344,15 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'CLIP', label: '자르기', icon: 'trim', tip: '블록·외부 참조·이미지·언더레이·뷰포트를 경계로 자르기 (CLIP)' },
             { cmd: 'IMAGECLIP', label: '이미지 자르기', icon: 'trim', tip: '래스터 이미지 자르기 (ICL)' },
             { cmd: 'PDFCLIP', label: 'PDF 자르기', icon: 'trim', tip: 'PDF 언더레이 자르기' },
+          ],
+          [
+            { cmd: 'XATTACH', label: 'DWG 부착', icon: 'folder', tip: 'DWG·DXF를 외부 참조로 부착 (XA)' },
+            { cmd: 'IMAGEATTACH', label: '이미지 부착', icon: 'sample', tip: '래스터 이미지 부착 (IAT)' },
+            { cmd: 'PDFATTACH', label: 'PDF 부착', icon: 'exportPdf', tip: 'PDF 페이지를 언더레이로 부착' },
+          ],
+          [
+            { cmd: 'XBIND', label: '기호 결합', icon: 'layers', tip: '외부 참조의 도면층·블록·스타일을 이 도면에 결합 (XB)' },
+            { cmd: 'XOPEN', label: '참조 열기', icon: 'open', tip: '외부 참조를 새 탭으로 열기 (XOPEN)' },
           ],
           [
             { cmd: 'REFEDIT', label: '참조 편집', icon: 'block', tip: '블록·외부 참조를 제자리에서 고치기 (REFEDIT)' },
@@ -699,7 +716,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
           { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
-        cols: [[{ cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' }]],
+        cols: [
+          [
+            { cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' },
+            { cmd: 'PLOTSTAMP', label: '플롯 스탬프', icon: 'settings', tip: '출력에 도면 이름·날짜 등을 찍기 (PLOTSTAMP)' },
+            { cmd: 'PLOTSTYLE', label: '플롯 스타일', icon: 'props', tip: '객체의 이름 있는 플롯 스타일 (PLOTSTYLE)' },
+          ],
+          [
+            { cmd: 'CONVERTCTB', label: 'CTB→STB', icon: 'paper', tip: '색상 종속 플롯 스타일 표를 이름 있는 표로 (CONVERTCTB)' },
+            { cmd: 'CONVERTPSTYLES', label: '스타일 모드 변환', icon: 'paper', tip: '도면을 색상 종속 ↔ 이름 있는 플롯 스타일로 (CONVERTPSTYLES)' },
+          ],
+        ],
       },
       {
         title: '내보내기',
@@ -712,6 +739,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'JPGOUT', label: 'JPEG', icon: 'exportPng', tip: '지금 화면을 JPEG로 저장' },
             { cmd: 'BMPOUT', label: 'BMP', icon: 'exportPng', tip: '지금 화면을 비트맵으로 저장' },
+            { cmd: 'WMFOUT', label: 'WMF', icon: 'exportSvg', tip: '고른 객체를 Windows 메타파일로 (WMFOUT)' },
           ],
         ],
       },
@@ -960,6 +988,8 @@ export class Shell implements UiHooks {
         { separator: true },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
         { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },
+        { label: '모두 닫기', icon: 'close', disabled: !app.active, run: () => void app.run('CLOSEALL') },
+        { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
         { label: '단축키·도움말', icon: 'help', kbd: 'F1', run: () => void app.run('HELP') },
         { label: '이 뷰어에 대하여', icon: 'info', run: () => void app.run('ABOUT') },
@@ -1372,6 +1402,7 @@ export class Shell implements UiHooks {
               ]
             : []),
           { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
+          { label: '배치 마법사…', run: () => void app.run('LAYOUTWIZARD') },
           { separator: true },
           { label: '페이지 설정…', run: () => void go('PAGESETUP') },
           { label: '플롯…', run: () => void go('PLOT') },
