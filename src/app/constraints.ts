@@ -23,6 +23,7 @@ import { askKeyword, askText, button, loadPref, modal, savePref, selectWithKeywo
 import { ask, form, h } from './ui/dom';
 import { currentUcs } from './ucs';
 import type { Pt } from './view';
+import { installAcadConstraintSync } from './constraints-acad';
 
 const kw = (key: string, label: string): Keyword => ({ key, label });
 
@@ -801,6 +802,7 @@ async function parametersManager(app: App, ctx: CommandContext): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function registerConstraintCommands(app: App): void {
+  installAcadConstraintSync(app);
   app.register({
     name: 'GEOMCONSTRAINT',
     aliases: ['GCON'],
@@ -972,7 +974,7 @@ export function registerConstraintCommands(app: App): void {
   });
 }
 
-/** 도면을 열 때 AutoCAD가 만든 구속 정보 안내(있으면 명령행에 한 줄). main.ts의 onOpened에서 부른다 */
+/** 도면을 열 때 AutoCAD가 만든 구속을 읽은 결과 안내(있으면 명령행에 한 줄). main.ts의 onOpened에서 부른다 */
 export function noteForeignConstraints(app: App, st: DocState): void {
   const msg = foreignConstraintNotice(st.doc);
   if (msg) app.cmd.print(`참고: ${msg}`);

@@ -7,6 +7,7 @@ import type { CadDocument, FieldObject, FieldValue, GenericObject, RawTag } from
 import { fieldFromTags, fieldListHandles } from '../../fields';
 import { CTX_TYPES, encodeCtx, writeCtxOps } from '../ctxcodec';
 import { DYN_TYPES, type DynContext, encodeDyn, writeDynOps } from '../dyncodec';
+import { ASSOC_DWG_TYPES, assocWriteOps, writeAssocOps } from '../assoccodec';
 import { R2004, R2007 } from '../version';
 import type { BitWriter } from './bitwriter';
 import type { WCtx } from './context';
@@ -23,8 +24,14 @@ function dynContext(o: GenericObject, doc: CadDocument | undefined): DynContext 
   return block ? { block: block.toUpperCase() } : {};
 }
 
+/** 연관 망 객체: 저장 버전의 판으로 바꾼 원본 태그의 쓰기 명령(../assoccodec.ts) */
+function assocOps(o: GenericObject, ver: number, doc: CadDocument | undefined) {
+  return assocWriteOps(o, ver, (h) => doc?.objects.get(h));
+}
+
 /** 이 종류를 원본 태그·모델 값으로 쓸 수 있는지 */
 export function rawObjectOk(o: GenericObject, ver: number, doc?: CadDocument): boolean {
+  if (ASSOC_DWG_TYPES.has(o.type)) return !!assocOps(o, ver, doc);
   if (DYN_TYPES.has(o.type)) return !!encodeDyn(o.type, o.raw, ver, dynContext(o, doc));
   // 주석 축척 레코드: AutoCAD는 SAVEFIDELITY 0이면 R2000부터 같은 레코드(클래스 판 3)를 쓴다
   if (CTX_TYPES.has(o.type)) return !!encodeCtx(o.type, o.raw, ver);
@@ -280,6 +287,6 @@ export function writeRawObject(d: BitWriter, hd: BitWriter, ctx: WCtx, o: Generi
       } else if (DYN_TYPES.has(o.type)) {
         const ops = encodeDyn(o.type, o.raw, ctx.ver, dynContext(o, ctx.doc))!;
         writeDynOps(d, hd, ops, (h) => ctx.ref(h));
-      }
+      } else if (ASSOC_DWG_TYPES.has(o.type)) writeAssocOps(d, hd, assocOps(o, ctx.ver, ctx.doc)!, (h) => ctx.ref(h));
   }
 }

@@ -3,6 +3,7 @@
  * 문서에 클래스 정보가 없는 객체 종류를 쓸 때 이 표에서 채운다.
  */
 import type { CadClass } from '../../core/model';
+import { ASSOC_APP, ASSOC_CLASS_DEFS, ASSOC_PROXY_FLAGS } from '../../edit/assocnet/codec';
 
 const OBJECTDBX = 'ObjectDBX Classes';
 const ISM = 'ISM';
@@ -74,7 +75,7 @@ const DEFS: readonly (readonly [string, string, string, number, boolean])[] = [
 ];
 
 export const STANDARD_CLASSES: ReadonlyMap<string, CadClass> = new Map(
-  DEFS.map(([dxfName, cppName, appName, proxyFlags, isEntity]) => [
+  [...DEFS, ...ASSOC_CLASS_DEFS.map(([d, c]) => [d, c, ASSOC_APP, ASSOC_PROXY_FLAGS, false] as const)].map(([dxfName, cppName, appName, proxyFlags, isEntity]) => [
     dxfName,
     { dxfName, cppName, appName, proxyFlags, instanceCount: 0, wasProxy: false, isEntity },
   ]),

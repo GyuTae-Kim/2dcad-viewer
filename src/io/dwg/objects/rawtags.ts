@@ -21,6 +21,7 @@ import { fieldListTags, fieldTags } from '../../fields';
 import { BitReader } from '../bitstream';
 import { CTX_TYPES, decodeCtx } from '../ctxcodec';
 import { DYN_TYPES, decodeDyn } from '../dyncodec';
+import { ASSOC_DWG_TYPES, decodeAssoc } from '../assoccodec';
 import { stringStreamRange } from '../streams';
 import { R2007 } from '../version';
 import { readField, readFieldList } from './field';
@@ -33,7 +34,7 @@ export interface DecodedRaw {
 }
 
 /** 풀 수 있는 종류 */
-export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', ...CTX_TYPES.keys(), ...DYN_TYPES]);
+export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', ...CTX_TYPES.keys(), ...DYN_TYPES, ...ASSOC_DWG_TYPES]);
 
 /** 자료 흐름을 다 읽었는지(R2007+는 끝의 문자열 흐름 표지 비트 하나를 남길 수 있다) */
 function consumed(or: ObjectReader): boolean {
@@ -103,6 +104,12 @@ export function decodeRawTags(or: ObjectReader, type: string): DecodedRaw | null
       default:
         if (CTX_TYPES.has(type)) {
           res = { raw: decodeCtx(type, or.dat, or.hdl, or.h.handle, or.ver) };
+          if (!stringsConsumed(or)) return null;
+          break;
+        }
+        if (ASSOC_DWG_TYPES.has(type)) {
+          // 연관 망 객체(../assoccodec.ts)
+          res = { raw: decodeAssoc(type, or.dat, or.hdl, or.h.handle, or.ver) };
           if (!stringsConsumed(or)) return null;
           break;
         }

@@ -41,6 +41,7 @@ import { type TextEncoderCp, encoderFor } from './codepage';
 import { parseHandle, warnOnce } from './util';
 import { CTX_TYPES } from '../ctxcodec';
 import { DYN_TYPES } from '../dyncodec';
+import { ASSOC_DWG_TYPES } from '../assoccodec';
 import { rawObjectOk } from './rawobjects';
 import { arrayRecordXData, hasAcadArrays } from './assocarray';
 
@@ -125,6 +126,7 @@ const NATIVE_OBJECTS = new Set([
   'TABLESTYLE',
   ...CTX_TYPES.keys(),
   ...DYN_TYPES,
+  ...ASSOC_DWG_TYPES,
 ]);
 
 /** 원본 본문이 없으면 조용히 빼는 객체: 표 내용·형상·셀 스타일 지도는 DXF·옛 버전의 왕복 보조 자료이고
@@ -173,7 +175,7 @@ function chooseCodepage(doc: CadDocument, cur: number): number {
   }
   // 동적 블록 객체의 이름·레이블·상태 이름(원본 태그), 다중 지시선 축척 레코드의 문자(304)와 캐시(XRECORD)의 문자열
   for (const o of doc.objects.values()) {
-    const tags = DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type) ? (o as GenericObject).raw : o.type === 'XRECORD' ? (o as XRecordObject).data : undefined;
+    const tags = DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type) || ASSOC_DWG_TYPES.has(o.type) ? (o as GenericObject).raw : o.type === 'XRECORD' ? (o as XRecordObject).data : undefined;
     if (tags) for (const t of tags) if ((t.code >= 1 && t.code <= 9) || (t.code >= 300 && t.code <= 309)) add(t.value);
   }
   if (!chars.size) return cur;
@@ -936,7 +938,7 @@ export class WCtx {
         return true;
       default:
         // 동적 블록 객체·주석 축척 레코드: 원본 태그(DXF·DWG 리더·편집)를 dyncodec·ctxcodec 배치로 쓸 수 있을 때
-        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type)) return rawObjectOk(o as GenericObject, this.ver, this.doc);
+        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type) || ASSOC_DWG_TYPES.has(o.type)) return rawObjectOk(o as GenericObject, this.ver, this.doc);
         return true;
     }
   }

@@ -1,5 +1,6 @@
 /** AcDb:Classes 쓰기(사양 10장, classes.ts의 짝)와 클래스 번호 정하기 */
 import type { CadClass } from '../../../core/model';
+import { ASSOC_APP, ASSOC_CLASS_DEFS, ASSOC_PROXY_FLAGS } from '../../../edit/assocnet/codec';
 import { R2004, R2007 } from '../version';
 import { BitWriter } from './bitwriter';
 import type { TextEncoderCp } from './codepage';
@@ -100,6 +101,8 @@ const KNOWN: Record<string, [string, string, number, boolean, number, number]> =
   BLOCKARRAYACTION: ['AcDbBlockArrayAction', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKLOOKUPACTION: ['AcDbBlockLookupAction', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKPOLARSTRETCHACTION: ['AcDbBlockPolarStretchAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  // 연관 망(src/edit/assocnet/classes.ts)
+  ...Object.fromEntries(ASSOC_CLASS_DEFS.map(([d, c, v, m]) => [d, [c, ASSOC_APP, ASSOC_PROXY_FLAGS, false, v, m] as [string, string, number, boolean, number, number]])),
 };
 
 export interface WClass {

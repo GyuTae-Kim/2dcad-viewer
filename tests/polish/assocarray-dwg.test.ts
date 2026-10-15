@@ -1,6 +1,6 @@
 /**
- * DXF에서 읽은 AutoCAD 연관 배열을 DWG로 저장: 연관 객체(ACDBASSOC…)는 DXF 원본 태그뿐이라 DWG로 쓰지 못해 빠지므로,
- * DWG 쓰기가 배열 참조에 이 앱의 배열 기록(OPENCAD_ARRAY)을 붙인다 — DWG를 다시 열어도 배열로 남는다.
+ * DXF에서 읽은 AutoCAD 연관 배열을 DWG로 저장: 연관 객체(ACDBASSOC…)는 DWG 코덱(src/io/dwg/assoccodec.ts)으로 함께 쓰이고,
+ * DWG 쓰기는 배열 참조에 이 앱의 배열 기록(OPENCAD_ARRAY)도 붙인다(연관 객체를 쓸 수 없는 배열의 근거) — 다시 열어도 배열로 남는다.
  * 문서 자체와 DXF 저장은 그대로(AutoCAD 기록만)다.
  */
 import { describe, expect, it } from 'vitest';
@@ -29,36 +29,38 @@ const ins = (doc: CadDocument, h: string) => doc.entityIndex.get(h) as InsertEnt
 
 describe('AutoCAD 연관 배열 DXF → DWG', () => {
   for (const version of ['AC1032', 'AC1015'] as const) {
-    it(`DWG ${version}로 저장하고 다시 열어도 같은 매개변수의 배열이다(이 앱 기록)`, () => {
+    it(`DWG ${version}로 저장하고 다시 열어도 같은 매개변수의 배열이다(AutoCAD 기록 + 이 앱 기록)`, () => {
       const s = dxfDoc();
       for (const h of [s.rect, s.polar, s.path]) expect(readArray(s.doc, ins(s.doc, h))!.origin).toBe('acad');
       const out = writeDwg(s.doc, { version });
       const back = readCadFile(out.data, 'x.dwg');
-      // 연관 객체는 빠진다(DWG로 쓰지 못한다)
-      expect([...back.objects.values()].some((o) => o.type === 'ACDBASSOCARRAYACTIONBODY')).toBe(false);
+      // 연관 객체도 DWG로 쓰인다(DWG 코덱)
+      expect([...back.objects.values()].some((o) => o.type === 'ACDBASSOCARRAYACTIONBODY')).toBe(true);
       const r = readArray(back, ins(back, s.rect))!;
       expect(r).not.toBeNull();
-      expect(r.origin).toBe('app');
+      expect(r.origin).toBe('acad');
       const rp = r.state.params as RectParams;
       expect([rp.columns, rp.rows, rp.columnSpacing, rp.rowSpacing]).toEqual([4, 2, 10, 5]);
       expect(r.items.size).toBe(8);
       const p = readArray(back, ins(back, s.polar))!;
       const pp = p.state.params as PolarParams;
-      expect(p.origin).toBe('app');
+      expect(p.origin).toBe('acad');
       expect(pp.items).toBe(6);
       close(pp.radius, 8, 1e-9);
       close(pp.center.x, 20, 1e-9);
       expect(p.items.size).toBe(6);
       const q = readArray(back, ins(back, s.path))!;
       const qp = q.state.params as PathParams;
+      // 경로 배열의 곡선 캐시가 복합 곡선(호 포함)이라 DWG 코덱이 쓰지 못한다(선분만 확인) → 그 동작은 통째로 빠지고 이 앱 기록으로 남는다
       expect(q.origin).toBe('app');
       expect([qp.items, qp.method]).toEqual([5, 'divide']);
       expect(q.items.size).toBe(5);
       // 원본 블록도 같다
       expect(q.state.source.toUpperCase()).toBe(readArray(s.doc, ins(s.doc, s.path))!.state.source.toUpperCase());
-      // 기록이 배열을 지킨다: 떼면 보통 블록 참조
+      // 이 앱 기록도 붙어 있고, 떼어도 AutoCAD 기록으로 배열이다
+      expect(recordOf(ins(back, s.rect).xdata)).toBeDefined();
       const bare = { ...ins(back, s.rect), xdata: ins(back, s.rect).xdata?.filter((x) => x.app.toUpperCase() !== ARRAY_APP) };
-      expect(readArray(back, bare)).toBeNull();
+      expect(readArray(back, bare)!.origin).toBe('acad');
     });
   }
 

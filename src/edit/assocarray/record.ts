@@ -5,8 +5,9 @@
  *   1005 원본 블록 레코드 핸들
  *   1005 경로 곡선 핸들(경로 배열이고 연관이 살아 있을 때만)
  *   1000 … 매개변수·지운 항목·대체 항목(ASCII JSON, 250자씩 나눔)
- * AutoCAD는 이 기록을 모른다 — AutoCAD에서는 익명 블록 참조(항목은 그대로 보인다)로 보인다.
- * AutoCAD가 만든 연관 배열은 AutoCAD 기록(acad.ts)을 고쳐 쓰고, 이 기록도 함께 남긴다(DWG로 저장하면 AutoCAD 기록이 빠질 수 있다).
+ * AutoCAD는 이 기록을 모른다. 그래서 새 배열은 AutoCAD 연관 객체 망(src/edit/assocnet/array.ts)도 함께 만들고(경로 배열은 경로가
+ * 선일 때만), AutoCAD가 만든 연관 배열은 AutoCAD 기록(acad.ts)을 고쳐 쓴다. 이 기록은 어느 경우에나 함께 남긴다(AutoCAD 기록을
+ * 풀 수 없거나 만들지 못한 배열의 근거).
  */
 import type { CadDocument, XData, XDataItem } from '../../core/model';
 import { normalizeHandle, tableKey } from '../../core/model';

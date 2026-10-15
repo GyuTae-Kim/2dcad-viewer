@@ -2,9 +2,10 @@
  * 구속 기록 저장: 이름 있는 객체 사전의 OPENCAD_CONSTRAINTS 항목이 가리키는 XRECORD 하나에 모든 구속과 매개변수를 둔다.
  * DXF·DWG 쓰기가 XRECORD 원본 태그를 그대로 쓰므로 두 형식 모두 왕복한다.
  *
- * 형식 한계: AutoCAD는 구속을 연관 네트워크(ACAD_ASSOCNETWORK)로 둔다. 그 형식은 공개 명세가 없어 쓰지 않는다.
- * 그래서 이 앱이 만든 구속은 AutoCAD에서 보이지 않고(형상만 보인다), AutoCAD가 만든 구속은 읽지 않는다
- * (그 객체들은 원본 그대로 남아 저장된다 — foreignConstraintInfo로 개수만 센다).
+ * AutoCAD가 만든 구속(연관 망 ACAD_ASSOCNETWORK의 2D 구속 그룹)은 src/edit/assocnet/constraints.ts가 읽어 readStore에
+ * 함께 넣는다(acad 연결이 있는 구속·매개변수). 그 구속은 이 XRECORD에 쓰지 않고, storeOps가 바뀐 것을 원본 그룹·변수에
+ * 같은 형식으로 고쳐 쓴다(src/edit/assocnet/writeback.ts). 이 앱이 새로 만든 구속은 이 XRECORD에만 있어 AutoCAD에서는
+ * 보이지 않는다(형상만 보인다).
  *
  * XRECORD 자료(그룹 코드):
  *   1 "OPENCAD_CONSTRAINTS", 70 형식 판, 90 다음 번호
@@ -12,10 +13,13 @@
  *   치수 구속: 1 "DC", 위와 같은 앞부분, 301 이름, 302 식, 42 값, 290 참조, 43 치수선 자리, [291 숨김], [303 설명]
  *   사용자 매개변수: 1 "UP", 301 이름, 302 식, 42 값, [303 설명]
  *   구속 막대 숨김: 1 "HB", 330 핸들
+ *   치수 표시를 숨긴 AutoCAD 치수 구속: 1 "AH", 330 구속 그룹, 90 노드 번호
  */
 import type { CadDocument, CadObject, DictionaryObject, RawTag, XRecordObject } from '../../core/model';
 import { normalizeHandle } from '../../core/model';
 import type { EditOp } from '../session';
+import { type AcadImport, importAcadConstraints } from '../assocnet/constraints';
+import { acadStoreOps } from '../assocnet/writeback';
 import { type Constraint, type ConstraintStore, DIM_TYPES, type DimType, GEO_TYPES, type GeoRef, type GeoType, emptyStore } from './types';
 
 export const STORE_KEY = 'OPENCAD_CONSTRAINTS';
@@ -54,6 +58,8 @@ const num = (v: string | number | undefined, d = 0): number => {
 /** 글 값(옛 형식이 \U+XXXX로 쓴 비ASCII 문자를 푼다) */
 const str = (v: string | number | undefined): string => (v === undefined ? '' : String(v).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, x: string) => String.fromCharCode(parseInt(x, 16))));
 
+const HEADS = ['GC', 'DC', 'UP', 'HB', 'AH'];
+
 /** XRECORD 자료 → 구속 기록(모르는 태그는 건너뛴다) */
 export function decodeStore(tags: readonly RawTag[]): ConstraintStore {
   const s = emptyStore();
@@ -61,7 +67,7 @@ export function decodeStore(tags: readonly RawTag[]): ConstraintStore {
   const peek = () => tags[i];
   // 머리
   if (peek()?.code === 1 && str(peek()!.value) === STORE_KEY) i++;
-  while (i < tags.length && !(tags[i]!.code === 1 && ['GC', 'DC', 'UP', 'HB'].includes(str(tags[i]!.value)))) {
+  while (i < tags.length && !(tags[i]!.code === 1 && HEADS.includes(str(tags[i]!.value)))) {
     const t = tags[i]!;
     if (t.code === 90) s.nextId = Math.max(1, Math.trunc(num(t.value, 1)));
     i++;
@@ -70,11 +76,17 @@ export function decodeStore(tags: readonly RawTag[]): ConstraintStore {
     const head = tags[i]!;
     i++;
     const rec: RawTag[] = [];
-    while (i < tags.length && !(tags[i]!.code === 1 && ['GC', 'DC', 'UP', 'HB'].includes(str(tags[i]!.value)))) rec.push(tags[i++]!);
+    while (i < tags.length && !(tags[i]!.code === 1 && HEADS.includes(str(tags[i]!.value)))) rec.push(tags[i++]!);
     const kind = str(head.value);
     try {
       if (kind === 'HB') {
         for (const t of rec) if (t.code === 330 && str(t.value)) s.hiddenBars.push(normalizeHandle(str(t.value)));
+        continue;
+      }
+      if (kind === 'AH') {
+        const g = rec.find((t) => t.code === 330);
+        const n = rec.find((t) => t.code === 90);
+        if (g && n && str(g.value)) (s.acadHidden ??= []).push(`${normalizeHandle(str(g.value))}:${Math.trunc(num(n.value))}`);
         continue;
       }
       if (kind === 'UP') {
@@ -172,21 +184,61 @@ export function encodeStore(s: ConstraintStore): RawTag[] {
     out.push({ code: 1, value: 'HB' });
     for (const h of s.hiddenBars) out.push({ code: 330, value: h });
   }
+  for (const k of s.acadHidden ?? []) {
+    const [g, n] = k.split(':');
+    out.push({ code: 1, value: 'AH' }, { code: 330, value: g! }, { code: 90, value: Number(n) });
+  }
   return out;
 }
 
 const cache = new WeakMap<XRecordObject, ConstraintStore>();
+const EMPTY = emptyStore();
 
-/** 도면의 구속 기록(없으면 빈 기록). 돌려준 값은 고치지 말고 cloneStore로 복사해 고친다 */
-export function readStore(doc: CadDocument): ConstraintStore {
+/** 이 앱 기록(XRECORD)만 */
+export function readAppStore(doc: CadDocument): ConstraintStore {
   const o = storeObject(doc);
-  if (!o) return emptyStore();
+  if (!o) return EMPTY;
   let s = cache.get(o);
   if (!s) {
     s = decodeStore(o.data);
     cache.set(o, s);
   }
   return s;
+}
+
+const merged = new WeakMap<CadDocument, { app: ConstraintStore; acad: AcadImport; store: ConstraintStore }>();
+const NO_ACAD: AcadImport = { constraints: [], userParams: [], info: { groups: 0, unreadable: [], imported: 0, skipped: 0, variables: 0, raw: 0 }, groups: [], renames: new Map(), networkOf: new Map() };
+
+/** AutoCAD 구속 읽기(뜻밖의 자료로 실패해도 이 앱 구속은 그대로 쓸 수 있게 빈 결과로) */
+function safeImport(doc: CadDocument): AcadImport {
+  try {
+    return importAcadConstraints(doc);
+  } catch {
+    return NO_ACAD;
+  }
+}
+
+/**
+ * 도면의 구속 기록(없으면 빈 기록): 이 앱 기록 + AutoCAD 구속(acad 연결). 돌려준 값은 고치지 말고 cloneStore로 복사해 고친다.
+ * 이름이 이 앱 매개변수와 겹치는 AutoCAD 사용자 매개변수는 뺀다(이 앱 것이 이긴다).
+ */
+export function readStore(doc: CadDocument): ConstraintStore {
+  const app = readAppStore(doc);
+  const acad = safeImport(doc);
+  if (!acad.constraints.length && !acad.userParams.length) return app === EMPTY ? emptyStore() : app;
+  const hit = merged.get(doc);
+  if (hit && hit.app === app && hit.acad === acad) return hit.store;
+  const names = new Set(app.userParams.map((u) => u.name.toLowerCase()));
+  for (const c of app.constraints) if (c.kind === 'dim') names.add(c.name.toLowerCase());
+  const hidden = new Set(app.acadHidden ?? []);
+  const imported = hidden.size ? acad.constraints.map((c) => (c.kind === 'dim' && c.acad && hidden.has(`${c.acad.group}:${c.acad.node}`) ? { ...c, hidden: true } : c)) : acad.constraints;
+  const store: ConstraintStore = {
+    ...app,
+    constraints: [...app.constraints, ...imported],
+    userParams: [...app.userParams, ...acad.userParams.filter((u) => !names.has(u.name.toLowerCase()))],
+  };
+  merged.set(doc, { app, acad, store });
+  return store;
 }
 
 export function cloneStore(s: ConstraintStore): ConstraintStore {
@@ -206,33 +258,45 @@ function sameTags(a: readonly RawTag[], b: readonly RawTag[]): boolean {
 
 /**
  * 구속 기록을 도면에 쓰는 편집 작업(바뀐 것이 없으면 빈 배열). 처음이면 XRECORD를 만들고 루트 사전에 넣는다.
- * 루트 사전이 없으면 null.
+ * AutoCAD 구속(acad 연결)은 XRECORD에 쓰지 않고 원본 그룹·변수를 고치는 작업으로 바꾼다.
+ * 루트 사전이 없어 이 앱 기록을 쓸 수 없으면 null.
  */
 export function storeOps(doc: CadDocument, s: ConstraintStore, newHandle: () => string): EditOp[] | null {
-  const data = encodeStore(s);
+  let acadOps: EditOp[] = [];
+  try {
+    acadOps = acadStoreOps(doc, s);
+  } catch {
+    // AutoCAD 그룹을 고치지 못하면 원본은 그대로 둔다(저장하면 원본 그대로)
+  }
+  const acadHidden = s.constraints.filter((c) => c.acad && c.kind === 'dim' && c.hidden).map((c) => `${normalizeHandle(c.acad!.group)}:${c.acad!.node}`);
+  const own: ConstraintStore = { ...s, constraints: s.constraints.filter((c) => !c.acad), userParams: s.userParams.filter((u) => !u.acad) };
+  if (acadHidden.length) own.acadHidden = acadHidden;
+  else delete own.acadHidden;
+  const data = encodeStore(own);
   const old = storeObject(doc);
   if (old) {
-    if (sameTags(old.data, data)) return [];
+    if (sameTags(old.data, data)) return acadOps;
     const after: XRecordObject = { ...old, data };
-    cache.set(after, structuredClone(s));
-    return [{ kind: 'object', key: old.handle, before: old, after }];
+    cache.set(after, structuredClone(own));
+    return [{ kind: 'object', key: old.handle, before: old, after }, ...acadOps];
   }
-  if (!s.constraints.length && !s.userParams.length && !s.hiddenBars.length) return [];
+  if (!own.constraints.length && !own.userParams.length && !own.hiddenBars.length && !own.acadHidden?.length) return acadOps;
   const root = rootDictionary(doc);
-  if (!root) return null;
+  if (!root) return acadOps.length ? acadOps : null;
   const h = newHandle();
   const x: XRecordObject = { type: 'XRECORD', handle: h, owner: root.handle, reactors: [root.handle], cloning: 1, data };
-  cache.set(x, structuredClone(s));
+  cache.set(x, structuredClone(own));
   const entries = new Map(root.entries);
   entries.set(STORE_KEY, h);
   return [
     { kind: 'object', key: h, before: null, after: x },
     { kind: 'object', key: root.handle, before: root, after: { ...root, entries } },
+    ...acadOps,
   ];
 }
 
 // ---------------------------------------------------------------------------
-// AutoCAD가 만든 구속(연관 네트워크) — 읽지 않고 개수만
+// AutoCAD가 만든 구속(연관 네트워크) — 개수와 읽은 결과
 // ---------------------------------------------------------------------------
 
 export interface ForeignConstraintInfo {
@@ -246,11 +310,30 @@ export interface ForeignConstraintInfo {
   total: number;
   /** 루트 사전에 ACAD_ASSOCNETWORK 항목이 있는지 */
   rootEntry: boolean;
+  /** 이 앱 구속으로 읽은 AutoCAD 구속 수 */
+  imported: number;
+  /** 읽은 사용자 매개변수 수 */
+  importedParams: number;
+  /** 읽지 못한 구속 그룹 수(모르는 노드 클래스, 또는 DWG 본문을 풀지 못함) */
+  unreadGroups: number;
+  /** 읽은 그룹 안에서 옮기지 못한 구속 수 */
+  skipped: number;
 }
 
 /** 도면에 AutoCAD 연관 네트워크(구속·연관 동작)가 있는지 센다. 객체는 건드리지 않는다(원본 태그 그대로 저장된다) */
 export function foreignConstraintInfo(doc: CadDocument): ForeignConstraintInfo {
-  const info: ForeignConstraintInfo = { networks: 0, groups: 0, variables: 0, total: 0, rootEntry: false };
+  const imp = safeImport(doc);
+  const info: ForeignConstraintInfo = {
+    networks: 0,
+    groups: 0,
+    variables: 0,
+    total: 0,
+    rootEntry: false,
+    imported: imp.info.imported,
+    importedParams: imp.info.variables,
+    unreadGroups: imp.info.unreadable.length + imp.info.raw,
+    skipped: imp.info.skipped,
+  };
   for (const o of doc.objects.values()) {
     const t = o.type.toUpperCase();
     if (!t.startsWith('ACDBASSOC')) continue;
@@ -268,8 +351,15 @@ export function foreignConstraintInfo(doc: CadDocument): ForeignConstraintInfo {
 export function foreignConstraintNotice(doc: CadDocument): string | null {
   const i = foreignConstraintInfo(doc);
   if (!i.groups && !i.variables) return null;
-  const parts: string[] = [];
-  if (i.groups) parts.push(`구속 그룹 ${i.groups}개`);
-  if (i.variables) parts.push(`매개변수 ${i.variables}개`);
-  return `이 도면에는 AutoCAD가 만든 구속 정보(${parts.join(', ')})가 있지만 편집할 수 없습니다. 원본 그대로 저장됩니다.`;
+  const out: string[] = [];
+  if (i.imported || i.importedParams) {
+    const parts: string[] = [];
+    if (i.imported) parts.push(`구속 ${i.imported}개`);
+    if (i.importedParams) parts.push(`사용자 매개변수 ${i.importedParams}개`);
+    out.push(`AutoCAD가 만든 ${parts.join('와 ')}를 읽었습니다. 구속 막대·PARAMETERS에서 고칠 수 있고, 저장하면 AutoCAD 형식 그대로 갱신됩니다.`);
+  }
+  if (i.skipped) out.push(`옮기지 못한 구속 ${i.skipped}개는 원본에 남아 있지만 이 앱에서는 보이지 않습니다.`);
+  if (i.unreadGroups) out.push(`구속 그룹 ${i.unreadGroups}개는 읽지 못해(지원하지 않는 구속 종류) 원본 그대로 저장됩니다.`);
+  if (!out.length) out.push(`이 도면에는 AutoCAD가 만든 구속 정보(구속 그룹 ${i.groups}개)가 있지만 읽을 구속이 없습니다. 원본 그대로 저장됩니다.`);
+  return out.join(' ');
 }

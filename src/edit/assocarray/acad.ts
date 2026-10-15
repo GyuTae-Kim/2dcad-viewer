@@ -1,5 +1,7 @@
 /**
  * AutoCAD 연관 배열 기록(원본 태그) 읽기·고쳐 쓰기.
+ * 객체 하나하나의 해석은 공통 연관 망 모듈(src/edit/assocnet/objects.ts)이 하고(parseAction), 그 모듈이 풀지 못하는 꼴만
+ * 아래의 옛 태그 훑기로 읽는다(두 길의 결과가 같음을 공개 표본 108개 배열 동작으로 확인). 곡선 캐시는 src/edit/assocnet/curve.ts.
  *
  * 공개 DXF 표본(AutoCAD R2010~R2018 형식으로 저장된 직사각형·원형·경로 연관 배열 30여 개)에서 확인한 구조:
  *  - 배치 블록 레코드의 확장 사전 → "ACAD_ASSOCNETWORK" 사전 → ACDBASSOCNETWORK(배치 망) → ACDBASSOCACTION(배열마다).
@@ -21,10 +23,14 @@
  * 표본에 없던 것(지운 항목의 플래그, 대체 항목의 종속, 원형의 항목 회전·방향 값)은 쓰지 않는다:
  *  지운 항목은 목록에서 빼고, 항목 회전은 항목 행렬로만 나타낸다.
  */
-import type { CadDocument, GenericObject, InsertEntity, RawTag, Vec2, Vec3 } from '../../core/model';
+import type { CadDocument, GenericObject, InsertEntity, RawTag, Vec3 } from '../../core/model';
 import { normalizeHandle } from '../../core/model';
 import type { Affine } from '../geom/math';
 import type { ArrayItem, ArrayKind, ArrayParams, CachedPiece } from './types';
+import { readCurve } from '../assocnet/curve';
+import { assocData } from '../assocnet/network';
+
+export { readCurve };
 
 const ITEM_CLASS = 'AcDbAssocArrayItem';
 const PARAM_CLASS: Record<string, ArrayKind> = {
@@ -191,101 +197,6 @@ function parseActionParam(doc: CadDocument, o: GenericObject, a: AcadArray): voi
   }
 }
 
-function pt3(t: readonly RawTag[], i: number): Vec3 | null {
-  if (t[i]?.code !== 10 || t[i + 1]?.code !== 20 || t[i + 2]?.code !== 30) return null;
-  return { x: num(t[i]!.value), y: num(t[i + 1]!.value), z: num(t[i + 2]!.value) };
-}
-
-/**
- * AcGe 곡선 캐시(표본에서 본 종류만): 23 선분(10 시작점, 10 방향 벡터), 11 원호(10 중심, 10 법선, 10 기준 벡터,
- * 40 반지름, 40 시작 각도, 40 끝 각도, 40 …), 42 NURBS(차수·매듭·무게·조정점), 47 복합 곡선(90 개수 + 곡선들). 모르는 종류면 null.
- */
-export function readCurve(t: readonly RawTag[], i: number, depth = 0): { pieces: CachedPiece[]; next: number } | null {
-  if (t[i]?.code !== 90 || depth > 4) return null;
-  const type = num(t[i]!.value);
-  if (type === 23) {
-    const a = pt3(t, i + 1);
-    const v = pt3(t, i + 4);
-    if (!a || !v) return null;
-    return { pieces: [{ k: 'line', a: { x: a.x, y: a.y }, b: { x: a.x + v.x, y: a.y + v.y } }], next: i + 7 };
-  }
-  if (type === 11) {
-    const c = pt3(t, i + 1);
-    const n = pt3(t, i + 4);
-    const ref = pt3(t, i + 7);
-    if (!c || !n || !ref) return null;
-    let j = i + 10;
-    const vals: number[] = [];
-    while (t[j]?.code === 40) vals.push(num(t[j++]!.value));
-    if (vals.length < 3) return null;
-    const [r, s0, s1] = vals as [number, number, number];
-    const rl = Math.hypot(ref.x, ref.y, ref.z) || 1;
-    const u = { x: ref.x / rl, y: ref.y / rl };
-    // 법선 × 기준 벡터(평면 안의 둘째 축)
-    const w = { x: n.y * ref.z - n.z * ref.y, y: n.z * ref.x - n.x * ref.z };
-    const wl = Math.hypot(w.x, w.y) || 1;
-    const v = { x: w.x / wl, y: w.y / wl };
-    const at = (a: number) => ({ x: c.x + r * (Math.cos(a) * u.x + Math.sin(a) * v.x), y: c.y + r * (Math.cos(a) * u.y + Math.sin(a) * v.y) });
-    const p0 = at(s0);
-    const a0 = Math.atan2(p0.y - c.y, p0.x - c.x);
-    const ccw = u.x * v.y - u.y * v.x >= 0;
-    return { pieces: [{ k: 'arc', c: { x: c.x, y: c.y }, r, a0, sw: (s1 - s0) * (ccw ? 1 : -1) }], next: j };
-  }
-  if (type === 42) {
-    // NURBS: 70 플래그…, 90 차수, 40 공차…, 매듭 배열(90 개수, 90 용량, 90 증분 + 40…), 무게 배열(같은 꼴), 조정점 배열(10/20/30…)
-    let j = i + 1;
-    while (t[j]?.code === 70) j++;
-    if (t[j]?.code !== 90) return null;
-    const degree = num(t[j++]!.value);
-    while (t[j]?.code === 40) j++;
-    const head = (): number | null => {
-      if (t[j]?.code !== 90 || t[j + 1]?.code !== 90 || t[j + 2]?.code !== 90) return null;
-      const n = num(t[j]!.value);
-      j += 3;
-      return n;
-    };
-    const nk = head();
-    if (nk === null) return null;
-    const knots: number[] = [];
-    for (let k = 0; k < nk; k++) {
-      if (t[j]?.code !== 40) return null;
-      knots.push(num(t[j++]!.value));
-    }
-    const nw = head();
-    if (nw === null) return null;
-    const weights: number[] = [];
-    for (let k = 0; k < nw; k++) {
-      if (t[j]?.code !== 40) return null;
-      weights.push(num(t[j++]!.value));
-    }
-    const nc = head();
-    if (nc === null) return null;
-    const ctrl: Vec2[] = [];
-    for (let k = 0; k < nc; k++) {
-      const q = pt3(t, j);
-      if (!q) return null;
-      ctrl.push({ x: q.x, y: q.y });
-      j += 3;
-    }
-    if (degree < 1 || knots.length !== ctrl.length + degree + 1 || (weights.length && weights.length !== ctrl.length)) return null;
-    return { pieces: [{ k: 'nurbs', degree, knots, ctrl, ...(weights.length ? { weights } : {}) }], next: j };
-  }
-  if (type === 47) {
-    if (t[i + 1]?.code !== 90) return null;
-    const n = num(t[i + 1]!.value);
-    const pieces: CachedPiece[] = [];
-    let j = i + 2;
-    for (let k = 0; k < n; k++) {
-      const c = readCurve(t, j, depth + 1);
-      if (!c) return null;
-      pieces.push(...c.pieces);
-      j = c.next;
-    }
-    return { pieces, next: j };
-  }
-  return null;
-}
-
 function matrix16(t: readonly RawTag[], i: number): Affine | null {
   for (let k = 0; k < 16; k++) if (t[i + k]?.code !== 40) return null;
   const m = (k: number) => num(t[i + k]!.value);
@@ -345,8 +256,91 @@ export function findAcadArray(doc: CadDocument, ins: InsertEntity): AcadArray | 
   return null;
 }
 
+/** 4×4 행 우선(16) → 2D 어파인 */
+function affineOf16(m: readonly number[]): Affine {
+  return [m[0]!, m[4]!, m[1]!, m[5]!, m[3]!, m[7]!];
+}
+
+/**
+ * 공통 연관 망 모듈(src/edit/assocnet/objects.ts)의 해석으로 동작 하나를 읽는다. 동작·몸체·종속·매개변수가 모두 풀려야 한다
+ * (아니면 undefined — 옛 태그 훑기로 읽는다). 값 매개변수는 고쳐 쓸 자리(태그 번호)가 필요해 scanValues로 찾는다.
+ */
+function parseStructured(doc: CadDocument, action: GenericObject): AcadArray | null | undefined {
+  const ad = assocData(action);
+  if (ad?.kind !== 'action') return undefined;
+  const body = generic(doc, ad.head.body);
+  const bd = assocData(body);
+  if (bd?.kind !== 'arraybody' || !body) return ad.head.body && body?.type === 'ACDBASSOCARRAYACTIONBODY' ? undefined : null;
+  const lists = ad.head.params ?? bd.body.paramBased?.lists;
+  if (!lists) return undefined;
+  const ah = normalizeHandle(action.handle);
+  const a: AcadArray = {
+    action: ah,
+    body: normalizeHandle(body.handle),
+    raw: true,
+    version: ad.head.version,
+    kind: PARAM_CLASS[bd.body.paramsClass] ?? null,
+    values: new Map(),
+    vertex: new Map(),
+    deps: [],
+    items: [],
+    insertMatrix: affineOf16(bd.body.matrix),
+  };
+  for (const h of ad.head.deps) {
+    const dd = assocData(generic(doc, h));
+    if (!dd || !('dep' in dd)) return undefined;
+    a.deps.push({ handle: normalizeHandle(h), target: dd.dep.target, read: dd.dep.read, write: dd.dep.write });
+  }
+  for (const h of lists.actionParams) {
+    const pd = assocData(generic(doc, h));
+    if (pd?.kind === 'vertexparam') a.vertex.set(pd.param.name, { handle: normalizeHandle(h), point: pd.param.point });
+    else if (pd?.kind === 'edgeparam') {
+      const edge: AcadArray['edge'] = { handle: normalizeHandle(h), dep: pd.param.single?.dep ?? '' };
+      if (pd.param.hasCurve) {
+        const c = readCurve(pd.param.curve, 0);
+        if (c?.pieces.length) edge.curve = c.pieces;
+      }
+      a.edge = edge;
+    } else return undefined;
+  }
+  scanValues(ah, action.raw ?? [], a.values);
+  scanValues(a.body, body.raw ?? [], a.values);
+  for (const it of bd.body.items) {
+    const m: Affine = it.offset ? [1, 0, 0, 1, it.offset.x, it.offset.y] : it.matrix ? affineOf16(it.matrix) : [1, 0, 0, 1, 0, 0];
+    a.items.push({ index: it.i, row: it.j, level: it.k, flags: it.flags, matrix: m, z: it.offset ? it.offset.z : it.matrix ? it.matrix[11]! : 0, handle: it.entity });
+  }
+  resolveTargets(doc, a);
+  return a;
+}
+
+/** 종속 대상 → 배열 블록·원본 블록·경로 곡선 */
+function resolveTargets(doc: CadDocument, a: AcadArray): void {
+  for (const d of a.deps) {
+    if (!d.target) continue;
+    const isRecord = [...doc.blockRecords.values()].some((r) => normalizeHandle(r.handle) === d.target);
+    if (isRecord) {
+      if (d.write && !d.read) a.arrayRecord = d.target;
+      else if (d.read && !d.write) a.sourceRecord = d.target;
+    } else {
+      const e = doc.entityIndex.get(d.target);
+      if (e && e.type !== 'INSERT' && d.read && !d.write) a.pathEntity = d.target;
+    }
+  }
+  if (a.edge?.dep) {
+    const d = a.deps.find((x) => x.handle === a.edge!.dep);
+    if (d?.target && doc.entityIndex.has(d.target)) a.pathEntity = d.target;
+  }
+}
+
 /** 동작 하나(배열 동작이 아니면 null) */
 export function parseAction(doc: CadDocument, action: GenericObject): AcadArray | null {
+  const st = parseStructured(doc, action);
+  if (st !== undefined) return st;
+  return parseActionLegacy(doc, action);
+}
+
+/** 옛 태그 훑기(공통 모듈이 풀지 못하는 꼴 — 원본 태그가 없는 DWG 객체 포함). 두 길이 같은 값을 내는지 시험에서도 쓴다 */
+export function parseActionLegacy(doc: CadDocument, action: GenericObject): AcadArray | null {
   const ah = normalizeHandle(action.handle);
   // 몸체: 동작의 360 중 배열 몸체, 없으면(원본 태그 없음) 소유자가 이 동작인 배열 몸체
   let body: GenericObject | undefined;
@@ -399,21 +393,7 @@ export function parseAction(doc: CadDocument, action: GenericObject): AcadArray 
     }
   }
   // 종속 대상
-  for (const d of a.deps) {
-    if (!d.target) continue;
-    const isRecord = [...doc.blockRecords.values()].some((r) => normalizeHandle(r.handle) === d.target);
-    if (isRecord) {
-      if (d.write && !d.read) a.arrayRecord = d.target;
-      else if (d.read && !d.write) a.sourceRecord = d.target;
-    } else {
-      const e = doc.entityIndex.get(d.target);
-      if (e && e.type !== 'INSERT' && d.read && !d.write) a.pathEntity = d.target;
-    }
-  }
-  if (a.edge?.dep) {
-    const d = a.deps.find((x) => x.handle === a.edge!.dep);
-    if (d?.target && doc.entityIndex.has(d.target)) a.pathEntity = d.target;
-  }
+  resolveTargets(doc, a);
   // 원본 태그가 없으면(DWG) 경로 곡선은 반응자로 찾는다
   if (!a.raw && !a.pathEntity) {
     const depSet = new Set(a.deps.map((d) => d.handle));
@@ -465,13 +445,16 @@ export function paramsFromAcad(a: AcadArray, items: readonly AcadItemTag[]): Arr
     const ri = val(a, 'RotateItems');
     const rotated = items.some((it) => Math.abs(Math.atan2(it.matrix[1], it.matrix[0])) > 1e-9);
     const rotateItems = ri !== undefined ? ri !== 0 : n < 2 || items.length < 2 ? true : rotated;
+    // 방향: 값 매개변수 Direction이 0이면 시계 방향(각도 값은 크기만 둔다), 1이거나 없으면 반시계(공개 표본 3개 — 0인 둘은
+    // 항목이 시계 방향으로 놓이고 돈다)
+    const cw = val(a, 'Direction') === 0 ? -1 : 1;
     return {
       kind: 'polar',
       ...common,
       center: origin ? { x: origin.x, y: origin.y } : { x: 0, y: 0 },
       items: n,
-      itemAngle: val(a, 'ItemSpacing') ?? (2 * Math.PI) / n,
-      fillAngle: val(a, 'FillAngle') ?? 2 * Math.PI,
+      itemAngle: cw * Math.abs(val(a, 'ItemSpacing') ?? (2 * Math.PI) / n),
+      fillAngle: cw * Math.abs(val(a, 'FillAngle') ?? 2 * Math.PI),
       startAngle: val(a, 'StartAngle') ?? 0,
       radius: val(a, 'Radius') ?? 0,
       rotateItems,
@@ -507,8 +490,10 @@ export function acadValuesOf(p: ArrayParams, pathSpacing?: number): Map<string, 
     m.set('AxesAngle', p.axesAngle);
   } else if (p.kind === 'polar') {
     m.set('Items', p.items);
-    m.set('ItemSpacing', p.itemAngle);
-    m.set('FillAngle', p.fillAngle);
+    // AutoCAD는 각도의 크기와 방향(Direction 0 시계, 1 반시계)을 따로 둔다
+    m.set('ItemSpacing', Math.abs(p.itemAngle));
+    m.set('FillAngle', Math.abs(p.fillAngle));
+    m.set('Direction', p.fillAngle < 0 ? 0 : 1);
     m.set('StartAngle', p.startAngle);
     m.set('Radius', p.radius);
     m.set('RotateItems', p.rotateItems ? 1 : 0);
