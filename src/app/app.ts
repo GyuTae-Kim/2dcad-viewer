@@ -705,7 +705,8 @@ export class App {
     this.ui.refreshStatus();
     this.ui.refreshPalette();
     this.refreshSelectionOverlay();
-    document.title = st ? `${st.name} - OpenCAD 2D 뷰어` : 'OpenCAD 2D 뷰어';
+    document.title = st ? `${st.name} - OpenCAD 2D 뷰어`
+      : document.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.content ?? 'OpenCAD 2D 뷰어';
   }
 
   /** 문서 닫기(저장하지 않은 변경이 있으면 먼저 묻는다) */
