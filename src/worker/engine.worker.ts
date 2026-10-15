@@ -7,7 +7,7 @@ import type { CadDocument } from '../core/model';
 import { CadReadError } from '../core/errors';
 import { readCadFile } from '../io/index';
 import { buildSpace } from '../render/build';
-import { transferables } from '../render/displaylist';
+import { packBoxes, transferables } from '../render/displaylist';
 import { OutlineLibrary } from '../text/fonts';
 import { TextEngine } from '../text/layout';
 import { ShxLibrary } from '../text/shx';
@@ -34,11 +34,23 @@ let pdfPages: ReadonlyMap<string, readonly [number, number]> = new Map();
 /** 문서별로 숨긴 최상위 객체 */
 const hiddenByDoc = new Map<number, ReadonlySet<string>>();
 
-function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: number, anno?: { annoScale?: string | null; annoAllVisible?: boolean }): SceneMessage {
+function makeScene(
+  doc: CadDocument,
+  space: string,
+  ltFactor?: number,
+  docId?: number,
+  anno?: { annoScale?: string | null; annoAllVisible?: boolean },
+  onProgress?: (fraction: number) => void,
+): SceneMessage {
   const t0 = performance.now();
-  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined, annoScale: anno?.annoScale, annoAllVisible: anno?.annoAllVisible });
+  const s = buildSpace(doc, space, { text, images: imageKeys, pdfPages, ltFactor, hidden: docId !== undefined ? hiddenByDoc.get(docId) : undefined, annoScale: anno?.annoScale, annoAllVisible: anno?.annoAllVisible, onProgress, packBoxes: true });
+  // 객체 상자는 형식 배열로 만들어 옮긴다(상자 객체를 만들지 않는다 — 메인에서 engine.ts가 푼다)
+  const boxes = s.list.packed ?? packBoxes(s.list.entities);
+  s.list.packed = undefined;
+  s.list.entities = [];
   return {
     list: s.list,
+    boxes,
     styles: s.styles.specs,
     layers: s.layers,
     layerIndex: [...s.layerIndex.entries()],
@@ -46,6 +58,13 @@ function makeScene(doc: CadDocument, space: string, ltFactor?: number, docId?: n
     ms: performance.now() - t0,
     annotative: s.annotative ?? 0,
   };
+}
+
+/** 장면 메시지에서 옮길 버퍼(표시 목록 + 묶은 상자) */
+function sceneTransfer(scene: SceneMessage): Transferable[] {
+  const t: Transferable[] = transferables(scene.list);
+  if (scene.boxes) t.push(scene.boxes.bounds.buffer as ArrayBuffer, scene.boxes.ranges.buffer as ArrayBuffer, scene.boxes.glyphs.buffer as ArrayBuffer);
+  return t;
 }
 
 self.onmessage = async (ev: MessageEvent<ToWorker>) => {
@@ -67,9 +86,13 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         break;
       case 'open': {
         const t0 = performance.now();
-        const doc = readCadFile(new Uint8Array(msg.data), msg.name, {
+        let bytes: Uint8Array | null = new Uint8Array(msg.data);
+        // 파일 버퍼는 읽은 뒤 바로 놓아 준다(큰 파일이 장면 만드는 동안 메모리에 남지 않게)
+        (msg as { data: ArrayBuffer | null }).data = null;
+        const doc = readCadFile(bytes, msg.name, {
           onProgress: (f) => post({ type: 'progress', id: msg.id, stage: 'read', fraction: f }),
         });
+        bytes = null;
         const readMs = performance.now() - t0;
         const docId = nextDoc++;
         docs.set(docId, doc);
@@ -85,8 +108,8 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         }
         post({ type: 'document', id: msg.id, docId, doc, readMs });
         post({ type: 'progress', id: msg.id, stage: 'build', fraction: 0 });
-        const scene = makeScene(doc, '*Model_Space');
-        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, transferables(scene.list));
+        const scene = makeScene(doc, '*Model_Space', undefined, undefined, undefined, (f) => post({ type: 'progress', id: msg.id, stage: 'build', fraction: f }));
+        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
         break;
       }
       case 'edit': {
@@ -116,7 +139,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         }
         post({ type: 'document', id: msg.id, docId, doc, readMs: 0 });
         const scene = makeScene(doc, '*Model_Space');
-        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, transferables(scene.list));
+        post({ type: 'scene', id: msg.id, docId, space: '*Model_Space', scene }, sceneTransfer(scene));
         break;
       }
       case 'save': {
@@ -139,7 +162,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
         const doc = docs.get(msg.docId);
         if (!doc) throw new Error('문서가 없습니다');
         const scene = makeScene(doc, msg.space, msg.ltFactor, msg.docId, { annoScale: msg.annoScale, annoAllVisible: msg.annoAllVisible });
-        post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, transferables(scene.list));
+        post({ type: 'scene', id: msg.id, docId: msg.docId, space: msg.space, scene }, sceneTransfer(scene));
         break;
       }
     }

@@ -2,6 +2,7 @@
 import type { CadDocument } from '../core/model';
 import type { FromWorker, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
 import type { EditOp } from '../edit/session';
+import { unpackBoxes } from '../render/displaylist';
 
 export interface OpenResult {
   docId: number;
@@ -60,6 +61,11 @@ export class EngineClient {
         break;
       case 'scene':
         this.pending.delete(m.id);
+        // 워커가 묶어 보낸 객체 상자를 푼다(구조화 복제보다 훨씬 빠르다)
+        if (m.scene.boxes) {
+          m.scene.list.entities = unpackBoxes(m.scene.boxes);
+          m.scene.boxes = undefined;
+        }
         if (p.doc) p.resolve({ ...p.doc, model: m.scene } satisfies OpenResult);
         else p.resolve(m.scene);
         break;

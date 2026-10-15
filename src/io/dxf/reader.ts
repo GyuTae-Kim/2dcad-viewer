@@ -26,6 +26,8 @@ export interface DxfReadOptions {
   onProgress?: (fraction: number) => void;
   /** 이 수를 넘는 객체는 읽지 않고 경고한다 */
   maxEntities?: number;
+  /** 시험용: 예전 문자열 토큰화기로 읽는다(바이트 토큰화기와 결과 비교) */
+  legacyText?: boolean;
 }
 
 const KNOWN_SECTIONS = new Set(['HEADER', 'CLASSES', 'TABLES', 'BLOCKS', 'ENTITIES', 'OBJECTS']);
@@ -144,7 +146,7 @@ function takeEntity(rec: DxfRecord, stream: RecordStream, ctx: EntityContext): E
 
 export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocument {
   if (data.length === 0) throw new CadReadError('file.empty');
-  const src = openDxf(data, codepageToEncoding);
+  const src = openDxf(data, codepageToEncoding, { legacyText: options.legacyText });
   const stream = src.stream;
   const doc = createDocument('dxf');
   doc.version = src.version;
@@ -325,6 +327,17 @@ export function readDxf(data: Uint8Array, options: DxfReadOptions = {}): CadDocu
 
 /** 핸들이 없는 객체(R12 등)에 $HANDSEED 이후 핸들을 붙인다. 선택·편집이 핸들로 객체를 찾는다. */
 function assignMissingHandles(doc: CadDocument): void {
+  // 핸들이 모두 있으면(R13 이후 도면 대부분) 수백만 핸들의 최댓값을 BigInt로 셀 필요가 없다
+  let missing = false;
+  for (const b of doc.blocks.values()) {
+    for (const e of b.entities) {
+      if (!e.handle) missing = true;
+      else if (e.type === 'INSERT') for (const a of e.attribs) if (!a.handle) missing = true;
+      if (missing) break;
+    }
+    if (missing) break;
+  }
+  if (!missing) return;
   let max = 0n;
   const bump = (h: string) => {
     if (!h) return;

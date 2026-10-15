@@ -1369,6 +1369,12 @@ export function v2(x = 0, y = 0): Vec2 {
 
 export const Z_AXIS: Readonly<Vec3> = Object.freeze({ x: 0, y: 0, z: 1 });
 
+/**
+ * 리더가 객체 색으로 함께 쓰는 ByLayer 색(얼려 둔 객체 하나). 수백만 객체마다 같은 { aci: 256 }을 만들지 않는다.
+ * 색을 바꿀 때는 언제나 새 객체를 넣는다(이 객체를 고치면 오류가 난다).
+ */
+export const SHARED_BYLAYER_COLOR: CadColor = Object.freeze({ aci: BYLAYER }) as CadColor;
+
 /** 객체 공통 기본값 */
 export function entityDefaults(): Omit<EntityBase, 'type'> {
   return {

@@ -29,7 +29,21 @@ export function mat(
   m22: number,
   m23: number,
 ): Mat {
-  return Float64Array.of(m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23);
+  // Float64Array.of보다 빠르다(블록 참조마다 여러 번 부른다)
+  const m = new Float64Array(12);
+  m[0] = m00;
+  m[1] = m01;
+  m[2] = m02;
+  m[3] = m03;
+  m[4] = m10;
+  m[5] = m11;
+  m[6] = m12;
+  m[7] = m13;
+  m[8] = m20;
+  m[9] = m21;
+  m[10] = m22;
+  m[11] = m23;
+  return m;
 }
 
 /** a · b (b를 먼저 적용) */
@@ -46,6 +60,53 @@ export function multiply(a: Mat, b: Mat): Mat {
     r[i * 4 + 3] = a0 * b[3]! + a1 * b[7]! + a2 * b[11]! + a3;
   }
   return r;
+}
+
+/** multiply와 같은 계산을 out에 쓴다(out은 a·b와 다른 배열이어야 한다). 블록 참조처럼 자주 부르는 곳의 임시 행렬용 */
+export function multiplyInto(out: Mat, a: Mat, b: Mat): Mat {
+  for (let i = 0; i < 3; i++) {
+    const a0 = a[i * 4]!;
+    const a1 = a[i * 4 + 1]!;
+    const a2 = a[i * 4 + 2]!;
+    const a3 = a[i * 4 + 3]!;
+    out[i * 4] = a0 * b[0]! + a1 * b[4]! + a2 * b[8]!;
+    out[i * 4 + 1] = a0 * b[1]! + a1 * b[5]! + a2 * b[9]!;
+    out[i * 4 + 2] = a0 * b[2]! + a1 * b[6]! + a2 * b[10]!;
+    out[i * 4 + 3] = a0 * b[3]! + a1 * b[7]! + a2 * b[11]! + a3;
+  }
+  return out;
+}
+
+/** out을 이동·회전(Z)·축척 행렬로(translation·rotationZ·scaling과 같은 값) */
+export function setTranslation(out: Mat, x: number, y: number, z = 0): Mat {
+  out.fill(0);
+  out[0] = 1;
+  out[3] = x;
+  out[5] = 1;
+  out[7] = y;
+  out[10] = 1;
+  out[11] = z;
+  return out;
+}
+
+export function setRotationZ(out: Mat, a: number): Mat {
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  out.fill(0);
+  out[0] = c;
+  out[1] = -s;
+  out[4] = s;
+  out[5] = c;
+  out[10] = 1;
+  return out;
+}
+
+export function setScaling(out: Mat, sx: number, sy: number, sz = 1): Mat {
+  out.fill(0);
+  out[0] = sx;
+  out[5] = sy;
+  out[10] = sz;
+  return out;
 }
 
 export function translation(x: number, y: number, z = 0): Mat {

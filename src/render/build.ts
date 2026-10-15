@@ -39,10 +39,14 @@ import {
   identity,
   mat,
   multiply,
+  multiplyInto,
   ocsMatrix,
   planarScale,
   rotationZ,
   scaling,
+  setRotationZ,
+  setScaling,
+  setTranslation,
   translation,
   withOcs,
 } from '../geom/matrix';
@@ -81,6 +85,10 @@ export interface BuildOptions {
   annoScale?: string | null;
   /** ANNOALLVISIBLE(0이면 그 축척을 지원하지 않는 주석 객체를 숨긴다). 없으면 그 탭의 값 */
   annoAllVisible?: boolean;
+  /** 장면 만들기 진행률(0~1, 최상위 객체 기준으로 약 50번) */
+  onProgress?: (fraction: number) => void;
+  /** 객체 상자를 형식 배열(list.packed)로만 만든다(워커 → 메인 전송용, list.entities는 빈 배열) */
+  packBoxes?: boolean;
 }
 
 export interface SpaceScene {
@@ -152,6 +160,8 @@ export class SceneBuilder {
   /** 윤곽 글꼴 글자의 윤곽선 선분(채우기를 끈 그리기용) */
   private readonly glyphOutlines = new WeakMap<object, Float32Array>();
   private extentSize = 100;
+  /** 임시 행렬(블록 참조·여러 줄 문자의 변환을 만들 때만 잠깐 쓴다 — 재귀 호출 전에 다 쓴다) */
+  private readonly scratch: Mat[] = Array.from({ length: 6 }, () => new Float64Array(12));
 
   constructor(
     private readonly doc: CadDocument,
@@ -191,9 +201,17 @@ export class SceneBuilder {
     this.warn.set(code, (this.warn.get(code) ?? 0) + n);
   }
 
+  /** 원래 이름 → 도면층 번호(대문자로 바꾸는 일을 객체마다 하지 않게) */
+  private readonly layerByName = new Map<string, number>();
+
   private layerOf(name: string): number {
+    const hit = this.layerByName.get(name);
+    if (hit !== undefined) return hit;
     const i = this.layerIndex.get(tableKey(name));
-    if (i !== undefined) return i;
+    if (i !== undefined) {
+      this.layerByName.set(name, i);
+      return i;
+    }
     // 정의되지 않은 도면층: 새로 만든다(색 7, 켜짐)
     const idx = this.layers.length;
     this.layers.push({ name, rgb: 0, aci: 7, hasRgb: false, on: true, frozen: false, lineweight: -3, transparency: 255, plot: true });
@@ -218,32 +236,127 @@ export class SceneBuilder {
     return { kind: ColorKind.Aci, value: c.aci };
   }
 
+  /**
+   * 자주 쓰는 스타일 캐시: 도면층 번호 → 색 값 → (색 종류·선 굵기·투명도) → 스타일 번호.
+   * 동결 목록·플롯 스타일·표지가 없는 경우(대부분의 객체)에만 쓴다. intern 열쇠 문자열을 객체마다 만들지 않는다.
+   */
+  private readonly fastStyles: (Map<number, Map<number, number>> | undefined)[] = [];
+  /** 동결 목록(블록 참조 도면층 사슬)을 하나로 모은다: 부모 목록 → 도면층 → 자식 목록. 같은 사슬이면 같은 배열이다 */
+  private readonly freezeChild = new Map<readonly number[], Map<number, number[]>>();
+  /** 모은 동결 목록 → 번호(빠른 스타일 캐시 열쇠, 빈 목록은 0) */
+  private readonly freezeIds = new Map<readonly number[], number>();
+  /** 동결 목록 번호별 빠른 스타일 캐시(0은 fastStyles) */
+  private readonly fastStylesFrozen: (Map<number, Map<number, number>> | undefined)[][] = [];
+
+  private freezeWith(parent: number[], layer: number): number[] {
+    if (parent.includes(layer)) return parent;
+    let byLayer = this.freezeChild.get(parent);
+    if (!byLayer) this.freezeChild.set(parent, (byLayer = new Map()));
+    let child = byLayer.get(layer);
+    if (!child) {
+      child = [...parent, layer];
+      byLayer.set(layer, child);
+      this.freezeIds.set(child, this.freezeIds.size + 1);
+    }
+    return child;
+  }
+  /** 도면층 번호 → ByLayer 선종류 */
+  private readonly layerLinetypes: (string | undefined)[] = [];
+
+  private layerLinetype(layer: number): string {
+    let lt = this.layerLinetypes[layer];
+    if (lt === undefined) {
+      lt = this.layers[layer] ? (this.doc.layers.get(tableKey(this.layers[layer]!.name))?.linetype ?? 'Continuous') : 'Continuous';
+      this.layerLinetypes[layer] = lt;
+    }
+    return lt;
+  }
+
   private resolve(e: Entity | { layer: string; color: CadColor; linetype: string; lineweight: number; ltscale: number; transparency: number }, ctx: Ctx, override?: { color?: CadColor; flags?: number }): Resolved {
     const layer = this.effLayer(e, ctx);
-    const col = this.colorSpec(override?.color ?? e.color, layer, ctx);
-    let lw: { kind: WidthKind; value: number };
-    if (e.lineweight === -1) lw = { kind: WidthKind.Layer, value: layer };
-    else if (e.lineweight === -2) lw = ctx.byLineweight;
-    else if (e.lineweight === -3 || e.lineweight < 0) lw = { kind: WidthKind.Default, value: 0 };
-    else lw = { kind: WidthKind.Value, value: e.lineweight };
+    // 색(colorSpec과 같은 규칙, 객체를 만들지 않는다)
+    const c = override?.color ?? e.color;
+    let ck: ColorKind;
+    let cv: number;
+    if (c.rgb !== undefined && c.aci !== BYBLOCK && c.aci !== BYLAYER) {
+      ck = ColorKind.Rgb;
+      cv = c.rgb;
+    } else if (c.rgb !== undefined && c.aci === BYLAYER && c.rgb !== 0) {
+      ck = ColorKind.Rgb;
+      cv = c.rgb;
+    } else if (c.aci === BYLAYER || c.aci === 257) {
+      ck = ColorKind.Layer;
+      cv = layer;
+    } else if (c.aci === BYBLOCK) {
+      ck = ctx.byColor.kind;
+      cv = ctx.byColor.value;
+    } else {
+      ck = ColorKind.Aci;
+      cv = c.aci;
+    }
+    let wk: WidthKind;
+    let wv: number;
+    if (e.lineweight === -1) {
+      wk = WidthKind.Layer;
+      wv = layer;
+    } else if (e.lineweight === -2) {
+      wk = ctx.byLineweight.kind;
+      wv = ctx.byLineweight.value;
+    } else if (e.lineweight === -3 || e.lineweight < 0) {
+      wk = WidthKind.Default;
+      wv = 0;
+    } else {
+      wk = WidthKind.Value;
+      wv = e.lineweight;
+    }
     let alpha = e.transparency;
     if (alpha === -2) alpha = ctx.byAlpha;
     let lt = e.linetype || 'ByLayer';
-    const ltu = lt.toUpperCase();
-    if (ltu === 'BYLAYER') lt = this.layers[layer] ? this.doc.layers.get(tableKey(this.layers[layer]!.name))?.linetype ?? 'Continuous' : 'Continuous';
-    else if (ltu === 'BYBLOCK') lt = ctx.byLinetype;
+    if (lt === 'ByLayer') lt = this.layerLinetype(layer);
+    else {
+      const ltu = lt.toUpperCase();
+      if (ltu === 'BYLAYER') lt = this.layerLinetype(layer);
+      else if (ltu === 'BYBLOCK') lt = ctx.byLinetype;
+    }
     const ps = (e as { plotStyle?: string }).plotStyle;
+    const flags = override?.flags ?? 0;
+    // 빠른 길: 열쇠 = 색 값(Map) + [색 종류 3비트 | 굵기 종류 2비트 | 투명도+2 9비트 | 굵기 값 15비트]
+    let inner: Map<number, number> | undefined;
+    let k2 = -1;
+    const fid = ctx.freeze.length === 0 ? 0 : this.freezeIds.get(ctx.freeze);
+    if (
+      !ps &&
+      flags === 0 &&
+      fid !== undefined &&
+      Number.isInteger(cv) &&
+      Number.isInteger(wv) &&
+      wv >= 0 &&
+      wv < 32768 &&
+      Number.isInteger(alpha) &&
+      alpha >= -2 &&
+      alpha < 510
+    ) {
+      k2 = ck + wk * 8 + (alpha + 2) * 32 + wv * 16384;
+      const table = fid === 0 ? this.fastStyles : (this.fastStylesFrozen[fid] ??= []);
+      let byColor = table[layer];
+      if (!byColor) table[layer] = byColor = new Map();
+      inner = byColor.get(cv);
+      if (!inner) byColor.set(cv, (inner = new Map()));
+      const hit = inner.get(k2);
+      if (hit !== undefined) return { style: hit, linetype: lt, ltscale: (e.ltscale || 1) * this.ltscale, layer };
+    }
     const style = this.styles.intern({
-      colorKind: col.kind,
-      color: col.value,
+      colorKind: ck,
+      color: cv,
       layer,
       freezeLayers: ctx.freeze,
-      widthKind: lw.kind,
-      width: lw.value,
+      widthKind: wk,
+      width: wv,
       alpha,
-      flags: override?.flags ?? 0,
+      flags,
       plotStyle: ps ? this.plotStyleNames.get(ps) : undefined,
     });
+    if (inner) inner.set(k2, style);
     return { style, linetype: lt, ltscale: (e.ltscale || 1) * this.ltscale, layer };
   }
 
@@ -296,6 +409,7 @@ export class SceneBuilder {
   private patternCache = new Map<string, DashPattern | null>();
 
   private pattern(lt: string, scale: number): DashPattern | null {
+    if (lt === 'Continuous') return null;
     const key = lt.toUpperCase();
     if (key === 'CONTINUOUS' || key === 'BYLAYER' || key === 'BYBLOCK' || !key) return null;
     let base = this.patternCache.get(key);
@@ -724,25 +838,30 @@ export class SceneBuilder {
     const ents = block ? this.ordered(block).filter((e) => (e.type !== 'VIEWPORT' || (e.id !== 1 && e.status !== 1)) && !hidden?.has(e.handle)) : [];
     this.prepare(blockName);
     const N = ents.length;
+    // 최상위 객체의 문맥은 깊이(z0·z1)만 다르다. 행렬·배열·객체는 함께 쓴다(그리기 코드는 문맥을 고치지 않고 새로 만든다).
+    const top: Ctx = {
+      m: identity(),
+      layer: null,
+      byColor: { kind: ColorKind.Aci, value: 7 },
+      byLinetype: 'Continuous',
+      byLineweight: { kind: WidthKind.Default, value: 0 },
+      byAlpha: 255,
+      freeze: [],
+      depth: 0,
+      chain: [blockName.toUpperCase()],
+      dimBlock: false,
+      inBlock: false,
+      z0: 0,
+      z1: 0,
+    };
+    const progress = this.opt.onProgress;
+    const step = progress ? Math.max(1, Math.floor(N / 50)) : 0;
     for (let i = 0; i < N; i++) {
       const e = ents[i]!;
       const z1 = 1 - (i + 1) / (N + 2);
       const z0 = 1 - (i + 2) / (N + 2);
-      const ctx: Ctx = {
-        m: identity(),
-        layer: null,
-        byColor: { kind: ColorKind.Aci, value: 7 },
-        byLinetype: 'Continuous',
-        byLineweight: { kind: WidthKind.Default, value: 0 },
-        byAlpha: 255,
-        freeze: [],
-        depth: 0,
-        chain: [blockName.toUpperCase()],
-        dimBlock: false,
-        inBlock: false,
-        z0,
-        z1,
-      };
+      const ctx: Ctx = { ...top, z0, z1 };
+      if (step && i % step === 0) progress!(i / N);
       this.out.setDepth(z1);
       try {
         this.entity(e, ctx);
@@ -753,7 +872,7 @@ export class SceneBuilder {
       this.out.endEntity(e.handle);
     }
     const warnings = [...this.warn.entries()].map(([code, count]) => ({ code, count }));
-    return { list: this.out.finish(), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings, annotative: this.anno?.annotative ?? 0 };
+    return { list: this.out.finish(this.opt.packBoxes), styles: this.styles, layers: this.layers, layerIndex: this.layerIndex, warnings, annotative: this.anno?.annotative ?? 0 };
   }
 
   /**
@@ -1313,8 +1432,21 @@ export class SceneBuilder {
     const l = Math.hypot(dx.x, dx.y, dx.z) || 1;
     const ux = { x: dx.x / l, y: dx.y / l, z: dx.z / l };
     const uy = { x: n.y * ux.z - n.z * ux.y, y: n.z * ux.x - n.x * ux.z, z: n.x * ux.y - n.y * ux.x };
-    const local: Mat = Float64Array.of(ux.x, uy.x, n.x, e.insert.x, ux.y, uy.y, n.y, e.insert.y, ux.z, uy.z, n.z, e.insert.z);
-    const m = multiply(ctx.dimBlock ? ctx.m : ctx.m, local);
+    const S = this.scratch;
+    const local = S[0]!;
+    local[0] = ux.x;
+    local[1] = uy.x;
+    local[2] = n.x;
+    local[3] = e.insert.x;
+    local[4] = ux.y;
+    local[5] = uy.y;
+    local[6] = n.y;
+    local[7] = e.insert.y;
+    local[8] = ux.z;
+    local[9] = uy.z;
+    local[10] = n.z;
+    local[11] = e.insert.z;
+    const m = multiplyInto(S[1]!, ctx.m, local);
     const world = this.planar(m, 0);
     if (lay.background) {
       const [x0, y0, x1, y1] = lay.background;
@@ -1349,11 +1481,12 @@ export class SceneBuilder {
     const cols = Math.max(1, e.columnCount);
     for (let rI = 0; rI < rows; rI++)
       for (let cI = 0; cI < cols; cI++) {
-        const local = multiply(
-          translation(e.insert.x, e.insert.y, e.insert.z),
-          multiply(rotationZ(e.rotation), multiply(translation(cI * e.columnSpacing, rI * e.rowSpacing, 0), scaling(sx, sy, sz))),
-        );
-        const m = multiply(om, multiply(local, translation(-b.basePoint.x, -b.basePoint.y, -b.basePoint.z)));
+        // 같은 계산(multiply 순서)을 임시 행렬로 한다: 블록 참조마다 형식 배열 10개를 만들지 않게. 결과 m만 새 배열
+        const S = this.scratch;
+        multiplyInto(S[2]!, setTranslation(S[0]!, cI * e.columnSpacing, rI * e.rowSpacing, 0), setScaling(S[1]!, sx, sy, sz));
+        multiplyInto(S[3]!, setRotationZ(S[0]!, e.rotation), S[2]!);
+        const local = multiplyInto(S[4]!, setTranslation(S[1]!, e.insert.x, e.insert.y, e.insert.z), S[3]!);
+        const m = multiply(om, multiplyInto(S[5]!, local, setTranslation(S[0]!, -b.basePoint.x, -b.basePoint.y, -b.basePoint.z)));
         const clip = b.flags & 4 && !b.entities.length ? null : this.xclipPolygon(e, m);
         if (clip) this.out.pushClip(clip.poly, clip.inverted);
         this.blockContents(b, e, m, ctx);
@@ -1435,7 +1568,7 @@ export class SceneBuilder {
       byLinetype: r.linetype,
       byLineweight: lw,
       byAlpha: spec.alpha,
-      freeze: ctx.freeze.includes(r.layer) ? ctx.freeze : [...ctx.freeze, r.layer],
+      freeze: this.freezeWith(ctx.freeze, r.layer),
       depth: ctx.depth + 1,
       chain: ctx.chain,
       dimBlock: false,

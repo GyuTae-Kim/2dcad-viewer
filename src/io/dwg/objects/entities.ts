@@ -46,6 +46,7 @@ import type {
   XData,
   XLineEntity,
 } from '../../../core/model';
+import { BYLAYER, SHARED_BYLAYER_COLOR } from '../../../core/model';
 import { type BitReader, DwgFormatError } from '../bitstream';
 import { cmcToCad, encToCad } from '../color';
 import { lineweightFromIndex } from '../lineweight';
@@ -116,6 +117,11 @@ function linetypeName(or: ObjectReader, c: EntCommon, names: Names): string {
   }
 }
 
+/** ByLayer 색(대부분의 도형)은 얼려 둔 객체 하나를 함께 쓴다 */
+function byLayerShared(c: CadColor): CadColor {
+  return c.aci === BYLAYER && c.rgb === undefined && c.name === undefined ? SHARED_BYLAYER_COLOR : c;
+}
+
 /** 공통 도형 속성 */
 function entBase(or: ObjectReader, c: EntCommon, names: Names): Omit<EntityBase, 'type'> {
   const h = or.h;
@@ -123,7 +129,7 @@ function entBase(or: ObjectReader, c: EntCommon, names: Names): Omit<EntityBase,
     handle: hex(h.handle),
     layer: names.layer(c.layer) || '0',
     linetype: linetypeName(or, c, names),
-    color: encToCad(c.color),
+    color: byLayerShared(encToCad(c.color)),
     lineweight: or.ver >= R2000 ? lineweightFromIndex(c.lineweight) : -1,
     ltscale: c.ltscale,
     transparency: c.color.transparency ?? -1,

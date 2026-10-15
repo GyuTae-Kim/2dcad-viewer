@@ -47,7 +47,7 @@ import type {
   ViewportEntity,
   XLineEntity,
 } from '../../core/model';
-import { entityDefaults } from '../../core/model';
+import { BYLAYER, SHARED_BYLAYER_COLOR, entityDefaults } from '../../core/model';
 import { rawColorToCad } from '../../core/color';
 import type { DxfRecord, TagValue } from './records';
 import { DEG, Tags, handle, hexToBytes, int, name, num, parseColor, parseDimOverrides, parseXData, str } from './tagutil';
@@ -179,7 +179,8 @@ function splitCommon(rec: DxfRecord, keepRaw = false): Common {
   }
   if (i < codes.length) base.xdata = parseXData(codes, values, i);
   if (aci !== undefined && aci < 0) aci = -aci; // 일부 프로그램이 음수 색을 쓴다
-  base.color = parseColor(aci, rgb, colorName);
+  // ByLayer 색(대부분의 객체)은 얼려 둔 객체 하나를 함께 쓴다
+  base.color = (aci === undefined || aci === BYLAYER) && rgb === undefined && !colorName ? SHARED_BYLAYER_COLOR : parseColor(aci, rgb, colorName);
   const tags = new Tags(sc, sv, ss);
   const out: Common = { base, tags };
   if (raw) out.raw = raw;

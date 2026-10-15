@@ -5,10 +5,10 @@ import { DisplayListBuilder, pointInPolygon } from '../../src/render/displaylist
 const square = [0, 0, 10, 0, 10, 10, 0, 10];
 
 function segs(b: DisplayListBuilder): number[][] {
-  // 내부 배열을 읽어 확인한다(시험 전용)
-  const x = (b as unknown as { segX: { length: number; [i: number]: number } }).segX;
+  // 내부 임시 그림을 읽어 확인한다(시험 전용): segX = [x0, y0, x1, y1, depth]×segN
+  const { segX: x, segN } = b as unknown as { segX: ArrayLike<number>; segN: number };
   const out: number[][] = [];
-  for (let i = 0; i + 4 < x.length + 1; i += 5) out.push([x[i]!, x[i + 1]!, x[i + 2]!, x[i + 3]!].map((v) => +v.toFixed(6)));
+  for (let i = 0; i < segN * 5; i += 5) out.push([x[i]!, x[i + 1]!, x[i + 2]!, x[i + 3]!].map((v) => +v.toFixed(6)));
   return out;
 }
 
@@ -58,7 +58,8 @@ describe('표시 목록 자르기', () => {
     const b = new DisplayListBuilder(() => false);
     b.pushClip(square);
     b.triangle(-10, 0, 10, 0, 10, 20, 1);
-    const t = (b as unknown as { triX: number[] }).triX;
+    const { triX, triN } = b as unknown as { triX: Float64Array; triN: number };
+    const t = triX.subarray(0, triN * 9);
     // 빗변 y = x + 10이 경계 위로 지나가므로 경계 안은 정사각형 전체(넓이 100)
     let area = 0;
     for (let i = 0; i + 8 < t.length + 1; i += 9) area += Math.abs((t[i + 3]! - t[i]!) * (t[i + 7]! - t[i + 1]!) - (t[i + 6]! - t[i]!) * (t[i + 4]! - t[i + 1]!)) / 2;

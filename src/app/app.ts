@@ -628,7 +628,7 @@ export class App {
     try {
       const res = await this.engine.open(name, data, (stage, f) => {
         const label = stage === 'read' ? '도면 읽는 중' : stage === 'fonts' ? '글꼴 받는 중' : stage === 'build' || stage === 'document' ? '화면 그리는 중' : '처리 중';
-        this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.7 : stage === 'fonts' ? 0.75 : 0.85);
+        this.ui.setBusy(`${label}…`, stage === 'read' ? f * 0.7 : stage === 'fonts' ? 0.75 : stage === 'build' ? 0.78 + f * 0.17 : 0.78);
       });
       const st = this.addDocument(res, name, size);
       const w = st.warnings.filter((x) => x.code !== 'entity.not_drawn' || (x.count ?? 0) > 0);

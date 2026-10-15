@@ -1,6 +1,6 @@
 /** 메인 스레드 ↔ 엔진 워커 메시지 */
 import type { CadDocument } from '../core/model';
-import type { DisplayList } from '../render/displaylist';
+import type { DisplayList, PackedBoxes } from '../render/displaylist';
 import type { LayerState, StyleSpec } from '../render/styles';
 import type { EditOp } from '../edit/session';
 
@@ -26,6 +26,8 @@ export type SaveFormat = 'dxf' | 'dwg';
 
 export interface SceneMessage {
   list: DisplayList;
+  /** 워커가 보낼 때 객체 상자(list.entities)를 형식 배열로 묶은 것. 메인(engine.ts)이 받자마자 list.entities로 푼다 */
+  boxes?: PackedBoxes;
   styles: StyleSpec[];
   layers: LayerState[];
   layerIndex: [string, number][];
