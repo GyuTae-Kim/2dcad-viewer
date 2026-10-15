@@ -87,8 +87,11 @@
 - [ ] 연관 배열: 새 배열을 AutoCAD 연관 객체로 쓰기, DWG 안 AutoCAD 배열의 연관 객체 해독, 지운 항목 플래그
 - [x] Express Tools: TCASE·TCOUNT·TORIENT·TEXTFIT·TEXTMASK·TCIRCLE·TXTEXP·SSX·GETSEL·XLIST·XDLIST·NCOPY·GATTE·BREAKLINE·MPEDIT·EXOFFSET·FLATTEN·CDORDER·MKLTYPE·SHOWURLS·REDIR
 - [x] 스크립트(SCRIPT·RSCRIPT·RESUME·DELAY, .scr 끌어 놓기)와 명령행 버전 명령(-INSERT·-ATTEDIT·-ARRAY·-HATCH·-BOUNDARY·-PURGE·-STYLE·-LINETYPE·-DIMSTYLE·-UNITS·-OVERKILL·-XREF·-IMAGE·-PLOT), PSETUPIN
-- [ ] 도면층 필터(특성 필터·그룹 필터, ACAD_LAYERFILTERS)
-- [ ] 스크립트: AutoLISP 식, 선택 방식 WP·CP·F, -LAYOUT의 템플릿(T)·다른 이름으로 저장(SA)
+- [x] 도면층 필터(특성 필터·그룹 필터, 필터 반전, FILTERS — 이 앱 기록으로 저장하고 AutoCAD의 ACLYDICTIONARY는 보존)
+- [ ] 도면층 필터를 AutoCAD 형식(ACLYDICTIONARY)으로 읽고 쓰기(실물 표본 필요)
+- [x] AutoLISP 부분 집합(명령행·스크립트 평가, defun c:, command, get*, entget·entmod·entmake, ssget 필터, APPLOAD·.lsp 끌어 놓기)
+- [ ] 스크립트·AutoLISP: 선택 방식 WP·CP·F, -LAYOUT의 템플릿(T)·다른 이름으로 저장(SA), 확장 데이터 쓰기·사전 함수(dictsearch 등)
+- [x] 등각 설정(SNAPSTYL·SNAPISOPAIR)을 VPORT에 저장, 명령 시작 경합 수정과 앱 확장 지점(src/app/hooks.ts)
 - [x] 표를 AutoCAD 표로 남기기: DXF의 셀 병합·셀 정렬·셀 서식, DWG의 ACAD_TABLE·TABLESTYLE 쓰기(R2000~R2018)
 - [x] 필드 회색 배경 표시(FIELDDISPLAY)
 - [x] AutoCAD FIELD 객체 읽기·쓰기(DXF·DWG)
@@ -109,7 +112,8 @@
 - [x] 아주 깊이 확대했을 때 곡선 다시 나누기(보이는 영역 세부 장면)
 - [x] PSLTSCALE(뷰포트마다 점선 무늬를 종이 길이로 맞춤, 화면·PDF·SVG·플롯)
 - [x] 이미지·가리기 자르기 경계 방향, 맞춤 폴리선의 호, 폭 0 세그먼트, IMAGEFRAME·WIPEOUTFRAME(변수 객체에 저장)
-- [ ] 아주 큰 도면(수백만 객체) 읽기·메모리 최적화
+- [x] 아주 큰 도면(수백만 객체) 읽기·메모리 최적화(DXF 바이트 토큰화로 문자열 한계 없이, 장면 상자·글리프를 형식 배열로, 워커→메인 상자 전송; 합성 300만 객체 DXF·DWG를 4GB 힙에서 읽고 그림)
+- [ ] 큰 도면 점진 빌드, 메인 문서 사본 줄이기, 묶음 그리기 호출 줄이기, 정점 평탄 좌표
 
 ## 다른 형식
 

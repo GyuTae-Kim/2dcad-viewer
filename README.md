@@ -11,7 +11,7 @@ SKP·STEP·NC 같은 형식도 차례로 더할 계획입니다.
 
 ## 할 수 있는 것
 
-- **열기**: DXF R12~R2018(ASCII·이진), DWG R13~R2018. 파일을 끌어다 놓거나 고르면 됩니다.
+- **열기**: DXF R12~R2018(ASCII·이진), DWG R13~R2018. 파일을 끌어다 놓거나 고르면 됩니다. 수백만 객체 도면도 열립니다.
 - **보기**: 휠 확대·축소, 가운데 버튼 이동, 전체 보기. 모형 탭과 배치 탭(용지·뷰포트·뷰포트별 동결 도면층, PSLTSCALE), 채우기 끄기(FILL)·빠른 문자(QTEXT)
 - **도면 요소**: 선·호·원·타원·폴리선(폭·볼록도)·스플라인, 문자·여러 줄 문자(서식·쌓기·열), 블록·속성,
   치수(치수 블록), 지시선·다중 지시선, 해치(무늬·단색·그라데이션), 가리기, 여러 줄, 표, 선종류(복합 선종류 문자 포함), 선가중치
@@ -19,7 +19,8 @@ SKP·STEP·NC 같은 형식도 차례로 더할 계획입니다.
   객체 스냅(끝점·중간점·중심·사분점·교차점·삽입점·노드·수직·근처점), 직교
 - **도면층**: 켜기·끄기·동결·잠금·격리, 병합(LAYMRG)·삭제(LAYDEL)·일치(LAYMCH), 도면층별 객체 선택, 객체 격리·숨기기,
   도면층 탐색(LAYWALK)·도면층에 복사(COPYTOLAYER)·도면층 변환기(LAYTRANS), 명령행 도면층(-LAYER, 스크립트용),
-  도면층 상태 저장·복원(LAYERSTATE, Shift+Ctrl+L, AutoCAD 형식과 .las), 도면층 이전(LAYERP), ByLayer로 설정(SETBYLAYER)
+  도면층 상태 저장·복원(LAYERSTATE, Shift+Ctrl+L, AutoCAD 형식과 .las), 도면층 이전(LAYERP), ByLayer로 설정(SETBYLAYER),
+  도면층 팔레트의 특성 필터·그룹 필터
 - **CAD 표준·디자인센터**: 표준 파일 연결과 위반 검사·수정(STANDARDS·CHECKSTANDARDS), 다른 도면의 블록·도면층·스타일·배치를 미리보기와 함께 가져오기(ADCENTER, Ctrl+2)
 - **치수 목록**: 모든 치수의 표시 문자와 실제 측정값을 나란히 보여 주고, 문자를 바꿔 적은 치수를 찾습니다.
 - **문자 찾기**: 도면 안 문자를 찾아 그 위치로 이동
@@ -55,7 +56,8 @@ SKP·STEP·NC 같은 형식도 차례로 더할 계획입니다.
 - **Express Tools**: 문자 대소문자·번호·방향·폭 맞춤·가리기·둘레·분해(TCASE·TCOUNT·TORIENT·TEXTFIT·TEXTMASK·TCIRCLE·TXTEXP),
   특성으로 선택(SSX·GETSEL), 중첩 객체 정보·복사(XLIST·NCOPY), 전체 속성 편집(GATTE), 끊기선(BREAKLINE), 확장 간격띄우기(EXOFFSET),
   평면화(FLATTEN), 색상 순서(CDORDER), 선종류 만들기(MKLTYPE), 하이퍼링크 목록(SHOWURLS), 경로 바꾸기(REDIR)
-- **스크립트**: .scr 파일을 끌어 놓거나 SCRIPT로 고르면 명령행에 차례로 넣습니다(RSCRIPT·RESUME·DELAY).
+- **스크립트·AutoLISP**: .scr 파일을 끌어 놓거나 SCRIPT로 고르면 명령행에 차례로 넣습니다(RSCRIPT·RESUME·DELAY).
+  명령행·스크립트에서 AutoLISP 식을 평가하고 .lsp를 불러옵니다(APPLOAD, `(defun c:이름 …)`, command, entget·ssget 등).
   스크립트에서 쓰는 명령행 버전 명령(-INSERT·-HATCH·-ARRAY·-PURGE·-STYLE·-DIMSTYLE·-UNITS·-PLOT 등)과 페이지 설정 가져오기(PSETUPIN)
 - **자동 저장**: 바뀐 도면을 SAVETIME마다 이 브라우저에 저장해 두고, 브라우저가 갑자기 닫히면 도면 복구 관리자로 엽니다.
 - **저장**: DWG R2000~R2018, DXF R12~R2018(ASCII·이진). DWG로 연 도면은 같은 버전으로 저장합니다(R2007은 R2004로).
