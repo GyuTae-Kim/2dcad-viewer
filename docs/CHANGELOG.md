@@ -3,6 +3,29 @@
 OpenCAD 2D 뷰어를 만들어 온 과정을 단계별로 정리했습니다. 커밋 하나하나는 `git log`에, 남은 일은 [ROADMAP.md](ROADMAP.md)에 있습니다.
 모든 기능은 브라우저 안에서만 동작하며, 연 파일은 사용자 컴퓨터 밖으로 나가지 않습니다.
 
+## 2026-10-15 (9): 빠진 AutoCAD 명령 채우기
+
+블록·참조, 편집·표시, 파일·출력 세 갈래로 아직 없던 AutoCAD 2D 명령을 채웠습니다.
+
+### 블록·참조
+- 속성 내보내기·가져오기(ATTOUT·ATTIN), 속성 추출(ATTEXT, CDF·SDF·DXF와 템플릿), 속성 유지 재정의(ATTREDEF).
+- 외부 참조·이미지·PDF 부착(XATTACH·IMAGEATTACH·PDFATTACH), 의존 기호 결합(XBIND), 참조 열기(XOPEN), 블록을 외부 참조로(BLOCKTOXREF).
+- 블록 팔레트(BLOCKSPALETTE), 선택하여 붙여넣기(PASTESPEC), 치수 스타일 내보내기·가져오기(DIMEX·DIMIM), UNDEFINE·REDEFINE·BASE·TINSERT.
+
+### 편집·표시
+- 해치 경계 만들기·다시 정하기·원점 바꾸기, 이미지·PDF 조정과 PDF 도면층 켜기·끄기.
+- 표 CSV 내보내기(TABLEEXPORT), 셀 특성 일치(MATCHCELL), 빠른 특성(QUICKPROPERTIES), 그룹 편집(GROUPEDIT), DBLIST·DIMCENTER·PLAN·ELEV 등.
+- 신축(STRETCH)이 걸침 폴리곤을 받고, AutoLISP regapp의 등록이 명령 취소로 되돌아갑니다.
+
+### 파일·출력
+- 모두 닫기·모두 저장·되돌리기(CLOSEALL·SAVEALL·REVERT).
+- 플롯 스탬프(PLOTSTAMP), 플롯 스타일 지정·변환(PLOTSTYLE·CONVERTCTB·CONVERTPSTYLES).
+- 배치 설정(MVSETUP, ISO 제목 블록)과 배치 마법사(LAYOUTWIZARD), WMF 내보내기(WMFOUT), 가져오기(IMPORT).
+
+### 이 단계의 한계
+- TINSERT는 표 셀 안이 아니라 셀 자리에 맞춘 블록 참조로 넣습니다. DIMEX의 .dim은 AutoCAD Express 실물과 다를 수 있습니다.
+- PDF 언더레이의 대비 값과 IMAGEQUALITY·VIEWRES는 저장하지만 화면에는 반영하지 않습니다.
+
 ## 2026-10-15 (8): AutoCAD 구속 쓰기·동적 블록 평가·선택 방식·휴대폰 배치
 
 PR 스쿼시 머지로 배포한 두 번째 묶음입니다.
