@@ -724,6 +724,14 @@ table.grid tr.clickable {
   color: #ffcf6b;
 }
 
+.viewer-guide { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-soft); font-size: 13px; line-height: 1.7; }
+.viewer-guide h2 { margin: 0 0 8px; font-size: 17px; }
+.viewer-guide p { margin: 8px 0; color: var(--text-dim); }
+.viewer-guide details { padding: 11px 0; border-bottom: 1px solid var(--border-soft); }
+.viewer-guide summary { cursor: pointer; font-weight: 600; }
+.viewer-guide a { color: #8cc5ff; text-underline-offset: 3px; }
+.viewer-guide summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* 시작 화면 */
 .start {
   position: absolute;
