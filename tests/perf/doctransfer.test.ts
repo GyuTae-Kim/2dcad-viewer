@@ -113,6 +113,20 @@ describe('codec', () => {
     expect(view.buffer.byteLength).toBe(5);
   });
 
+  it('수만 든 배열(평탄 좌표)과 같은 모양 객체가 되풀이되어도 같다', () => {
+    const nums = [1.5, -0, NaN, 3, 255, 256, -1, 1e-300, Infinity];
+    const shapes = Array.from({ length: 50 }, (_, i) => ({ type: i % 2 ? 'A' : 'B', verts: [i, i + 0.5, 0, i * 2, -i, 0.25], widths: i % 3 ? undefined : [1, 2], at: { x: i, y: -i, z: 0 }, name: `n${i % 4}` }));
+    // __proto__ 이름 속성(JSON.parse가 만든 제 속성)은 모양별 쓰기 함수 없이 일반 반복으로
+    const proto = JSON.parse('{"__proto__": {"a": 1}, "b": [2, 3]}') as Record<string, unknown>;
+    const values: unknown[] = [nums, [7], [0, 1], [1, 'a', 2], ...shapes, proto, proto];
+    const back = roundTrip(values);
+    for (let i = 0; i < values.length; i++) expect(back[i]).toStrictEqual(structuredClone(values[i]));
+    const b0 = back[0] as number[];
+    expect(Object.is(b0[1], -0)).toBe(true);
+    expect(Number.isNaN(b0[2])).toBe(true);
+    expect(Object.getOwnPropertyNames(back[values.length - 1])).toEqual(['__proto__', 'b']);
+  });
+
   it('얼린 객체는 한 번 보낸 안에서 같은 객체(얼리지 않은 사본)로 함께 쓴다', () => {
     const shared = Object.freeze({ aci: 256 });
     const back = roundTrip([{ color: shared }, { color: shared }, { color: { aci: 256 } }]) as { color: object }[];

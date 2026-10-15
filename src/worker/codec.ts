@@ -5,7 +5,9 @@
  * (V8은 객체마다 속성 이름 문자열을 다시 읽고 속성을 하나씩 붙인다).
  * 여기서는 값 나무를 형식 배열 몇 개와 문자열 표로 바꾼다.
  * - 같은 속성 이름 순서(모양)는 한 번만 적고, 메인은 모양마다 만든 객체 리터럴 함수로 객체를 만든다(숨은 클래스가 한 번에 정해진다).
+ *   워커도 모양마다 속성을 이름으로 바로 읽는 쓰기 함수를 만들어 쓴다(속성 읽기가 한 모양만 보고, 수 값을 상자에 담지 않는다).
  * - 수는 Float64Array, 짧은 문자열은 표 하나(같은 값은 한 번), 바이트 배열은 버퍼 하나에 모은다(모두 transfer로 옮긴다).
+ * - 수만 든 배열(폴리선 평탄 좌표·매듭 등)은 값마다 태그를 쓰지 않고 수 배열에 이어 적는다(되살리면 상자 없는 실수 배열).
  * - 얼린 객체(공유 ByLayer 색 등)는 같은 객체로 다시 만든다(구조화 복제처럼 한 번 보낸 안에서 공유를 지킨다).
  * - 순환 참조·함수·BigInt·희소 배열처럼 다루지 않는 값이 있으면 encode가 null을 돌려준다(그때는 구조화 복제로 보낸다).
  * 구조화 복제와 같게: 객체는 자기 열거 문자열 속성만(프로토타입은 버린다), undefined 값 속성도 남긴다, NaN·-0도 그대로.
@@ -28,6 +30,8 @@ const T_REF = 11;
 const T_FROZEN = 12;
 /** 작은 정수(0~255): 수 배열 대신 tags 다음 바이트에 */
 const T_U8 = 13;
+/** 수만 든 배열(정점 평탄 좌표·매듭 등): 길이 + 수 배열에 이어서(값마다 태그를 쓰지 않는다) */
+const T_NUMS = 14;
 
 /** 형식 배열 종류(bins 안에서) */
 const BIN_KINDS = ['Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'Float32Array', 'Float64Array', 'Uint8ClampedArray'] as const;
@@ -93,8 +97,10 @@ export class Encoder {
    * 거의 늘 새 값이면(핸들·문자 내용) 찾지 않고 바로 표에 넣는다 — 큰 찾기 표를 줄인다.
    */
   private readonly dedupe: Int32Array[] = [];
-  /** 첫 속성 이름 → 그 이름으로 시작하는 모양들(대개 몇 개뿐이라 이름을 차례로 맞춰 본다) */
-  private readonly byFirst = new Map<string, number[]>();
+  /** 모양마다 만든 값 쓰기 함수(없으면 일반 반복) */
+  private readonly writers: (ShapeWriter | null)[] = [];
+  /** 첫 속성 이름 → 속성 수별 → 그 모양들(대개 한둘이라 이름을 차례로 맞춰 본다, 최근에 맞은 것이 앞) */
+  private readonly byFirst = new Map<string, number[][]>();
   private readonly emptyShape: number[] = [];
   private bins: Uint8Array;
   private nb = 0;
@@ -158,7 +164,8 @@ export class Encoder {
     this.ints[this.ni++] = v;
   }
 
-  private num(v: number): void {
+  /** 수 하나(모양별 쓰기 함수가 부르므로 private이 아니다) */
+  num(v: number): void {
     // 0~255 정수는 태그 다음 바이트 하나로(-0은 수로)
     if (v >= 0 && v <= 255 && (v | 0) === v && !(v === 0 && 1 / v < 0)) {
       this.tag(T_U8);
@@ -191,8 +198,8 @@ export class Encoder {
     }
   }
 
-  /** 객체 속성 자리의 문자열: 그 자리 점수가 낮으면(늘 새 값) 찾지 않는다 */
-  private slotStr(s: string, score: Int32Array, i: number): void {
+  /** 객체 속성 자리의 문자열: 그 자리 점수가 낮으면(늘 새 값) 찾지 않는다. 모양별 쓰기 함수가 부르므로 private이 아니다 */
+  slotStr(s: string, score: Int32Array, i: number): void {
     const sc = score[i]!;
     if (sc < -32 || s.length > 40) {
       this.tag(T_STR);
@@ -211,7 +218,8 @@ export class Encoder {
     this.int(id);
   }
 
-  private value(v: unknown): void {
+  /** 값 하나(모양별 쓰기 함수가 부르므로 private이 아니다) */
+  value(v: unknown): void {
     switch (typeof v) {
       case 'number':
         this.num(v);
@@ -242,6 +250,10 @@ export class Encoder {
     }
     if (Array.isArray(o)) {
       const n = o.length;
+      if (n > 1 && allNumbers(o, n)) {
+        this.numbers(o, n);
+        return;
+      }
       this.tag(T_ARR);
       this.int(n);
       for (let i = 0; i < n; i++) {
@@ -293,9 +305,14 @@ export class Encoder {
     else for (const k of Object.keys(o)) keys[nk++] = k;
     const id = this.shapeOf(keys, nk);
     this.int(id);
+    const score = this.dedupe[id]!;
+    const wr = this.writers[id];
+    if (wr) {
+      wr(o, this, score);
+      return;
+    }
     // keyBuf는 하위 객체가 다시 쓰므로 모양에서 이름을 읽는다
     const names = this.shapes[id]!;
-    const score = this.dedupe[id]!;
     for (let i = 0; i < nk; i++) {
       const v = o[names[i]!];
       if (typeof v === 'string') this.slotStr(v, score, i);
@@ -304,23 +321,48 @@ export class Encoder {
   }
 
   private shapeOf(keys: string[], nk: number): number {
-    let cands: number[] | undefined = this.emptyShape;
+    let cands: number[] = this.emptyShape;
     if (nk) {
-      cands = this.byFirst.get(keys[0]!);
-      if (!cands) this.byFirst.set(keys[0]!, (cands = []));
+      let byLen = this.byFirst.get(keys[0]!);
+      if (!byLen) this.byFirst.set(keys[0]!, (byLen = []));
+      cands = byLen[nk] ??= [];
     }
-    for (const id of cands) {
+    for (let c = 0; c < cands.length; c++) {
+      const id = cands[c]!;
       const s = this.shapes[id]!;
-      if (s.length !== nk) continue;
       let i = 1;
       while (i < nk && s[i] === keys[i]) i++;
-      if (i >= nk) return id;
+      if (i < nk) continue;
+      if (c > 0) {
+        // 최근에 맞은 모양을 앞으로
+        cands[c] = cands[0]!;
+        cands[0] = id;
+      }
+      return id;
     }
     const id = this.shapes.length;
     this.shapes.push(keys.slice(0, nk));
     this.dedupe.push(new Int32Array(nk));
+    this.writers.push(makeWriter(this.shapes[id]!));
     cands.push(id);
     return id;
+  }
+
+  /** 수만 든 배열 */
+  private numbers(a: readonly number[], n: number): void {
+    this.tag(T_NUMS);
+    this.int(n);
+    let nn = this.nn;
+    if (nn + n > this.nums.length) {
+      let cap = this.nums.length * 2;
+      while (cap < nn + n) cap *= 2;
+      const g = new Float64Array(cap);
+      g.set(this.nums.subarray(0, nn));
+      this.nums = g;
+    }
+    const nums = this.nums;
+    for (let i = 0; i < n; i++) nums[nn++] = a[i]!;
+    this.nn = nn;
   }
 
   private bin(v: ArrayBufferView): void {
@@ -342,6 +384,29 @@ export class Encoder {
     this.int(at);
     this.int(bytes);
   }
+}
+
+/**
+ * 모양 → 값 쓰기 함수: 속성을 이름으로 바로 읽는다. 모양마다 함수가 따로라 속성 읽기가 한 모양의 객체만 보게 되어
+ * 일반 반복(o[이름])보다 빠르다. eval을 막은 환경이면 null(일반 반복).
+ */
+type ShapeWriter = (o: Record<string, unknown>, w: Encoder, score: Int32Array) => void;
+
+function makeWriter(keys: string[]): ShapeWriter | null {
+  if (keys.some((k) => k === '__proto__')) return null;
+  try {
+    // 수는 바로 num으로(일반 value를 거치면 실수 속성 값을 상자에 담느라 수마다 할당한다)
+    const body = keys.map((k, i) => `v = o[${JSON.stringify(k)}];\nif (typeof v === 'number') w.num(v);\nelse if (typeof v === 'string') w.slotStr(v, s, ${i});\nelse w.value(v);`).join('\n');
+    return new Function('o', 'w', 's', `let v;\n${body}`) as ShapeWriter;
+  } catch {
+    return null;
+  }
+}
+
+/** 배열 값이 모두 수인지(빈칸이 있으면 아니다) */
+function allNumbers(a: readonly unknown[], n: number): boolean {
+  for (let i = 0; i < n; i++) if (typeof a[i] !== 'number') return false;
+  return true;
 }
 
 /** 모양 → 객체 리터럴 함수(속성 순서대로 r()을 부른다) */
@@ -417,6 +482,16 @@ export class Decoder {
         const n = e.ints[this.ii++]!;
         const a = new Array(n);
         for (let i = 0; i < n; i++) a[i] = this.read();
+        return a;
+      }
+      case T_NUMS: {
+        // new Array(n)에 차례로 넣으면 꼭 맞는 크기의 실수 배열(상자 없음)이 된다
+        const n = e.ints[this.ii++]!;
+        const a = new Array<number>(n);
+        const nums = e.nums;
+        let ni = this.ni;
+        for (let i = 0; i < n; i++) a[i] = nums[ni++]!;
+        this.ni = ni;
         return a;
       }
       case T_MAP: {
