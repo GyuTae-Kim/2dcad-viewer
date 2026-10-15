@@ -17,7 +17,7 @@ import {
   readReference,
 } from '../../src/edit/dynblock';
 import { actionsOf } from '../../src/edit/dynblock/definition';
-import { dynFixture, loadDyn, withFullRaw } from './fixture';
+import { dynFixture, dynMiniFixture, dynPointPolarFixture, loadDyn, withFullRaw } from './fixture';
 import { FIXTURES } from '../dim/compare';
 
 function handles(start = 0x9000): () => string {
@@ -413,6 +413,129 @@ describe('그립', () => {
     const b = dynGrips(doc, ins('insB'));
     expect(b.some((g) => g.kind === 'rotation')).toBe(false);
     expect(b.find((g) => g.id === 'dyn:5')?.point).toEqual({ x: 120, y: 0 });
+  });
+});
+
+describe('점·극좌표', () => {
+  function pp() {
+    const f = dynPointPolarFixture();
+    const doc = loadDyn(f.text);
+    return { f, doc, ins: (k: string) => doc.entityIndex.get(f.h[k]!) as InsertEntity, nh: handles() };
+  }
+
+  it('정의를 모두 해석하고 특성 행(점 X·Y, 극좌표 거리·각도)을 낸다', () => {
+    const { doc, ins } = pp();
+    const p = readDefinition(doc, 'PT-TEST')!;
+    const q = readDefinition(doc, 'POLAR-TEST')!;
+    expect(p.undecoded).toEqual([]);
+    expect(q.undecoded).toEqual([]);
+    expect(q.actions.map((a) => a.kind)).toEqual(['polar_stretch']);
+    const props = dynProperties(doc, ins('insP'))!;
+    expect(props.map((x) => [x.key, x.label, x.editor, x.value])).toEqual([
+      ['1:x', '위치 X', 'coord', 3],
+      ['1:y', '위치 Y', 'coord', 0],
+    ]);
+    const pq = dynProperties(doc, ins('insQ'))!;
+    expect(pq.map((x) => [x.key, x.label, x.description, x.editor])).toEqual([
+      ['1:d', '길이', '지시선 길이', 'length'],
+      ['1:a', '각도', '지시선 각도', 'angle'],
+    ]);
+    near(pq[0]!.value as number, 1.25);
+    near(pq[1]!.value as number, Math.PI);
+  });
+
+  it('점 매개변수: 위치를 바꾸면 이동 동작이 선을 옮긴다(특성과 그립)', () => {
+    const { doc, ins, nh } = pp();
+    apply(doc, dynSetOps(doc, ins('insP'), { key: '1:x', value: 5 }, nh).ops);
+    let line = at<LineEntity>(doc, ins('insP'), 1);
+    near(line.start.x, 4);
+    near(line.end.x, 6);
+    expect(at<CircleEntity>(doc, ins('insP'), 0).center.x).toBe(0);
+    expect(readReference(doc, ins('insP'))!.values.get(1)?.points?.[0]?.x).toBe(5);
+    // 그립 끌기(도면 좌표 = 블록 좌표)
+    const g = dynGrips(doc, ins('insP'));
+    expect(g.map((x) => [x.id, x.kind, x.mode])).toEqual([['dyn:2', 'point', 'drag']]);
+    apply(doc, applyDynGrip(doc, ins('insP'), 'dyn:2', { x: 5, y: 2 }, nh).ops);
+    line = at<LineEntity>(doc, ins('insP'), 1);
+    near(line.start.y, 2);
+    near(line.end.x, 6);
+  });
+
+  it('극좌표: 거리는 틀 안의 점만 늘이고, 각도는 첫 점 둘레로 돌린다', () => {
+    const { doc, ins, nh } = pp();
+    apply(doc, dynSetOps(doc, ins('insQ'), { key: '1:d', value: 2 }, nh).ops);
+    let line = at<LineEntity>(doc, ins('insQ'), 1);
+    near(line.start.x, -2);
+    near(line.end.x, -0.25);
+    near(at<CircleEntity>(doc, ins('insQ'), 0).radius, 0.25);
+    // 각도 90°: 끝점 (0, 2), 지시선은 원 둘레에서 끝점까지
+    apply(doc, dynSetOps(doc, ins('insQ'), { key: '각도', value: Math.PI / 2 }, nh).ops);
+    line = at<LineEntity>(doc, ins('insQ'), 1);
+    near(line.start.x, 0);
+    near(line.start.y, 2);
+    near(line.end.x, 0);
+    near(line.end.y, 0.25);
+    const v = readReference(doc, ins('insQ'))!.values.get(1)!.points!;
+    near(v[1]!.x, 0);
+    near(v[1]!.y, 2);
+    // 다시 늘이기: 지금 상태의 틀(끝점을 따라 옮겨 돈 틀)로 신축점을 고른다
+    apply(doc, dynSetOps(doc, ins('insQ'), { key: '1:d', value: 3 }, nh).ops);
+    line = at<LineEntity>(doc, ins('insQ'), 1);
+    near(line.start.y, 3);
+    near(line.end.y, 0.25);
+    // 끝 그립 끌기
+    const g = dynGrips(doc, ins('insQ'));
+    expect(g.map((x) => [x.id, x.mode])).toEqual([
+      ['dyn:5', 'none'],
+      ['dyn:2', 'drag'],
+    ]);
+    apply(doc, applyDynGrip(doc, ins('insQ'), 'dyn:2', { x: 20 + 3, y: 0 }, nh).ops);
+    line = at<LineEntity>(doc, ins('insQ'), 1);
+    near(line.start.x, 3);
+    near(line.start.y, 0);
+    near(line.end.x, 0.25);
+  });
+
+  it('바꾼 값은 참조 캐시(극좌표 넷째 점 = 첫 점 + (10, 0))로 저장되고 DXF로 다시 읽어도 같다', () => {
+    const { f, doc, ins, nh } = pp();
+    apply(doc, dynSetOps(doc, ins('insQ'), [{ key: '1:d', value: 2 }, { key: '1:a', value: Math.PI / 2 }], nh).ops);
+    apply(doc, dynSetOps(doc, ins('insP'), { key: '1:y', value: 1 }, nh).ops);
+    const q = readReference(doc, ins('insQ'))!;
+    const rec = doc.objects.get(q.cache!.records.get(1)!) as XRecordObject;
+    expect(rec.data.slice(0, 4).map((t) => Number(t.value))).toEqual([11323277, 15401870, 25, 104]);
+    expect(rec.data.filter((t) => t.code === 10).map((t) => Math.round(Number(t.value) * 1e9) / 1e9 + 0)).toEqual([0, 0, 0, 10]);
+    const text = new TextDecoder().decode(writeDxf(doc).data);
+    const d2 = withFullRaw(readDxf(new TextEncoder().encode(text)), text);
+    const q2 = readReference(d2, d2.entityIndex.get(f.h.insQ!) as InsertEntity)!;
+    near(q2.values.get(1)!.points![1]!.y, 2);
+    const p2 = readReference(d2, d2.entityIndex.get(f.h.insP!) as InsertEntity)!;
+    near(p2.values.get(1)!.points![0]!.y, 1);
+  });
+});
+
+describe('구속 기반 정의', () => {
+  it('선형 구속 매개변수는 거리·값 목록만 읽기 전용으로 보이고 정의는 고치지 않는다', () => {
+    // 작은 자료의 선형 매개변수를 수평 구속 매개변수 꼴(AutoCAD DXF 배치: …, AcDbBlockConstraintParameter 330, AcDbBlockLinearConstraintParameter …)로 바꾼다
+    const f = dynMiniFixture();
+    const text = f.text
+      .replace('\nBLOCKLINEARPARAMETER\n', '\nBLOCKHORIZONTALCONSTRAINTPARAMETER\n')
+      .replace('\nAcDbBlockLinearParameter\n', '\nAcDbBlockConstraintParameter\n330\n0\n100\nAcDbBlockLinearConstraintParameter\n');
+    const doc = loadDyn(text);
+    const def = readDefinition(doc, 'DYN-MINI')!;
+    expect(def.params.map((p) => [p.kind, p.type, p.label])).toEqual([
+      ['linear', 'BLOCKHORIZONTALCONSTRAINTPARAMETER', '지름'],
+      ['visibility', 'BLOCKVISIBILITYPARAMETER', '보기'],
+    ]);
+    expect(def.undecoded).toEqual(['구속 매개변수 BLOCKHORIZONTALCONSTRAINTPARAMETER']);
+    const ins = doc.entityIndex.get(f.h.insM!) as InsertEntity;
+    const props = dynProperties(doc, ins)!;
+    expect(props.map((p) => [p.label, p.value, p.editor])).toEqual([
+      ['지름', 2, 'readonly'],
+      ['보기', '모두', 'readonly'],
+    ]);
+    const r = dynSetOps(doc, ins, { key: '지름', value: 4 }, handles());
+    expect(r.ops).toEqual([]);
+    expect(r.message).toMatch(/구속 매개변수/);
   });
 });
 

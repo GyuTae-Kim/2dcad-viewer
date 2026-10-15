@@ -78,6 +78,28 @@ const KNOWN: Record<string, [string, string, number, boolean, number, number]> =
   BLOCKLINEARPARAMETER: ['AcDbBlockLinearParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKLINEARGRIP: ['AcDbBlockLinearGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
   BLOCKSCALEACTION: ['AcDbBlockScaleAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  // (AutoCAD 예제 도면·공개 짝 도면의 클래스 목록 값: 모두 1153, 25/55)
+  BLOCKFLIPPARAMETER: ['AcDbBlockFlipParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKROTATIONPARAMETER: ['AcDbBlockRotationParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKXYPARAMETER: ['AcDbBlockXYParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKPOLARPARAMETER: ['AcDbBlockPolarParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKPOINTPARAMETER: ['AcDbBlockPointParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKLOOKUPPARAMETER: ['AcDbBlockLookupParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKBASEPOINTPARAMETER: ['AcDbBlockBasepointParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKALIGNMENTPARAMETER: ['AcDbBlockAlignmentParameter', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKFLIPGRIP: ['AcDbBlockFlipGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKROTATIONGRIP: ['AcDbBlockRotationGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKXYGRIP: ['AcDbBlockXYGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKPOLARGRIP: ['AcDbBlockPolarGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKLOOKUPGRIP: ['AcDbBlockLookupGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKALIGNMENTGRIP: ['AcDbBlockAlignmentGrip', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKMOVEACTION: ['AcDbBlockMoveAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKSTRETCHACTION: ['AcDbBlockStretchAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKROTATEACTION: ['AcDbBlockRotateAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKFLIPACTION: ['AcDbBlockFlipAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKARRAYACTION: ['AcDbBlockArrayAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKLOOKUPACTION: ['AcDbBlockLookupAction', 'ObjectDBX Classes', 1153, false, 25, 55],
+  BLOCKPOLARSTRETCHACTION: ['AcDbBlockPolarStretchAction', 'ObjectDBX Classes', 1153, false, 25, 55],
 };
 
 export interface WClass {

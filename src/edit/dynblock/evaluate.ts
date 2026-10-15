@@ -25,6 +25,9 @@ import {
   type LookupAction,
   type LookupParam,
   type MoveAction,
+  type OtherAction,
+  type PointParam,
+  type PolarParam,
   type RefValues,
   type RotationParam,
   type ValueSet,
@@ -478,7 +481,7 @@ export class DynEval {
         return;
       }
       case 'rotate': {
-        if (param.kind !== 'rotation' || extra?.angle === undefined) throw new DynError(MSG_UNSUPPORTED);
+        if ((param.kind !== 'rotation' && param.kind !== 'polar') || extra?.angle === undefined) throw new DynError(MSG_UNSUPPORTED);
         const base = this.baseOf(a, param.id, old, now);
         const v = this.values.get(a.id) ?? {};
         v.base = { ...base };
@@ -495,9 +498,78 @@ export class DynEval {
         return;
       case 'lookup':
         return;
+      case 'polar_stretch':
+        this.polarStretch(a, param, old, now);
+        return;
       default:
         throw new DynError(MSG_UNSUPPORTED);
     }
+  }
+
+  /**
+   * 극좌표 신축: 끝점의 거리 변화 Δd(지금 방향 u)와 각도 변화 Δθ(첫 점 둘레).
+   * 신축 객체(332, 없으면 선택 집합)마다 틀 안의 신축점은 u·Δd만큼 옮긴 뒤 객체 전체를 Δθ 돌린다 — 틀 안에 다 들면
+   * 통째로 옮겨 돌고, 하나도 없으면 돌기만 한다. 틀은 정의 좌표라 지금 매개변수 상태로 옮겨서 쓴다.
+   * 점이 묶인 객체(72)가 있거나 첫 점이 움직이면 지원하지 않는다(그 DXF 코드·뜻을 확인하지 못했다).
+   */
+  private polarStretch(a: OtherAction, param: DynParam, old: Vec3[], now: Vec3[]): void {
+    if (param.kind !== 'polar' || a.boundCount || !a.frame || a.frame.length < 2) throw new DynError(MSG_UNSUPPORTED);
+    const [a0, b0] = old;
+    const [a1, b1] = now;
+    if (!a0 || !b0 || !a1 || !b1 || len(sub(a1, a0)) > EPS) throw new DynError(MSG_UNSUPPORTED);
+    const polarMap = (p0: Vec3, q0: Vec3, p1: Vec3, q1: Vec3): Affine => {
+      const d0 = len(sub(q0, p0));
+      const u = d0 > EPS ? mul(sub(q0, p0), 1 / d0) : { x: 1, y: 0, z: 0 };
+      const dd = len(sub(q1, p1)) - d0;
+      const th = Math.atan2(q1.y - p1.y, q1.x - p1.x) - Math.atan2(q0.y - p0.y, q0.x - p0.x);
+      return affMul(affRotate(th, p1), affMul(affTranslate(p1.x - p0.x, p1.y - p0.y), affTranslate(u.x * dd, u.y * dd)));
+    };
+    // 정의 상태 → 지금(바꾸기 전) 상태로 틀을 옮긴다
+    const toOld = polarMap(param.base, param.end, a0, b0);
+    const f = a.frame.map((q) => xf(toOld, { x: q.x, y: q.y, z: 0 }));
+    const poly =
+      f.length === 2
+        ? [
+            { x: Math.min(f[0]!.x, f[1]!.x), y: Math.min(f[0]!.y, f[1]!.y) },
+            { x: Math.max(f[0]!.x, f[1]!.x), y: Math.min(f[0]!.y, f[1]!.y) },
+            { x: Math.max(f[0]!.x, f[1]!.x), y: Math.max(f[0]!.y, f[1]!.y) },
+            { x: Math.min(f[0]!.x, f[1]!.x), y: Math.max(f[0]!.y, f[1]!.y) },
+          ]
+        : f;
+    const d0 = len(sub(b0, a0));
+    const u = d0 > EPS ? mul(sub(b0, a0), 1 / d0) : { x: 1, y: 0, z: 0 };
+    const delta = mul(u, len(sub(b1, a1)) - d0);
+    const turn = Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b0.y - a0.y, b0.x - a0.x);
+    const turns = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn))) > 1e-12;
+    const rot = affRotate(turn, a0);
+    const full = affMul(rot, affTranslate(delta.x, delta.y));
+    const handles = a.stretchEntities?.length ? a.stretchEntities : a.entities;
+    for (const h of handles) {
+      const it = this.item(h);
+      if (!it) continue;
+      const pts = stretchPoints(it.entity);
+      if (!pts) throw new DynError(MSG_UNSUPPORTED);
+      const inside = pts.flatMap((q, i) => (pointInPolygon(q, poly) ? [i] : []));
+      if (inside.length === pts.length) {
+        if (turns || len(delta) > EPS) this.transformItem(it, full);
+        continue;
+      }
+      if (inside.length && len(delta) > EPS) {
+        const r = stretchEntity(it.entity, inside, delta, this.doc);
+        if (!r) throw new DynError(MSG_UNSUPPORTED);
+        r.handle = it.entity.handle;
+        r.xdata = it.entity.xdata;
+        if (it.entity.invisible) r.invisible = true;
+        else delete r.invisible;
+        it.entity = r;
+        this.geometryChanged = true;
+      }
+      if (turns) this.transformItem(it, rot);
+    }
+    for (const n of a.nodes) this.transformNode(n, full, param.id);
+    const v = this.values.get(a.id) ?? {};
+    if (v.angle === undefined) v.angle = 0;
+    this.values.set(a.id, v);
   }
 
   private displacement(a: MoveAction, changed: number, old: Vec3[], now: Vec3[]): Vec3 {
@@ -667,6 +739,58 @@ export class DynEval {
     if (Math.abs(delta) < 1e-12) return false;
     const m = affRotate(delta, a);
     const now = [{ ...a }, xf(m, b), ...old.slice(2)];
+    this.setPoints(p.id, now);
+    this.runActions(p, old, now, { angle: delta });
+    return true;
+  }
+
+  /** 점 매개변수 위치(블록 좌표, 주지 않은 축은 그대로). 바뀌면 참 */
+  setPoint(p: PointParam, x: number | undefined, y: number | undefined): boolean {
+    if (p.kind !== 'point') throw new DynError(MSG_UNSUPPORTED);
+    const old = this.points(p.id);
+    const [a] = old;
+    if (!a) throw new DynError(MSG_UNSUPPORTED);
+    if ((x !== undefined && !Number.isFinite(x)) || (y !== undefined && !Number.isFinite(y))) throw new DynError('값이 올바르지 않습니다.');
+    const na = { x: x ?? a.x, y: y ?? a.y, z: a.z };
+    if (sameNum(na.x, a.x, 1e-12) && sameNum(na.y, a.y, 1e-12)) return false;
+    const now = [na, ...old.slice(1)];
+    this.setPoints(p.id, now);
+    this.runActions(p, old, now);
+    return true;
+  }
+
+  /** 극좌표 거리 */
+  polarDistance(p: PolarParam): number {
+    return this.distance(p);
+  }
+
+  /** 극좌표 각도(라디안, 첫 점 → 둘째 점) */
+  polarAngle(p: PolarParam): number {
+    const [a, b] = this.points(p.id);
+    return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
+  }
+
+  /** 극좌표 거리·각도(주지 않은 것은 그대로, 첫 점 고정). 바뀌면 참 */
+  setPolar(p: PolarParam, distance: number | undefined, angle: number | undefined, opt: EvalOptions = {}): boolean {
+    const old = this.points(p.id);
+    const [a, b] = old;
+    if (!a || !b) throw new DynError(MSG_UNSUPPORTED);
+    const d0 = len(sub(b, a));
+    const t0 = Math.atan2(b.y - a.y, b.x - a.x);
+    let d = d0;
+    let t = t0;
+    if (distance !== undefined) {
+      if (!(distance > 0) || !Number.isFinite(distance)) throw new DynError('거리는 0보다 커야 합니다.');
+      d = opt.exact ? distance : snapToValueSet(p.values, distance, len(sub(p.end, p.base)));
+    }
+    if (angle !== undefined) {
+      if (!Number.isFinite(angle)) throw new DynError('각도가 올바르지 않습니다.');
+      t = !opt.exact && p.angleValues.type ? snapToValueSet(p.angleValues, angle, null) : angle;
+    }
+    let delta = t - t0;
+    delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+    if (sameNum(d, d0, 1e-9) && Math.abs(delta) < 1e-12) return false;
+    const now = [{ ...a }, { x: a.x + d * Math.cos(t0 + delta), y: a.y + d * Math.sin(t0 + delta), z: b.z }, ...old.slice(2)];
     this.setPoints(p.id, now);
     this.runActions(p, old, now, { angle: delta });
     return true;

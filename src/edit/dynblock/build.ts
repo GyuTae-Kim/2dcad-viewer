@@ -27,11 +27,22 @@ export function insertAffine(def: BlockDef, ins: Pick<InsertEntity, 'insert' | '
   return affMul(affTranslate(ins.insert.x, ins.insert.y), affMul(affRotate(ins.rotation), affMul(affScale(ins.scale.x, ins.scale.y), affTranslate(-def.basePoint.x, -def.basePoint.y))));
 }
 
-/** 공개 표본(ACadSharp MIT 표본 DXF)에서 확인한 캐시 머리 값(클래스마다 고정) */
+/** 공개 표본(ACadSharp MIT 표본 DXF, samples/dynamic-blocks 포함)에서 확인한 캐시 머리 값(클래스마다 고정) */
 const KNOWN_HEADERS: Record<string, [number, number]> = {
   BLOCKLINEARPARAMETER: [18597260, 25303744],
   BLOCKSCALEACTION: [2551693, 3435815],
   BLOCKVISIBILITYPARAMETER: [135625452, 184556386],
+  BLOCKFLIPPARAMETER: [6887019, 9372877],
+  BLOCKFLIPGRIP: [575085, 763560],
+  BLOCKROTATIONPARAMETER: [50242585, 68333042],
+  BLOCKROTATEACTION: [4195796, 5656503],
+  BLOCKXYPARAMETER: [2550941, 3467982],
+  BLOCKPOINTPARAMETER: [11324608, 15407465],
+  BLOCKLOOKUPPARAMETER: [18605567, 25317787],
+  BLOCKMOVEACTION: [1553528, 2094574],
+  BLOCKSTRETCHACTION: [6895636, 9291323],
+  BLOCKPOLARPARAMETER: [11323277, 15401870],
+  BLOCKPOLARSTRETCHACTION: [82519608, 111249311],
 };
 
 /** 캐시 레코드를 두는 노드 종류 */
@@ -45,7 +56,9 @@ const CACHED_TYPES = new Set([
   'BLOCKBASEPOINTPARAMETER',
   'BLOCKLOOKUPPARAMETER',
   'BLOCKALIGNMENTPARAMETER',
+  'BLOCKPOLARPARAMETER',
   'BLOCKMOVEACTION',
+  'BLOCKPOLARSTRETCHACTION',
   'BLOCKSTRETCHACTION',
   'BLOCKROTATEACTION',
   'BLOCKSCALEACTION',
@@ -54,6 +67,9 @@ const CACHED_TYPES = new Set([
 ]);
 
 const NORMAL: Vec3 = { x: 0, y: 0, z: -1 };
+
+/** 극좌표 매개변수 캐시의 넷째 점(첫 점 + (10, 0)) */
+const polarRef = (p: Vec3): Vec3 => ({ x: p.x + 10, y: p.y, z: p.z });
 
 // ---------------------------------------------------------------------------
 // 캐시 레코드 본문
@@ -80,8 +96,12 @@ function freshBody(type: string, v: NodeValue | undefined, m: number): RawTag[] 
       return [...pointTags(10, p(0)), ...pointTags(10, p(1)), ...pointTags(10, NORMAL), { code: 70, value: v?.flipped ? 1 : 0 }];
     case 'BLOCKROTATIONPARAMETER':
       return [...pointTags(10, p(0)), ...pointTags(10, p(1)), ...pointTags(10, NORMAL), ...pointTags(10, p(2))];
+    case 'BLOCKPOLARPARAMETER':
+      // 넷째 점은 첫 점 + (10, 0)(공개 표본·예제 도면 모두)
+      return [...pointTags(10, p(0)), ...pointTags(10, p(1)), ...pointTags(10, NORMAL), ...pointTags(10, polarRef(p(0)))];
     case 'BLOCKMOVEACTION':
     case 'BLOCKSTRETCHACTION':
+    case 'BLOCKPOLARSTRETCHACTION':
       return [{ code: 40, value: v?.angle ?? 0 }];
     case 'BLOCKROTATEACTION':
     case 'BLOCKSCALEACTION':
@@ -109,6 +129,9 @@ function patchBody(type: string, body: readonly RawTag[], v: NodeValue): RawTag[
       if (v.points[0]) pts.set(0, v.points[0]);
       if (v.points[1]) pts.set(1, v.points[1]);
       if (v.points[2]) pts.set(3, v.points[2]);
+    } else if (type === 'BLOCKPOLARPARAMETER') {
+      if (v.points[0]) pts.set(0, v.points[0]).set(3, polarRef(v.points[0]));
+      if (v.points[1]) pts.set(1, v.points[1]);
     } else {
       const n = /VISIBILITY|LOOKUP|POINTPARAMETER|BASEPOINT/.test(type) ? 1 : 2;
       for (let i = 0; i < n; i++) if (v.points[i]) pts.set(i, v.points[i]!);
@@ -303,13 +326,12 @@ function cacheOps(doc: CadDocument, ins: InsertEntity, ref: DynRef, ev: DynEval,
 }
 
 /**
- * 새로 만드는 캐시의 레코드(노드마다). 머리를 모르는 노드 종류가 있거나 극좌표·해석하지 못한 노드가 있으면
+ * 새로 만드는 캐시의 레코드(노드마다). 머리를 모르는 노드 종류가 있거나 해석하지 못한 노드가 있으면
  * null(표현 자료만 쓴다 — 모양은 표현 블록 그대로, 다시 열면 값은 정의의 값).
  * 뒤집힌 참조도 쓴다(뒤집기 매개변수 70 = 1, 뒤집기 그립은 70 0·70 0 — AutoCAD가 뒤집힌 참조에 쓰는 그립 값은 확인하지 못했다).
  */
 function fullCache(doc: CadDocument, def: DynDefinition, ev: DynEval): { id: number; data: RawTag[] }[] | null {
   if (def.undecoded.length) return null;
-  if (def.params.some((p) => p.kind === 'polar')) return null;
   const headers = headersInDocument(doc);
   const out: { id: number; data: RawTag[] }[] = [];
   const ids = [...def.nodeTypes.keys()].sort((a, b) => a - b);

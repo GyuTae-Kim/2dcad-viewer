@@ -24,8 +24,8 @@ export interface DynProperty {
   description: string;
   /** 지금 값: 가시성·조회 = 이름, 뒤집기 = 참/거짓, 거리 = 수, 각도 = 라디안, 점 = Vec3 */
   value: string | number | boolean | Vec3;
-  /** 편집기: select(options), length, angle, readonly */
-  editor: 'select' | 'length' | 'angle' | 'readonly';
+  /** 편집기: select(options), length(0보다 큰 거리), coord(좌표, 음수 가능), angle, readonly */
+  editor: 'select' | 'length' | 'coord' | 'angle' | 'readonly';
   options?: { value: string; label: string }[];
 }
 
@@ -65,8 +65,8 @@ export function dynProperties(doc: CadDocument, ins: InsertEntity): DynProperty[
         const v = ev.xyValues(p);
         const cx = valueChoices(p.valuesX, Math.abs(p.end.x - p.base.x));
         const cy = valueChoices(p.valuesY, Math.abs(p.end.y - p.base.y));
-        out.push({ ...base, key: `${p.id}:x`, label: p.labelX, value: Math.abs(v.x), editor: editable ? (cx.length ? 'select' : 'length') : 'readonly', options: cx.length ? cx.map((x) => ({ value: String(x), label: String(x) })) : undefined });
-        out.push({ ...base, key: `${p.id}:y`, label: p.labelY, value: Math.abs(v.y), editor: editable ? (cy.length ? 'select' : 'length') : 'readonly', options: cy.length ? cy.map((x) => ({ value: String(x), label: String(x) })) : undefined });
+        out.push({ ...base, key: `${p.id}:x`, label: p.labelX, description: p.descriptionX, value: Math.abs(v.x), editor: editable ? (cx.length ? 'select' : 'length') : 'readonly', options: cx.length ? cx.map((x) => ({ value: String(x), label: String(x) })) : undefined });
+        out.push({ ...base, key: `${p.id}:y`, label: p.labelY, description: p.descriptionY, value: Math.abs(v.y), editor: editable ? (cy.length ? 'select' : 'length') : 'readonly', options: cy.length ? cy.map((x) => ({ value: String(x), label: String(x) })) : undefined });
         break;
       }
       case 'rotation':
@@ -77,9 +77,20 @@ export function dynProperties(doc: CadDocument, ins: InsertEntity): DynProperty[
         out.push({ ...base, value: ev.lookupValue(p), editor: editable && ev.lookupEditable(p) && choices.length ? 'select' : 'readonly', options: choices.map((c) => ({ value: c, label: c })) });
         break;
       }
-      case 'polar':
-        out.push({ ...base, value: ev.distance(p), editor: 'readonly' });
+      case 'polar': {
+        const ch = valueChoices(p.values, Math.hypot(p.end.x - p.base.x, p.end.y - p.base.y));
+        out.push({ ...base, key: `${p.id}:d`, value: ev.polarDistance(p), editor: editable ? (ch.length ? 'select' : 'length') : 'readonly', options: ch.length ? ch.map((v) => ({ value: String(v), label: String(v) })) : undefined });
+        out.push({ ...base, key: `${p.id}:a`, label: p.angleLabel, description: p.angleDescription, value: ev.polarAngle(p), editor: editable ? 'angle' : 'readonly' });
         break;
+      }
+      case 'point': {
+        // 위치 X·Y(블록 기준점에서)
+        const pt = ev.points(p.id)[0] ?? { x: 0, y: 0, z: 0 };
+        const bp = ref.defBlock.basePoint;
+        out.push({ ...base, key: `${p.id}:x`, label: `${p.label} X`, value: pt.x - bp.x, editor: editable ? 'coord' : 'readonly' });
+        out.push({ ...base, key: `${p.id}:y`, label: `${p.label} Y`, value: pt.y - bp.y, editor: editable ? 'coord' : 'readonly' });
+        break;
+      }
       default: {
         const pt = ev.points(p.id)[0] ?? { x: 0, y: 0, z: 0 };
         out.push({ ...base, value: pt, editor: 'readonly' });
@@ -100,21 +111,28 @@ export interface DynChange {
   value: string | number | boolean;
 }
 
-function resolveKey(def: DynDefinition, key: string | number): { param: DynParam; axis?: 'x' | 'y' } | null {
+type Axis = 'x' | 'y' | 'd' | 'a';
+
+function resolveKey(def: DynDefinition, key: string | number): { param: DynParam; axis?: Axis } | null {
   if (typeof key === 'number') {
     const p = paramById(def, key);
     return p ? { param: p } : null;
   }
-  const m = /^(\d+):([xy])$/i.exec(key.trim());
+  const m = /^(\d+):([xyda])$/i.exec(key.trim());
   if (m) {
     const p = paramById(def, Number(m[1]));
-    return p ? { param: p, axis: m[2]!.toLowerCase() as 'x' | 'y' } : null;
+    return p ? { param: p, axis: m[2]!.toLowerCase() as Axis } : null;
   }
   const k = key.trim().toUpperCase();
   for (const p of def.params) {
     if (p.kind === 'xy') {
       if (p.labelX.toUpperCase() === k) return { param: p, axis: 'x' };
       if (p.labelY.toUpperCase() === k) return { param: p, axis: 'y' };
+    }
+    if (p.kind === 'polar' && p.angleLabel.toUpperCase() === k) return { param: p, axis: 'a' };
+    if (p.kind === 'point') {
+      if (`${p.label} X`.toUpperCase() === k) return { param: p, axis: 'x' };
+      if (`${p.label} Y`.toUpperCase() === k) return { param: p, axis: 'y' };
     }
   }
   const p = def.params.find((q) => q.label.toUpperCase() === k) ?? def.params.find((q) => q.name.toUpperCase() === k) ?? (/^\d+$/.test(k) ? paramById(def, Number(k)) : undefined);
@@ -148,6 +166,14 @@ function applyChange(ev: DynEval, c: DynChange, exact: boolean): boolean {
       return ev.setRotation(p, toNumber(c.value), { exact });
     case 'lookup':
       return ev.setLookup(p, String(c.value));
+    case 'polar':
+      return r.axis === 'a' ? ev.setPolar(p, undefined, toNumber(c.value), { exact }) : ev.setPolar(p, toNumber(c.value), undefined, { exact });
+    case 'point': {
+      if (r.axis !== 'x' && r.axis !== 'y') throw new DynError('점 매개변수는 X나 Y를 정하십시오.');
+      const bp = ev.ref.defBlock.basePoint;
+      const v = toNumber(c.value);
+      return r.axis === 'x' ? ev.setPoint(p, v + bp.x, undefined) : ev.setPoint(p, undefined, v + bp.y);
+    }
     default:
       throw new DynError(MSG_UNSUPPORTED);
   }
@@ -278,7 +304,9 @@ export function dynGrips(doc: CadDocument, ins: InsertEntity): DynGrip[] {
       if (p.kind === 'visibility') mode = 'menu';
       else if (p.kind === 'lookup') mode = ev.lookupEditable(p) && ev.lookupChoices(p).length ? 'menu' : 'none';
       else if (p.kind === 'flip') mode = 'toggle';
-      else if (p.kind === 'linear' || p.kind === 'xy' || p.kind === 'rotation') mode = 'drag';
+      else if (p.kind === 'linear' || p.kind === 'xy' || p.kind === 'rotation' || p.kind === 'point') mode = 'drag';
+      // 극좌표는 끝점 그립만(첫 점을 옮기는 극좌표 신축은 확인하지 못했다)
+      else if (p.kind === 'polar') mode = g.wx === 'end' ? 'drag' : 'none';
     }
     const pts = ref.values.get(p.id)?.points ?? [];
     let direction: Vec2 | undefined;
@@ -287,7 +315,7 @@ export function dynGrips(doc: CadDocument, ins: InsertEntity): DynGrip[] {
       const d = g.wx === 'base' ? { x: pts[0].x - pts[1].x, y: pts[0].y - pts[1].y } : { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
       direction = unit(affLin(W, d));
       anchor = affApply(W, p.baseLocation === 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : g.wx === 'base' ? pts[1] : pts[0]);
-    } else if ((p.kind === 'xy' || p.kind === 'rotation') && pts[0] && pts[1]) {
+    } else if ((p.kind === 'xy' || p.kind === 'rotation' || p.kind === 'polar') && pts[0] && pts[1]) {
       anchor = affApply(W, g.wx === 'base' && p.kind === 'xy' ? pts[1] : pts[0]);
     } else if (p.kind === 'flip' && pts[0] && pts[1]) {
       const o = g.node.orientation;
@@ -310,6 +338,7 @@ function gripOf(ref: DynRef, gripId: string): GripInfo | null {
 /** 끄는 그립을 도면 점 to로 옮긴 평가(블록 좌표). 바뀌면 참 */
 function dragGrip(ev: DynEval, g: GripInfo, P: Vec3): boolean {
   const p = g.param;
+  if (p.kind === 'point') return ev.setPoint(p, P.x, P.y);
   const pts = ev.points(p.id);
   const [a, b] = pts;
   if (!a || !b) throw new DynError(MSG_UNSUPPORTED);
@@ -331,6 +360,12 @@ function dragGrip(ev: DynEval, g: GripInfo, P: Vec3): boolean {
       return ev.dragXY(p, P, g.wx, g.wy);
     case 'rotation':
       return ev.setRotation(p, Math.atan2(P.y - a.y, P.x - a.x));
+    case 'polar': {
+      if (g.wx !== 'end') throw new DynError(MSG_UNSUPPORTED);
+      const d = Math.hypot(P.x - a.x, P.y - a.y);
+      if (!(d > 1e-12)) throw new DynError('거리는 0보다 커야 합니다.');
+      return ev.setPolar(p, d, Math.atan2(P.y - a.y, P.x - a.x));
+    }
     default:
       throw new DynError(MSG_UNSUPPORTED);
   }

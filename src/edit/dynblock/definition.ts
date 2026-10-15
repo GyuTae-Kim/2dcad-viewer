@@ -34,7 +34,18 @@ const PARAM_KIND: Record<string, ParamKind> = {
   BLOCKLOOKUPPARAMETER: 'lookup',
   BLOCKALIGNMENTPARAMETER: 'alignment',
   BLOCKBASEPOINTPARAMETER: 'basepoint',
+  // 구속 기반 정의의 선형 구속 매개변수(공개 DXF architectural_example-imperial): 값만 읽는다(아래 CONSTRAINT_PARAMS)
+  BLOCKHORIZONTALCONSTRAINTPARAMETER: 'linear',
+  BLOCKVERTICALCONSTRAINTPARAMETER: 'linear',
+  BLOCKALIGNEDCONSTRAINTPARAMETER: 'linear',
+  BLOCKLINEARCONSTRAINTPARAMETER: 'linear',
 };
+
+/**
+ * 구속 매개변수: 값은 블록 객체의 기하 구속(연관 망)을 풀어야 바뀐다. 거리·값 집합만 읽고(특성에 읽기 전용으로 보인다)
+ * 정의는 고치지 않는다(undecoded에 "구속 매개변수 …"를 남긴다). DWG 배치는 표본이 없어 모른다(원본 비트만 남는다).
+ */
+const CONSTRAINT_PARAMS = new Set(['BLOCKHORIZONTALCONSTRAINTPARAMETER', 'BLOCKVERTICALCONSTRAINTPARAMETER', 'BLOCKALIGNEDCONSTRAINTPARAMETER', 'BLOCKLINEARCONSTRAINTPARAMETER']);
 
 const ACTION_TYPES = new Set(['BLOCKMOVEACTION', 'BLOCKSTRETCHACTION', 'BLOCKPOLARSTRETCHACTION', 'BLOCKSCALEACTION', 'BLOCKROTATEACTION', 'BLOCKFLIPACTION', 'BLOCKARRAYACTION', 'BLOCKLOOKUPACTION']);
 
@@ -217,16 +228,28 @@ function readParam(type: string, handle: string, sc: Map<string, RawTag[]>): Dyn
       return { ...base, kind, base: p1, end: p2, baseState: tagStr(first(t, 307)), flippedState: tagStr(first(t, 308)) };
     }
     case 'linear': {
-      const t = need(sc, 'AcDbBlockLinearParameter');
+      const t = need(sc, CONSTRAINT_PARAMS.has(type) ? 'AcDbBlockLinearConstraintParameter' : 'AcDbBlockLinearParameter');
       label(tagStr(first(t, 305)));
       base.description = tagStr(first(t, 306));
       return { ...base, kind, base: p1, end: p2, baseLocation, values: valueSet(t, 96, 141, 142, 143, 144) };
     }
     case 'polar': {
+      // 305 거리 레이블, 306 거리 설명, 307 각도 레이블, 308 각도 설명(공개 짝 도면·AutoCAD 예제 도면)
       const t = need(sc, 'AcDbBlockPolarParameter');
       label(tagStr(first(t, 305)));
-      base.description = tagStr(first(t, 307));
-      return { ...base, kind, base: p1, end: p2, baseLocation };
+      base.description = tagStr(first(t, 306));
+      const al = tagStr(first(t, 307)).trim();
+      return {
+        ...base,
+        kind,
+        base: p1,
+        end: p2,
+        baseLocation,
+        angleLabel: al || `${name} 각도`,
+        angleDescription: tagStr(first(t, 308)),
+        values: valueSet(t, 96, 141, 142, 143, 144),
+        angleValues: valueSet(t, 97, 145, 146, 147, 148),
+      };
     }
     case 'rotation': {
       const t = need(sc, 'AcDbBlockRotationParameter');
@@ -235,11 +258,13 @@ function readParam(type: string, handle: string, sc: Map<string, RawTag[]>): Dyn
       return { ...base, kind, base: p1, end: p2, baseAngle: firstPoint(t, 1011) ?? p2, baseLocation, values: valueSet(t, 96, 141, 142, 143, 144) };
     }
     case 'xy': {
+      // AutoCAD는 Y를 먼저 쓴다: 305 Y 레이블, 306 X 레이블, 307 Y 설명, 308 X 설명
+      // (AutoCAD 예제 도면의 "높이"·"폭", 공개 짝 도면의 "Y Distance1"·"X Distance1")
       const t = need(sc, 'AcDbBlockXYParameter');
-      const lx = tagStr(first(t, 305)).trim();
-      const ly = tagStr(first(t, 306)).trim();
+      const ly = tagStr(first(t, 305)).trim();
+      const lx = tagStr(first(t, 306)).trim();
       label(lx || name);
-      base.description = tagStr(first(t, 307));
+      base.description = tagStr(first(t, 308));
       return {
         ...base,
         kind,
@@ -247,6 +272,8 @@ function readParam(type: string, handle: string, sc: Map<string, RawTag[]>): Dyn
         end: p2,
         labelX: lx || `${name} X`,
         labelY: ly || `${name} Y`,
+        descriptionX: tagStr(first(t, 308)),
+        descriptionY: tagStr(first(t, 307)),
         valuesX: valueSet(t, 96, 142, 143, 144, 145),
         valuesY: valueSet(t, 97, 146, 147, 148, 149),
       };
@@ -368,15 +395,32 @@ function readAction(type: string, handle: string, sc: Map<string, RawTag[]>): Dy
     case 'BLOCKLOOKUPACTION':
       return readLookup(base, need(sc, 'AcDbBlockLookupAction'));
     default: {
-      const a: OtherAction = { ...base, kind: type === 'BLOCKARRAYACTION' ? 'array' : 'polar_stretch', conns: [] };
-      const t = sc.get(type === 'BLOCKARRAYACTION' ? 'AcDbBlockArrayAction' : 'AcDbBlockPolarStretchAction') ?? [];
-      for (const [nc, pc] of [
-        [92, 301],
-        [93, 302],
-        [94, 303],
-        [95, 304],
-      ] as const)
-        if (first(t, nc) !== undefined) a.conns.push(conn(first(t, nc), first(t, pc)));
+      const array = type === 'BLOCKARRAYACTION';
+      const a: OtherAction = { ...base, kind: array ? 'array' : 'polar_stretch', conns: [] };
+      const t = sc.get(array ? 'AcDbBlockArrayAction' : 'AcDbBlockPolarStretchAction') ?? [];
+      // 배열: 92~95 + 301~304, 극좌표 신축: 92~97 + 301~306
+      for (let k = 0; k < (array ? 4 : 6); k++) if (first(t, 92 + k) !== undefined) a.conns.push(conn(first(t, 92 + k), first(t, 301 + k)));
+      if (array) {
+        a.columnSpacing = tagNum(first(t, 140));
+        a.rowSpacing = tagNum(first(t, 141));
+        return a;
+      }
+      // 극좌표 신축: 73 + 틀 점(1011·1021)…, 72 점이 묶인 객체 수, 74 + 332…, 75 + (76, 78)…, 141, 140, 77
+      const m = new TagCursor(t);
+      a.frame = [];
+      a.stretchEntities = [];
+      if (m.seek(73)) {
+        const nf = m.int(73);
+        for (let k = 0; k < nf && m.has(1011); k++) {
+          const p = m.point(1011);
+          a.frame.push({ x: p.x, y: p.y });
+        }
+      }
+      a.boundCount = m.seek(72) ? m.int(72) : 0;
+      if (m.seek(74)) {
+        const n = m.int(74);
+        for (let k = 0; k < n && m.has(332); k++) a.stretchEntities.push(m.handle(332));
+      }
       return a;
     }
   }
@@ -572,7 +616,10 @@ function parseDefinition(doc: CadDocument, key: string, block: BlockDef, rec: Bl
     }
     const sc = subclasses(o.raw);
     try {
-      if (PARAM_KIND[o.type]) params.push(readParam(o.type, n.handle, sc));
+      if (PARAM_KIND[o.type]) {
+        params.push(readParam(o.type, n.handle, sc));
+        if (CONSTRAINT_PARAMS.has(o.type)) undecoded.push(`구속 매개변수 ${o.type}`);
+      }
       else if (ACTION_TYPES.has(o.type)) actions.push(readAction(o.type, n.handle, sc));
       else if (/^BLOCK.*GRIP$/.test(o.type)) grips.push(readGrip(o.type, n.handle, sc, exprs));
       else if (o.type !== 'BLOCKGRIPLOCATIONCOMPONENT') undecoded.push(o.type);
