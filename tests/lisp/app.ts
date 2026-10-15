@@ -14,8 +14,10 @@ import { EditSession } from '../../src/edit/session';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { boundsOf } from '../../src/edit/geom/query';
+import { SELECT_METHODS, runSelectMethod, selectMethodOf } from '../../src/app/selmethod';
 import { lispBusy, lispSession, registerLispCommands } from '../../src/app/lisp';
 import { runScriptText, scriptRunner } from '../../src/app/script';
+import { fakePolySelect } from '../script/selfake';
 
 type Pt = { x: number; y: number };
 type PointOpts = Parameters<CommandContext['getPoint']>[1];
@@ -92,6 +94,7 @@ export function makeLispApp(setup?: (doc: CadDocument) => void): LispApp {
         })
         .map((e) => e.handle);
     },
+    ...fakePolySelect(doc, space),
   };
   const print = (text: string, cls?: 'err' | 'res') => {
     cmd.onPrint?.(text, cls);
@@ -179,6 +182,7 @@ export function makeLispApp(setup?: (doc: CadDocument) => void): LispApp {
       return hs;
     }
     const kws: Keyword[] = [{ key: 'ALL', label: '전체' }, { key: 'P', label: '이전' }, { key: 'L', label: '마지막' }, { key: 'R', label: '제거' }, { key: 'A', label: '추가' }, ...(opt.keywords ?? [])];
+    for (const m of SELECT_METHODS) if (!kws.some((x) => x.key === m.key)) kws.push(m);
     for (;;) {
       const r = await new Promise<{ handles: string[] } | { keyword: string }>((resolve, reject) => {
         if (signal.aborted) return reject(new CancelError());
@@ -206,6 +210,13 @@ export function makeLispApp(setup?: (doc: CadDocument) => void): LispApp {
       else if (k === 'L') {
         const h = lastCreated.filter((x) => doc.entityIndex.has(x)).slice(-1)[0];
         if (h) st.selection.add(h);
+      } else {
+        const m = selectMethodOf(k);
+        if (m) {
+          const hs = await runSelectMethod(m, { getPoint: (pr, o) => requestPoint(pr, o, signal), print }, picker);
+          if (hs) for (const h of hs) st.selection.add(h);
+          if (hs) print(`${hs.length}개를 찾음`);
+        }
       }
     }
   }

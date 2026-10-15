@@ -1,7 +1,7 @@
 /**
  * AutoLISP 값 → 글(prin1·princ). 실수는 유효 숫자 6자리(%g)에 소수점을 붙인다(AutoCAD 명령행과 같다).
  */
-import { Builtin, CatchAllError, Cons, Ename, Lambda, LispError, PickSet, Real, Special, Sym, type Value } from './types';
+import { Builtin, CatchAllError, Cons, Ename, Lambda, LispError, LispFile, PickSet, Real, Special, Sym, type Value } from './types';
 
 /** 실수 표시: 1.0, 0.333333, 123457.0, 1.23457e+06 */
 export function formatReal(x: number): string {
@@ -79,6 +79,7 @@ export function toText(v: Value, princ = false, depth = 0): string {
   if (v instanceof Ename) return `<엔티티 이름: ${v.handle.toLowerCase()}>`;
   if (v instanceof PickSet) return `<선택 세트: ${v.id}>`;
   if (v instanceof CatchAllError) return '#<%catch-all-apply-error%>';
+  if (v instanceof LispFile) return `#<file "${v.name}">`;
   return String(v);
 }
 

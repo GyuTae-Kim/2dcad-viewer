@@ -8,6 +8,7 @@ import type { DisplayList, EntityBox } from '../render/displaylist';
 import { GLYPH_STRIDE, SEG_STRIDE, TRI_STRIDE } from '../render/displaylist';
 import type { TextEngine } from '../text/layout';
 import type { OverlayGeom, Pt } from './view';
+import { fenceHits, polygonHits } from '../edit/geom/selpoly';
 
 export function expandDisplayList(dl: DisplayList): OverlayGeom {
   const segs: number[] = [];
@@ -309,6 +310,16 @@ export class Picker {
       if (hit) out.push(b.handle);
     }
     return out;
+  }
+
+  /** 다각형 선택(crossing이면 걸침 폴리곤 CP, 아니면 윈도우 폴리곤 WP). 다각형은 저절로 닫는다 */
+  selectPolygon(poly: Pt[], crossing: boolean): string[] {
+    return polygonHits([...this.boxes.filter((x) => !this.exclude.has(x.handle)), ...this.extra], (h) => this.geometry(h), poly, crossing);
+  }
+
+  /** 울타리 선택(F): 꺾은선과 만나는 객체 */
+  selectFence(pts: Pt[]): string[] {
+    return fenceHits([...this.boxes.filter((x) => !this.exclude.has(x.handle)), ...this.extra], (h) => this.geometry(h), pts);
   }
 
   entity(handle: string): Entity | undefined {

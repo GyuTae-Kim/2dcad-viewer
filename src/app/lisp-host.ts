@@ -1,5 +1,6 @@
 /**
- * AutoLISP ↔ App 연결(LispHost): 입력 요청(get*)·명령 넣기(command)·시스템 변수(getvar·setvar)·선택(ssget)·도면 편집.
+ * AutoLISP ↔ App 연결(LispHost): 입력 요청(get*)·명령 넣기(command)·시스템 변수(getvar·setvar)·선택(ssget, WP·CP·F 포함)·도면 편집,
+ * 객체 스냅(osnap)·문자 상자(textbox, 문자 배치 엔진)·임시 그림(grdraw·grvecs, lisp-gr.ts)·이번 세션에 연 파일 정보(findfile·vl-file-*·open).
  * 입력은 App의 요청(점·객체·선택)을 그대로 써서 마우스·스냅·키워드 클릭·스크립트 입력이 모두 통한다.
  * App의 요청 함수는 비공개라 구조 형식으로 꺼낸다(시험의 가짜 App도 같은 이름을 갖춘다).
  */
@@ -11,7 +12,7 @@ import { isPoint, point } from '../edit/lisp/core';
 import { prin1 } from '../edit/lisp/printer';
 import { Ename, LispError, PickSet, Real, Sym, fromArray, toArray, type Value } from '../edit/lisp/types';
 import type { Interp } from '../edit/lisp/interp';
-import { parseCommandWord, scriptCommandName } from '../edit/script/reader';
+import { decodeScript, parseCommandWord, scriptCommandName } from '../edit/script/reader';
 import { entityPath } from '../edit/geom/path';
 import { pathNearest } from '../edit/geom/curve';
 import { boundsOf } from '../edit/geom/query';
@@ -20,6 +21,10 @@ import type { SnapKind } from './view';
 import { currentUcs, toUcs, toWcs } from './ucs';
 import { scriptVars } from './script';
 import { toast } from './ui/dom';
+import { sessionFile } from './sessionfiles';
+import { findSnap } from './snap';
+import { grClear, grDraw } from './lisp-gr';
+import { affApply } from '../text/layout';
 
 type Pt = { x: number; y: number };
 
@@ -492,6 +497,14 @@ export function makeHost(app: App, s: HostState): LispHost {
       const ys = cs.map((c) => c.y);
       return pk.select([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], crossing);
     },
+    selectPolygon(pts, crossing) {
+      const u = ucs();
+      return app.picker()?.selectPolygon(pts.map((p) => toWcs(u, p)), crossing) ?? [];
+    },
+    selectFence(pts) {
+      const u = ucs();
+      return app.picker()?.selectFence(pts.map((p) => toWcs(u, p))) ?? [];
+    },
     pickAt(p) {
       const w = toWcs(ucs(), p);
       return app.picker()?.pick(w.x, w.y, tolerance()) ?? null;
@@ -506,5 +519,68 @@ export function makeHost(app: App, s: HostState): LispHost {
     ucs,
     defineCommand: (n) => s.defineCommand(n),
     findFile: (n) => s.findFile(n),
+    async fileInfo(name) {
+      const k = name.trim().replace(/^"|"$/g, '').replace(/^.*[\\/]/, '');
+      if (!k) return null;
+      const lower = k.toLowerCase();
+      // 고른·끌어 놓은 파일, 연 도면, 로드한 .lsp
+      const blob = sessionFile(k);
+      if (blob) {
+        const text = async () => decodeScript(new Uint8Array(await blob.arrayBuffer())).text;
+        return { name: (blob as File).name || k, size: blob.size, time: (blob as File).lastModified || Date.now(), text };
+      }
+      for (const d of app.docs) if (d.name.toLowerCase() === lower || d.saveName.toLowerCase() === lower) return { name: d.saveName, size: d.size, time: Date.now(), text: async () => null };
+      const f = await s.findFile(k);
+      if (f && f.name.replace(/^.*[\\/]/, '').toLowerCase() === lower) return { name: f.name, size: new TextEncoder().encode(f.text).length, time: Date.now(), text: async () => f.text };
+      return null;
+    },
+    pickTolerance: tolerance,
+    textBox(t) {
+      const eng = (app as unknown as { text?: App['text'] }).text;
+      if (!eng?.layoutText) return null;
+      const style = app.active?.doc.textStyles.get(tableKey(t.style));
+      const lay = eng.layoutText({ text: t.text, insert: { x: 0, y: 0 }, height: t.height, rotation: 0, widthFactor: t.widthFactor, oblique: t.oblique, generation: t.generation, halign: 0, valign: 0, style });
+      let x0 = 0;
+      let y0 = 0;
+      let y1 = 0;
+      let x1 = Number.isFinite(lay.maxX) ? lay.maxX : 0;
+      for (const g of lay.glyphs) {
+        const b = g.geom;
+        if (!(b.maxX >= b.minX)) continue;
+        for (const [gx, gy] of [
+          [b.minX, b.minY],
+          [b.maxX, b.minY],
+          [b.maxX, b.maxY],
+          [b.minX, b.maxY],
+        ] as const) {
+          const [qx, qy] = affApply(g.m, gx, gy);
+          x0 = Math.min(x0, qx);
+          x1 = Math.max(x1, qx);
+          y0 = Math.min(y0, qy);
+          y1 = Math.max(y1, qy);
+        }
+      }
+      return { x0, y0, x1, y1 };
+    },
+    osnap(p, modes) {
+      const st = app.active;
+      const pk = app.picker();
+      if (!st || !pk) return null;
+      const u = ucs();
+      try {
+        const sp = findSnap(st.doc, pk, toWcs(u, p), 10 * (app.view?.pixelSize?.() ?? 1), new Set(modes as SnapKind[]));
+        return sp ? toUcs(u, { x: sp.x, y: sp.y }) : null;
+      } catch {
+        return null;
+      }
+    },
+    grdraw(vs) {
+      const u = ucs();
+      grDraw(
+        app,
+        vs.map((v) => ({ a: toWcs(u, v.a), b: toWcs(u, v.b), color: v.color, highlight: v.highlight })),
+      );
+    },
+    redraw: () => grClear(app),
   };
 }

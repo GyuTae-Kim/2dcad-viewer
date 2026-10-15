@@ -13,7 +13,39 @@ import { EditSession } from '../../src/edit/session';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { boundsOf } from '../../src/edit/geom/query';
+import { SELECT_METHODS, runSelectMethod, selectMethodOf } from '../../src/app/selmethod';
 import { runScriptText, scriptRunner } from '../../src/app/script';
+import { fakePolySelect } from './selfake';
+import { readCadFile } from '../../src/io';
+import { writeDxf } from '../../src/io/dxf/writer';
+import { writeDwg } from '../../src/io/dwg/writer/index';
+
+/** 엔진 워커 흉내: 같은 스레드에서 읽고 쓴다 */
+export function fakeEngine() {
+  const docs = new Map<number, CadDocument>();
+  let next = 100;
+  return {
+    async open(name: string, data: ArrayBuffer) {
+      const doc = readCadFile(new Uint8Array(data), name);
+      const docId = next++;
+      docs.set(docId, doc);
+      return { docId, doc, readMs: 0 };
+    },
+    async adopt(_name: string, doc: CadDocument) {
+      const docId = next++;
+      docs.set(docId, doc);
+      return { docId, doc, readMs: 0 };
+    },
+    async save(docId: number, format: 'dxf' | 'dwg', version: string) {
+      const doc = docs.get(docId)!;
+      const r = format === 'dwg' ? writeDwg(doc, { version: version as never }) : writeDxf(doc, { version: version as never });
+      return { data: r.data, warnings: r.warnings, ms: 0 };
+    },
+    closeDoc(docId: number) {
+      docs.delete(docId);
+    },
+  };
+}
 
 type Pt = { x: number; y: number };
 type Req =
@@ -85,6 +117,7 @@ export function makeScriptApp(setup?: (doc: CadDocument) => void): ScriptApp {
         })
         .map((e) => e.handle);
     },
+    ...fakePolySelect(doc, space),
     geometryOf: (list: Entity[]) => ({ segs: list.length ? [0, 0, 1, 1] : [] }),
     box(h: string) {
       const e = doc.entityIndex.get(h);
@@ -127,6 +160,7 @@ export function makeScriptApp(setup?: (doc: CadDocument) => void): ScriptApp {
       return hs;
     }
     const kws: Keyword[] = [{ key: 'ALL', label: '전체' }, { key: 'P', label: '이전' }, { key: 'L', label: '마지막' }, { key: 'R', label: '제거' }, { key: 'A', label: '추가' }, ...(opt.keywords ?? [])];
+    for (const m of SELECT_METHODS) if (!kws.some((x) => x.key === m.key)) kws.push(m);
     for (;;) {
       const r = await ask<{ handles: string[] } | { keyword: string }>((resolve, reject) => ({ kind: 'select', prompt, keywords: kws, remove: false, resolve, reject }));
       if ('handles' in r) {
@@ -141,6 +175,16 @@ export function makeScriptApp(setup?: (doc: CadDocument) => void): ScriptApp {
         const h = lastCreated.filter((x) => doc.entityIndex.has(x)).slice(-1)[0];
         if (h) st.selection.add(h);
       } else if (opt.keywords?.some((x) => x.key.toUpperCase() === k)) return Promise.reject(Object.assign(new Error('keyword'), { keyword: k }));
+      else {
+        const m = selectMethodOf(k);
+        if (m) {
+          const getPoint = (prompt: string, o: { base?: Pt | null; keywords?: Keyword[] }) =>
+            ask<PointResult>((resolve, reject) => ({ kind: 'point', prompt, keywords: o.keywords ?? [], base: o.base ?? null, allowText: false, preferNumber: false, resolve, reject }));
+          const hs = await runSelectMethod(m, { getPoint, print }, picker);
+          if (hs) for (const h of hs) st.selection.add(h);
+          if (hs) print(`${hs.length}개를 찾음`);
+        }
+      }
     }
   }
 
@@ -281,6 +325,7 @@ export function makeScriptApp(setup?: (doc: CadDocument) => void): ScriptApp {
     cmd,
     ui: { setBusy() {}, refreshPalette() {}, refreshStatus() {}, refreshLayouts() {}, refreshTabs() {} },
     edits: { flush: async () => {} },
+    engine: fakeEngine(),
     clearSelection() {
       st.selection.clear();
     },

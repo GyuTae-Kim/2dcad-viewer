@@ -1368,8 +1368,10 @@ export class Shell implements UiHooks {
                 { label: '배치 복사…', run: () => void go('LAYOUT', 'C') },
                 { label: '이름 바꾸기…', run: () => void go('LAYOUT', 'R') },
                 { label: '삭제', run: () => void go('LAYOUT', 'D') },
+                { label: '다른 이름으로 저장…', run: () => void go('LAYOUT', 'SA') },
               ]
             : []),
+          { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
           { separator: true },
           { label: '페이지 설정…', run: () => void go('PAGESETUP') },
           { label: '플롯…', run: () => void go('PLOT') },

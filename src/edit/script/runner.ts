@@ -3,12 +3,14 @@
  * - 명령 자리: 접두어(_ . ')를 떼고, 대화상자 명령에 명령행 버전이 있으면 그것을 부른다. 빈 입력은 직전 명령 반복(AutoCAD와 같다).
  *   명령이 아닌 이름이 도면 변수면 SETVAR로 넘긴다. 알 수 없는 이름이면 멈추고 줄 번호를 알린다.
  * - 프롬프트: 입력을 그대로 넣는다(공백을 받는 프롬프트는 줄 끝까지). 국제 키워드 접두어 _는 뗀다.
- * - 객체 선택 프롬프트: 점(그 자리 객체, 없으면 반대 구석까지 창), W·C·BOX(두 구석)를 여기서 처리한다.
+ * - 객체 선택 프롬프트: 점(그 자리 객체, 없으면 반대 구석까지 창), W·C·BOX(두 구석), WP·CP·F(점을 차례로, 빈 줄로 끝, U는 마지막 점 지우기)를
+ *   여기서 처리한다.
  * - 명령이 오류를 출력하면(err) 멈추고 줄 번호를 알린다. Esc·Backspace로 멈추고 RESUME으로 이어서, RSCRIPT로 처음부터.
  * - 한 번 이어서 실행한 동안의 편집은 명령 취소 한 번으로 되돌린다.
  */
 import { type ScriptToken, ScriptReader, parseCommandWord, parseScriptPoint, scriptCommandName, stripKeywordPrefix } from './reader';
 import { lispExtent } from '../lisp/reader';
+import { SELF_CROSS, polygonWouldCross } from '../geom/selpoly';
 
 export type HostState = 'command' | 'input' | 'busy';
 type Pt = { x: number; y: number };
@@ -40,6 +42,10 @@ export interface ScriptHost {
   pickEntity(p: Pt): boolean;
   /** 선택 프롬프트: 창(crossing이면 걸침)으로 고른다. 고른 수 */
   selectWindow(a: Pt, b: Pt, crossing: boolean): number;
+  /** 선택 프롬프트: 윈도우 폴리곤(crossing이면 걸침 폴리곤)으로 고른다. 고른 수 */
+  selectPolygon(pts: Pt[], crossing: boolean): number;
+  /** 선택 프롬프트: 울타리로 고른다. 고른 수 */
+  selectFence(pts: Pt[]): number;
   clearSelection(): void;
   /** 대화상자가 열려 있는가 */
   dialogOpen(): boolean;
@@ -73,6 +79,8 @@ export class ScriptRunner {
   private current: ScriptToken | null = null;
   private lastCommand: string | null = null;
   private corner: { mode: 'W' | 'C' | 'BOX' | 'AUTO'; first: Pt | null } | null = null;
+  /** 윈도우 폴리곤·걸침 폴리곤·울타리 점 받는 중 */
+  private poly: { mode: 'WP' | 'CP' | 'F'; pts: Pt[] } | null = null;
   private lastPoint: Pt | null = null;
   /** 끝나거나 멈출 때(시험·화면 갱신) */
   onStop: ((status: ScriptStatus, reason: 'end' | 'error' | 'interrupt') => void) | null = null;
@@ -84,6 +92,7 @@ export class ScriptRunner {
     this.reader = new ScriptReader(text);
     this.name = name;
     this.corner = null;
+    this.poly = null;
     this.failed = null;
     if (this.looping) this.status = 'running';
     else void this.loop();
@@ -94,6 +103,7 @@ export class ScriptRunner {
     if (!this.reader) return false;
     this.reader.reset();
     this.corner = null;
+    this.poly = null;
     this.failed = null;
     if (this.looping) this.status = 'running';
     else void this.loop();
@@ -167,15 +177,16 @@ export class ScriptRunner {
         }
         const state = h.state();
         const kind = state === 'input' ? h.inputKind() : null;
-        const tok = this.reader!.next(state === 'input' && kind !== 'select' && !this.corner && h.acceptsSpaces());
+        const tok = this.reader!.next(state === 'input' && kind !== 'select' && !this.corner && !this.poly && h.acceptsSpaces());
         if (!tok) {
           if (this.corner) this.fail('반대 구석을 지정하지 않았습니다.');
+          else if (this.poly) this.fail(this.poly.mode === 'F' ? '울타리 점 입력을 빈 줄(Enter)로 끝내지 않았습니다.' : '폴리곤 점 입력을 빈 줄(Enter)로 끝내지 않았습니다.');
           else finished = true;
           break;
         }
         this.current = tok;
         if (state === 'command') await this.commandToken(tok);
-        else if (kind === 'select' || this.corner) this.selectToken(tok);
+        else if (kind === 'select' || this.corner || this.poly) this.selectToken(tok);
         else if (kind === 'entity') this.entityToken(tok);
         else h.submit(h.acceptsSpaces() ? tok.text : stripKeywordPrefix(tok.text));
         // 화면이 멈추지 않게 가끔 쉰다
@@ -188,6 +199,7 @@ export class ScriptRunner {
       unwatch();
       unkeys();
       this.corner = null;
+      this.poly = null;
       h.squashUndo(mark, `SCRIPT ${this.name}`);
       this.looping = false;
     }
@@ -272,9 +284,45 @@ export class ScriptRunner {
     if (!h.pickEntity(p)) this.fail(`${tok.text.trim()}에 객체가 없습니다.`);
   }
 
+  /** 윈도우 폴리곤·걸침 폴리곤·울타리의 점 하나(빈 줄이면 마침) */
+  private polyToken(t: string): void {
+    const h = this.host;
+    const pg = this.poly!;
+    const fence = pg.mode === 'F';
+    if (!t) {
+      this.poly = null;
+      const n = fence ? (pg.pts.length >= 2 ? h.selectFence(pg.pts) : 0) : pg.pts.length >= 3 ? h.selectPolygon(pg.pts, pg.mode === 'CP') : 0;
+      this.say(`${n}개를 찾음`);
+      return;
+    }
+    const prompt = pg.pts.length === 0 ? (fence ? '첫 번째 울타리 점 지정:' : '첫 번째 폴리곤 점:') : fence ? '다음 울타리 점 지정 또는 [명령 취소(U)]:' : '선의 끝점 지정 또는 [명령 취소(U)]:';
+    const up = stripKeywordPrefix(t).toUpperCase();
+    if (pg.pts.length && (up === 'U' || up === 'UNDO')) {
+      pg.pts.pop();
+      this.say(`${prompt} ${t}`);
+      return;
+    }
+    const p = parseScriptPoint(t, this.lastPoint);
+    if (!p) {
+      this.fail('점이 올바르지 않습니다. 예: 100,50');
+      return;
+    }
+    if (!fence && pg.pts.length >= 2 && polygonWouldCross(pg.pts, p)) {
+      this.fail(SELF_CROSS);
+      return;
+    }
+    this.lastPoint = p;
+    pg.pts.push(p);
+    this.say(`${prompt} ${t}`);
+  }
+
   private selectToken(tok: ScriptToken): void {
     const h = this.host;
     const t = tok.text.trim();
+    if (this.poly) {
+      this.polyToken(t);
+      return;
+    }
     const c = this.corner;
     if (c) {
       const p = parseScriptPoint(t, this.lastPoint);
@@ -302,6 +350,10 @@ export class ScriptRunner {
     const up = stripKeywordPrefix(t).toUpperCase();
     if (up === 'W' || up === 'WINDOW' || up === 'C' || up === 'CROSSING' || up === 'BOX') {
       this.corner = { mode: up.startsWith('W') ? 'W' : up.startsWith('C') ? 'C' : 'BOX', first: null };
+      return;
+    }
+    if (up === 'WP' || up === 'WPOLYGON' || up === 'CP' || up === 'CPOLYGON' || up === 'F' || up === 'FENCE') {
+      this.poly = { mode: up.startsWith('W') ? 'WP' : up.startsWith('C') ? 'CP' : 'F', pts: [] };
       return;
     }
     const p = parseScriptPoint(t, this.lastPoint);

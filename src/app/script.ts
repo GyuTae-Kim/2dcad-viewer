@@ -93,6 +93,16 @@ function appHost(app: App): ScriptHost {
       app.setSelection(hits, removing() ? 'remove' : 'add');
       return hits.length;
     },
+    selectPolygon(pts, crossing) {
+      const hits = picker()?.selectPolygon(pts, crossing) ?? [];
+      app.setSelection(hits, removing() ? 'remove' : 'add');
+      return hits.length;
+    },
+    selectFence(pts) {
+      const hits = picker()?.selectFence(pts) ?? [];
+      app.setSelection(hits, removing() ? 'remove' : 'add');
+      return hits.length;
+    },
     clearSelection: () => {
       if (app.active?.selection.size) app.clearSelection();
     },

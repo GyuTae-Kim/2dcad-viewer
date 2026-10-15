@@ -14,6 +14,8 @@ export interface PureLisp {
   inputs: AskResult[];
   vars: Map<string, Value>;
   files: Map<string, { name: string; text: string }>;
+  /** grdraw·grvecs로 그린 임시 벡터 */
+  grdrawn: { a: { x: number; y: number }; b: { x: number; y: number }; color: number; highlight: boolean }[];
   /** 글을 평가해 결과를 prin1 글로(오류면 "ERR:메시지") */
   ev(text: string): Promise<string>;
 }
@@ -24,6 +26,7 @@ export function pureLisp(): PureLisp {
   const defined: string[] = [];
   const inputs: AskResult[] = [];
   const files = new Map<string, { name: string; text: string }>();
+  const grdrawn: { a: { x: number; y: number }; b: { x: number; y: number }; color: number; highlight: boolean }[] = [];
   const vars = new Map<string, Value>([
     ['LUNITS', 2],
     ['LUPREC', 4],
@@ -49,6 +52,8 @@ export function pureLisp(): PureLisp {
     drawing: () => null,
     select: async () => [],
     selectWindow: () => [],
+    selectPolygon: () => [],
+    selectFence: () => [],
     pickAt: () => null,
     implied: () => [],
     setImplied() {},
@@ -58,6 +63,15 @@ export function pureLisp(): PureLisp {
     ucs: () => ({ ox: 0, oy: 0, angle: 0 }),
     defineCommand: (n) => void defined.push(n),
     findFile: async (n) => files.get(n.toLowerCase()) ?? files.get(`${n.toLowerCase()}.lsp`) ?? null,
+    fileInfo: async (n) => {
+      const f = files.get(n.toLowerCase());
+      return f ? { name: f.name, size: f.text.length, time: Date.UTC(2026, 9, 15, 3, 4, 5), text: async () => f.text } : null;
+    },
+    pickTolerance: () => 0.1,
+    textBox: () => null,
+    osnap: (p, modes) => (modes.includes('end') ? { x: Math.round(p.x), y: Math.round(p.y) } : null),
+    grdraw: (vs) => void grdrawn.push(...vs),
+    redraw: () => void (grdrawn.length = 0),
   };
   const it = createInterp(host, { print: (t, cls) => void printed.push(cls ? `${cls}:${t}` : t) });
   return {
@@ -68,6 +82,7 @@ export function pureLisp(): PureLisp {
     inputs,
     vars,
     files,
+    grdrawn,
     async ev(text: string) {
       const o = await it.evalText(text, false);
       return o.ok ? prin1(o.value) : `ERR:${o.error.message}`;
