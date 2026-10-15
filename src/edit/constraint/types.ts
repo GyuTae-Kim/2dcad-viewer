@@ -59,6 +59,17 @@ export const DIM_LABEL: Record<DimType, string> = {
   DIAMETER: '지름',
 };
 
+/**
+ * AutoCAD가 만든 구속(연관 망의 2D 구속 그룹 노드)에서 읽은 구속이면 그 자리.
+ * 이 앱 기록(XRECORD)에는 쓰지 않고, 바뀌면 AutoCAD 그룹·변수를 같은 형식으로 고쳐 쓴다(src/edit/assocnet/constraints.ts).
+ */
+export interface AcadLink {
+  /** ACDBASSOC2DCONSTRAINTGROUP 핸들 */
+  group: string;
+  /** 구속 노드 번호 */
+  node: number;
+}
+
 /** 객체의 부분을 가리키는 참조 */
 export interface GeoRef {
   /** 객체 핸들(정규화된 대문자 16진) */
@@ -79,6 +90,7 @@ export interface GeoConstraint {
   aux?: number[];
   /** 수평·수직의 기준 축 각도(만들 때의 UCS X축, 라디안). 없으면 WCS */
   axis?: number;
+  acad?: AcadLink;
 }
 
 export interface DimConstraint {
@@ -112,6 +124,7 @@ export interface DimConstraint {
   /** 치수 구속 표시를 숨김(DCDISPLAY) */
   hidden?: boolean;
   description?: string;
+  acad?: AcadLink;
 }
 
 export type Constraint = GeoConstraint | DimConstraint;
@@ -122,6 +135,8 @@ export interface UserParam {
   expr: string;
   value: number;
   description?: string;
+  /** AutoCAD 변수(ACDBASSOCVARIABLE)에서 읽은 것이면 그 핸들 */
+  acad?: string;
 }
 
 /** 도면 하나의 구속 기록 */
@@ -132,6 +147,8 @@ export interface ConstraintStore {
   hiddenBars: string[];
   /** 다음 구속 번호 */
   nextId: number;
+  /** 치수 표시를 숨긴 AutoCAD 치수 구속("그룹 핸들:노드 번호" — 이 앱 기록에만 둔다) */
+  acadHidden?: string[];
 }
 
 export function emptyStore(): ConstraintStore {

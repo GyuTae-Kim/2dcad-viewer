@@ -67,7 +67,9 @@ describe('연관 배열 만들기', () => {
     expect(ms.length).toBe(1);
     expect(ms[0]!.type).toBe('INSERT');
     const info = readArray(b.doc, ins)!;
-    expect(info.origin).toBe('app');
+    // 새 배열도 AutoCAD 연관 객체 망을 만든다(src/edit/assocnet/array.ts) → AutoCAD 기록으로 읽힌다
+    expect(info.origin).toBe('acad');
+    expect(info.acad?.raw).toBe(true);
     expect(info.items.size).toBe(6);
     // 원본 블록: 기준점(범위 중심)이 원점
     const src = b.doc.blocks.get(tableKey(info.state.source))!;
@@ -146,8 +148,10 @@ describe('연관 배열 다시 계산(ARRAYEDIT와 같은 길)', () => {
     const edited = regen(b, ins, (s) => {
       (s.params as RectParams).rows = 3;
     });
-    expect(edited.block).not.toBe(cp.block);
-    expect(readArray(b.doc, b.doc.entityIndex.get(cp.handle))!.items.size).toBe(6);
+    // AutoCAD 기록 배열은 종속이 블록 레코드를 가리키므로 고친 배열이 블록을 지키고 복사본이 복제 블록으로 간다
+    const cp2 = b.doc.entityIndex.get(cp.handle) as InsertEntity;
+    expect(edited.block).not.toBe(cp2.block);
+    expect(readArray(b.doc, cp2)!.items.size).toBe(6);
     expect(readArray(b.doc, edited)!.items.size).toBe(9);
   });
 
@@ -237,7 +241,7 @@ describe('저장 뒤 다시 읽기', () => {
       const e = [...doc.entityIndex.values()].find((x) => x.type === 'INSERT' && x.xdata?.some((d) => d.app.toUpperCase() === 'OPENCAD_ARRAY'));
       const info = readArray(doc, e)!;
       expect(info).not.toBeNull();
-      expect(info.origin).toBe('app');
+      expect(info.origin).toBe('acad');
       const p: ArrayParams = info.state.params;
       expect(p.kind).toBe('rect');
       expect([...info.state.removed]).toEqual(['1,1,0']);

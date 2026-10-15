@@ -150,6 +150,8 @@ export function createAssocArray(app: App, ctx: CommandContext, req: AssocReques
     const reverse = !req.path.closed && Math.hypot(s0.x - n0.x, s0.y - n0.y) > 1e-9 * Math.max(1, Math.abs(s0.x), Math.abs(s0.y));
     const spec = req.spec;
     const ref = spec.tangent ?? startTangentAngle(req.path);
+    // 항목 정렬이면 AutoCAD처럼 원본 블록을 접선 기준 방향이 +X가 되게 돌려 넣는다(정렬 각도 = 경로 접선 — AutoCAD 기록과 같은 뜻)
+    const turn = spec.align && Math.abs(ref) > 1e-12;
     input = {
       params: {
         kind: 'path',
@@ -161,7 +163,7 @@ export function createAssocArray(app: App, ctx: CommandContext, req: AssocReques
         zDir: req.zDir,
         reverse,
         path: req.pathHandle,
-        tangentRef: ref,
+        tangentRef: turn ? 0 : ref,
         rows: spec.rows,
         rowSpacing: spec.rowSpacing,
         rowElevation: 0,
@@ -169,13 +171,12 @@ export function createAssocArray(app: App, ctx: CommandContext, req: AssocReques
         levelSpacing: req.levelSpacing,
       },
       sources,
-      normalize: affTranslate(-spec.base.x, -spec.base.y),
+      normalize: turn ? affMul(affRotate(-ref), affTranslate(-spec.base.x, -spec.base.y)) : affTranslate(-spec.base.x, -spec.base.y),
       insert: { x: 0, y: 0, z: 0 },
       rotation: 0,
       props,
       space: st.space,
     };
-    // 원본 블록 좌표에서 접선 기준 방향은 그대로(이동만) → 정렬 각도 = 경로 접선 − 기준 방향
   }
   const r = createArrayOps(buildEnv(st), input);
   if ('error' in r) {
@@ -752,7 +753,7 @@ export function registerAssocArrayCommands(app: App): void {
           noted = true;
           const p = info.state.params;
           ctx.print(`유형 = ${KIND_LABEL[p.kind]}  연관 = 예`);
-          if (info.origin === 'infer') ctx.print('이 배열은 DWG의 AutoCAD 연관 배열입니다. 매개변수는 항목 배치에서 짐작했고, 고치면 이 앱 기록으로 저장합니다(DWG의 AutoCAD 배열 기록은 고쳐 쓰지 못합니다).');
+          if (info.origin === 'infer') ctx.print('이 배열은 AutoCAD 연관 배열인데 연관 객체를 풀지 못했습니다. 매개변수는 항목 배치에서 짐작했고, 고치면 이 앱 기록으로 저장합니다(AutoCAD 배열 기록은 고쳐 쓰지 못합니다).');
           if (info.stale) {
             ctx.print('경로 곡선이 바뀌어 배열을 새 경로로 다시 계산합니다.');
             applyArrayState(app, ctx, info, info.state, 'ARRAYEDIT');

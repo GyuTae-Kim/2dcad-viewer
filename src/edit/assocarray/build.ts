@@ -3,7 +3,8 @@
  *  - 만들기: 원본 객체를 원본 블록으로 옮기고(도면에서는 지운다), 배열 블록에 항목 참조를 넣고, 배열 참조를 더한다.
  *  - 다시 계산: 배열 블록의 내용을 바꾼다. 같은 블록을 다른 참조도 쓰면(복사본) 새 블록을 만든다(AutoCAD 기록 배열은
  *    종속이 블록 레코드를 가리키므로 블록은 그대로 두고 다른 참조를 복제 블록으로 옮긴다). 그대로 남는 항목은 핸들을 유지한다.
- *  - AutoCAD 기록 배열(DXF 원본 태그)은 값 매개변수·점 매개변수·항목 목록·끝 행렬을 함께 고친다.
+ *  - AutoCAD 기록 배열(원본 태그 — DXF, 그리고 src/io/dwg/assoccodec.ts로 푼 DWG)은 값 매개변수·점 매개변수·항목 목록·끝 행렬을
+ *    함께 고친다. 새 배열도 AutoCAD 연관 객체 망을 만든다(src/edit/assocnet/array.ts, 경로 배열은 경로가 선일 때만).
  * 모든 배열에 이 앱의 기록(OPENCAD_ARRAY)을 남긴다.
  */
 import type { BlockDef, BlockRecord, CadDocument, Entity, EntityBase, GenericObject, InsertEntity, RawTag, Vec3 } from '../../core/model';
@@ -18,6 +19,7 @@ import { arrayPath, blockShared, expectedItems, itemMatrix, readArray, type Arra
 import { cachePath } from './layout';
 import { decompose, itemCount, pathSpacingOf } from './layout';
 import { encodeRecord, withRecord } from './record';
+import { acadArrayOps, withValueParam } from '../assocnet/array';
 import { type ArrayItem, type ArrayParams, type ArrayState, MAX_ITEMS, MAX_REMOVED, MAX_REPLACED } from './types';
 
 export interface BuildEnv {
@@ -128,6 +130,11 @@ export interface CreateInput {
   props: Omit<EntityBase, 'type' | 'handle'>;
   /** 배열 참조를 넣을 공간(블록 키) */
   space: string;
+  /**
+   * AutoCAD 연관 객체 망(ACAD_ASSOCNETWORK의 동작·몸체·종속·매개변수)도 만든다(기본 예 — src/edit/assocnet/array.ts).
+   * 만들 수 없는 경우(경로가 선이 아닌 경로 배열, 루트 사전 없음)는 이 앱 기록만 남긴다.
+   */
+  acad?: boolean;
 }
 
 export interface Built {
@@ -185,6 +192,42 @@ export function createArrayOps(env: BuildEnv, input: CreateInput): Built | { err
   // 기록은 원본 블록 레코드 핸들을 쓴다 → 레코드가 들어간 뒤의 문서가 필요 없게 직접 만든다
   const rec = encodeRecord({ ...doc, blockRecords: new Map([[tableKey(srcName), (src.ops[0] as { after: BlockRecord }).after]]) } as CadDocument, state);
   ins.xdata = withRecord(ins.xdata, rec);
+  // AutoCAD 연관 객체 망
+  const spaceRecord = doc.blocks.get(input.space)?.recordHandle;
+  let acadOpsList: EditOp[] = [];
+  if (input.acad !== false && spaceRecord) {
+    const W = insertAffine(arr.def, ins);
+    let path: { entity: Entity; a: Vec3; b: Vec3 } | undefined;
+    let pathSpacing: number | undefined;
+    if (p.kind === 'path' && p.path) {
+      const pe = doc.entityIndex.get(p.path);
+      const inv = affInv(W);
+      if (pe?.type === 'LINE' && inv) {
+        const a = affApply(inv, pe.start);
+        const b = affApply(inv, pe.end);
+        path = { entity: pe, a: { x: a.x, y: a.y, z: pe.start.z }, b: { x: b.x, y: b.y, z: pe.end.z } };
+        const ap = arrayPath(doc, p);
+        pathSpacing = ap ? pathSpacingOf(p, ap.path) : p.spacing;
+      }
+    }
+    const withH = items.map((it, i) => ({ ...it, handle: entities[i]!.handle }));
+    const r = acadArrayOps(doc, env.newHandle, {
+      params: state.params,
+      insert: ins,
+      space: input.space,
+      spaceRecord,
+      arrayRecord: (arr.ops[0] as { after: BlockRecord }).after.handle,
+      sourceRecord: (src.ops[0] as { after: BlockRecord }).after.handle,
+      items: withH,
+      insertMatrix: W,
+      ...(path ? { path } : {}),
+      ...(pathSpacing !== undefined ? { pathSpacing } : {}),
+    });
+    if (r) {
+      ins.reactors = [...(ins.reactors ?? []), ...r.insertReactors];
+      acadOpsList = r.ops;
+    }
+  }
   // 원본 지우기(블록마다 뒤에서부터)
   const rem: { block: string; entity: Entity; index: number }[] = [];
   for (const e of input.sources) {
@@ -202,6 +245,8 @@ export function createArrayOps(env: BuildEnv, input: CreateInput): Built | { err
   const space = doc.blocks.get(input.space);
   if (space) ins.owner = space.recordHandle;
   ops.push({ kind: 'add', block: input.space, entity: ins });
+  // 경로 곡선의 반응자는 원본 지우기·참조 더하기 뒤에(같은 객체를 지우는 경우는 경로로 쓸 수 없다)
+  ops.push(...acadOpsList);
   return { ops, insert: ins, items: items.length };
 }
 
@@ -289,11 +334,19 @@ export function regenerateOps(env: BuildEnv, info: ArrayInfo, next: ArrayState, 
     );
     ops.push(...dup.ops);
     const k = tableKey(info.def.name);
+    // 복사본은 이 배열의 AutoCAD 종속을 가리키지 않게 한다(복사한 참조가 반응자를 그대로 가진 경우)
+    const deps = new Set(info.acad?.deps.map((d) => d.handle) ?? []);
     for (const e of doc.entityIndex.values()) {
       if (e.type !== 'INSERT' || e.handle === info.ins.handle || tableKey(e.block) !== k) continue;
       const owner = ownerKey(doc, e.handle);
       if (!owner) continue;
-      ops.push({ kind: 'modify', block: owner, before: e, after: { ...cloneEntity(e), block: dupName } });
+      const after = { ...cloneEntity(e), block: dupName };
+      if (after.reactors?.some((r) => deps.has(normalizeHandle(r)))) {
+        const rest = after.reactors.filter((r) => !deps.has(normalizeHandle(r)));
+        if (rest.length) after.reactors = rest;
+        else delete after.reactors;
+      }
+      ops.push({ kind: 'modify', block: owner, before: e, after });
     }
   }
   const reuse = inPlace ? info.items : new Map<string, string>();
@@ -353,6 +406,18 @@ function acadOps(doc: CadDocument, info: ArrayInfo, next: ArrayState, items: rea
     const r = patchValues(a, holder, o.raw, values);
     if (r) patched.set(holder, r);
   }
+  // 시계 방향 원형 배열인데 AutoCAD 기록에 방향(Direction)이 없으면 더한다(없으면 AutoCAD는 반시계로 본다)
+  if (p.kind === 'polar' && p.fillAngle < 0 && !a.values.has('Direction')) {
+    for (const holder of [a.action, a.body]) {
+      const o = objOf(holder);
+      if (!o?.raw) continue;
+      const r = withValueParam(o.type, patched.get(holder) ?? o.raw, 'Direction', 0, { code: 90, v: 0 });
+      if (r) {
+        patched.set(holder, r);
+        break;
+      }
+    }
+  }
   // 몸체의 항목 목록·끝 행렬
   const body = objOf(a.body);
   if (body?.raw) {
@@ -371,9 +436,7 @@ function acadOps(doc: CadDocument, info: ArrayInfo, next: ArrayState, items: rea
   if (p.kind === 'polar') setVertex('Origin', { x: p.center.x, y: p.center.y, z: a.vertex.get('Origin')?.point.z ?? 0 });
   if (p.kind === 'rect') setVertex('Origin', { x: p.origin.x, y: p.origin.y, z: a.vertex.get('Origin')?.point.z ?? 0 });
   setVertex('basePoint', { x: p.base.x, y: p.base.y, z: a.vertex.get('basePoint')?.point.z ?? 0 });
-  const bn = a.vertex.get('BaseNormal')?.point;
-  const oldLevel = info.state.params.levelSpacing;
-  if (bn && Math.abs(bn.x) < 1e-12 && Math.abs(bn.y) < 1e-12 && Math.abs(bn.z - oldLevel) < 1e-9 && p.levelSpacing > 0) setVertex('BaseNormal', { x: 0, y: 0, z: p.levelSpacing });
+  // BaseNormal은 레벨 방향(법선)이다 — 표본 28개는 레벨 간격(0.699, 0.75 …)과 상관없이 (0,0,1)이라 고치지 않는다
   for (const [h, raw] of patched) {
     const before = objOf(h);
     if (!before) continue;

@@ -1,8 +1,8 @@
 /**
  * 배열 참조 → 연관 배열 상태. 근거의 순서:
- *  1. AutoCAD 기록의 원본 태그(DXF에서 읽은 AutoCAD 배열 — AutoCAD가 마지막으로 고쳤을 수 있어 가장 먼저)
+ *  1. AutoCAD 기록의 원본 태그(DXF·DWG에서 읽은 AutoCAD 배열과 이 앱이 만든 배열 — AutoCAD가 마지막으로 고쳤을 수 있어 가장 먼저)
  *  2. 이 앱의 기록(확장 자료 OPENCAD_ARRAY)
- *  3. 항목 참조에서 짐작(AutoCAD 기록은 있지만 원본 태그가 없는 DWG의 배열)
+ *  3. 항목 참조에서 짐작(AutoCAD 기록은 있지만 원본 태그가 없는 배열 — DWG 코덱이 풀지 못한 객체. 원본 태그가 있는 경로 배열은 4로)
  * 어느 것이든 그 매개변수로 계산한 항목이 배열 블록의 항목 참조와 맞아야 받아들인다(맞추면서 지운 항목·대체 항목도 정한다).
  */
 import type { BlockDef, CadDocument, Entity, InsertEntity, Vec2 } from '../../core/model';
@@ -178,8 +178,8 @@ export function readArray(doc: CadDocument, e: Entity | undefined): ArrayInfo | 
     const got = tryState(decodeRecord(doc, rec), false, acad ? 'acad' : 'app');
     if (got) return { ...got, origin: acad?.raw ? 'acad' : acad ? 'infer' : 'app' };
   }
-  // 3. 짐작(AutoCAD 기록이 있을 때만)
-  if (acad) {
+  // 3. 짐작(AutoCAD 기록이 있을 때만). 원본 태그까지 있는 경로 배열은 짐작하지 않는다 — 경로가 바뀐 것이다(4)
+  if (acad && !(acad.raw && acad.kind === 'path')) {
     const source = (acad.sourceRecord && blockNameOfRecord(doc, acad.sourceRecord)) || commonBlock(refs);
     const params = source ? inferParams(doc, ins, def, refs, { kind: acad.kind, path: acad.pathEntity ?? null }) : null;
     if (params && source) {

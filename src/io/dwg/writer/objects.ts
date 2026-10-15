@@ -23,6 +23,7 @@ import { HARD_OWNER, HARD_PTR, SOFT_OWNER, SOFT_PTR, type ObjWriter } from './ob
 import { parseHandle } from './util';
 import { CTX_TYPES } from '../ctxcodec';
 import { DYN_TYPES } from '../dyncodec';
+import { ASSOC_DWG_TYPES } from '../assoccodec';
 import { writeRawObject } from './rawobjects';
 import { tableKey } from '../../../core/model';
 import { defaultIoTableStyle, parseTableStyleTags } from '../../tablestyle';
@@ -281,8 +282,8 @@ export class ObjectWriter {
         writeRawObject(d, hd, ctx, o as GenericObject);
         break;
       default:
-        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type)) {
-          // 동적 블록 객체(dyncodec.ts)
+        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type) || ASSOC_DWG_TYPES.has(o.type)) {
+          // 동적 블록 객체(dyncodec.ts), 연관 망 객체(assoccodec.ts)
           this.start(this.cls(o.type), po);
           writeRawObject(d, hd, ctx, o as GenericObject);
           break;

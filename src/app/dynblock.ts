@@ -58,7 +58,7 @@ function show(app: App, p: DynProperty): string {
     const v = typeof p.value === 'boolean' ? (p.value ? '1' : '0') : String(p.value);
     return p.options.find((o) => o.value === v)?.label ?? (typeof p.value === 'number' ? formatLength(p.value, u) : v);
   }
-  if (p.kind === 'rotation') return formatAngle(p.value as number, u);
+  if (p.editor === 'angle' || p.kind === 'rotation') return formatAngle(p.value as number, u);
   if (typeof p.value === 'number') return formatLength(p.value, u);
   if (typeof p.value === 'boolean') return p.value ? '예' : '아니오';
   if (typeof p.value === 'object') return `${formatLength(p.value.x, u)}, ${formatLength(p.value.y, u)}`;
@@ -81,6 +81,14 @@ function changeOf(app: App, p: DynProperty, input: string): DynChange | { error:
       return a === null ? { error: '각도가 올바르지 않습니다.' } : { key: p.key, value: a };
     }
     default: {
+      if (p.editor === 'angle') {
+        const a = parseAngle(t, app.active!.units.aunits);
+        return a === null ? { error: '각도가 올바르지 않습니다.' } : { key: p.key, value: a };
+      }
+      if (p.editor === 'coord') {
+        const v = parseLength(t);
+        return v === null ? { error: '좌표가 올바르지 않습니다.' } : { key: p.key, value: v };
+      }
       const v = parseLength(t);
       if (v === null || !(v > 0)) return { error: '0보다 큰 거리를 입력하십시오.' };
       return { key: p.key, value: v };
@@ -189,7 +197,7 @@ export async function dynGripEdit(app: App, ctx: CommandContext, handle: string,
       };
       ctx.print('** 신축 **');
       for (;;) {
-        const numeric = g.kind === 'linear' || g.kind === 'rotation';
+        const numeric = g.kind === 'linear' || g.kind === 'rotation' || g.kind === 'polar';
         const r = await ctx.getPoint('신축점 지정 또는 [종료(X)]:', { base: g.anchor ?? g.point, keywords: [{ key: 'X', label: '종료' }], ghost, preferNumber: numeric });
         if ('keyword' in r || 'enter' in r) return;
         const cur = insertOf(app, handle);
@@ -282,7 +290,7 @@ async function askValue(app: App, ctx: CommandContext, ins: InsertEntity, p: Dyn
       if ('keyword' in r) input = p.options[Number(r.keyword) - 1]?.value ?? null;
       else if ('text' in r) {
         const o = p.options.find((x) => x.label.toUpperCase() === r.text.trim().toUpperCase() || x.value === r.text.trim());
-        input = o ? o.value : p.kind === 'linear' || p.kind === 'xy' ? r.text : null;
+        input = o ? o.value : p.kind === 'linear' || p.kind === 'xy' || p.kind === 'polar' ? r.text : null;
       } else if ('point' in r && grip && p.kind === 'linear') return applyDynGrip(st.doc, ins, grip.id, r.point, nh);
       if (input === null) {
         ctx.print('목록에서 고르십시오.', 'err');
@@ -300,8 +308,8 @@ async function askValue(app: App, ctx: CommandContext, ins: InsertEntity, p: Dyn
     const r = await ctx.getPoint(`${kwLabel(p.label)} 입력 <${cur}>:`, { preferNumber: true, base: grip?.anchor ?? null });
     if ('enter' in r || 'keyword' in r) return null;
     if ('point' in r) {
-      if (grip && (p.kind === 'linear' || p.kind === 'rotation')) return applyDynGrip(st.doc, ins, grip.id, r.point, nh);
-      ctx.print(p.kind === 'rotation' ? '각도를 입력하십시오.' : '거리를 입력하십시오.', 'err');
+      if (grip && (p.kind === 'linear' || p.kind === 'rotation' || p.kind === 'polar' || p.kind === 'point')) return applyDynGrip(st.doc, ins, grip.id, r.point, nh);
+      ctx.print(p.editor === 'angle' ? '각도를 입력하십시오.' : p.editor === 'coord' ? '좌표를 입력하십시오.' : '거리를 입력하십시오.', 'err');
       continue;
     }
     const c = changeOf(app, p, r.text);

@@ -355,8 +355,9 @@ export function dynFixture(opt: FixtureOptions = {}): DynFixture {
       ...param(),
       ...twoPt([0, 0], [4, 3], [2, 5]),
       [100, 'AcDbBlockXYParameter'],
-      [305, '가로'],
-      [306, '세로'],
+      // AutoCAD는 Y(세로)를 먼저 쓴다: 305 Y 레이블, 306 X 레이블
+      [305, '세로'],
+      [306, '가로'],
       [307, ''],
       [308, ''],
       [141, 0],
@@ -653,6 +654,221 @@ export function dynMiniFixture(): DynFixture {
   o.rec('ACAD_EVALUATION_GRAPH', graph(h.graph!, h.xd!, nodes, edges));
   for (const n of nodes) o.rec(n.type, [[5, n.handle], [330, h.graph!], ...n.body]);
   o.rec('ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION', [[5, h.purge!], [102, '{ACAD_REACTORS'], [330, h.xd!], [102, '}'], [330, h.xd!], [100, 'AcDbDynamicBlockPurgePreventer'], [70, 1]]);
+  o.rec('ENDSEC', []);
+  o.tag(0, 'EOF');
+  return { text: o.lines.join('\n') + '\n', h };
+}
+
+/**
+ * 점·극좌표 매개변수 동적 블록(손으로 만든 것 — 태그 배치는 공개 짝 도면에서 확인한 AutoCAD DXF 배치를 따른다).
+ *
+ * PT-TEST: 원(0,0 r 1, ETag 0)과 선(2,0 → 4,0, ETag 1).
+ *   점 "위치"(id 1, 3,0, 그립 2 = XY 그립 + 위치 식 3·4) → 이동(id 5, 선, XDelta·YDelta)
+ * POLAR-TEST(꼬리표): 원(0,0 r 0.25, ETag 0)과 지시선(-1.25,0 → -0.25,0, ETag 1).
+ *   극좌표 "길이"/"각도"(id 1, 0,0 → -1.25,0, 끝 그립 2 + 위치 식 3·4, 첫 그립 5 + 6·7)
+ *   → 극좌표 신축(id 8, 선택·신축 객체 = 지시선, 틀 = 끝점 둘레의 직사각형)
+ * 두 블록 모두 DWG로 쓸 수 있는 종류만 쓴다. 참조 P·Q는 정의를 직접 가리킨다.
+ */
+export function dynPointPolarFixture(): DynFixture {
+  seq = 0x800;
+  const h: Record<string, string> = {};
+  for (const k of ['recP', 'beginP', 'endP', 'xdP', 'graphP', 'purgeP', 'circleP', 'lineP', 'recQ', 'beginQ', 'endQ', 'xdQ', 'graphQ', 'purgeQ', 'circleQ', 'lineQ', 'insP', 'insQ']) h[k] = H();
+  // ----------------------------------------------------------- PT-TEST
+  const pt: Node = {
+    id: 1,
+    handle: H(),
+    type: 'BLOCKPOINTPARAMETER',
+    body: [
+      ...head(1, 'Point'),
+      ...param(),
+      [100, 'AcDbBlock1PtParameter'],
+      ...P(1010, 3, 0),
+      [93, 2],
+      [170, 1],
+      [91, 2],
+      [301, 'DisplacementX'],
+      [171, 1],
+      [92, 2],
+      [302, 'DisplacementY'],
+      [100, 'AcDbBlockPointParameter'],
+      [303, '위치'],
+      [304, '선 위치'],
+      ...P(1011, 3, 1),
+    ],
+  };
+  const ptNodes: Node[] = [pt, grip('BLOCKXYGRIP', 'AcDbBlockXYGrip', 2, 3, 4, [3, 0]), glc(3, 1, 'UpdatedX'), glc(4, 1, 'UpdatedY')];
+  ptNodes.push({
+    id: 5,
+    handle: H(),
+    type: 'BLOCKMOVEACTION',
+    body: [...action(5, 'Move', [], [h.lineP!], [3, -1]), [100, 'AcDbBlockMoveAction'], [92, 1], [301, 'XDelta'], [93, 1], [302, 'YDelta'], [140, 1], [141, 0], [280, 0]],
+  });
+  const ptEdges: [number, number][] = [
+    [2, 1],
+    [1, 3],
+    [1, 4],
+    [1, 5],
+  ];
+  // ----------------------------------------------------------- POLAR-TEST
+  const polar: Node = {
+    id: 1,
+    handle: H(),
+    type: 'BLOCKPOLARPARAMETER',
+    body: [
+      ...head(1, 'Polar'),
+      ...param(),
+      [100, 'AcDbBlock2PtParameter'],
+      ...P(1010, 0, 0),
+      ...P(1011, -1.25, 0),
+      [170, 4],
+      [91, 5],
+      [91, 2],
+      [91, 0],
+      [91, 0],
+      [171, 1],
+      [92, 5],
+      [301, 'DisplacementX'],
+      [172, 1],
+      [93, 5],
+      [302, 'DisplacementY'],
+      [173, 1],
+      [94, 2],
+      [303, 'DisplacementX'],
+      [174, 1],
+      [95, 2],
+      [304, 'DisplacementY'],
+      [177, 0],
+      [100, 'AcDbBlockPolarParameter'],
+      [305, '길이'],
+      [306, '지시선 길이'],
+      [307, '각도'],
+      [308, '지시선 각도'],
+      [140, 0.5],
+      [309, ''],
+      [96, 0],
+      [141, 0],
+      [142, 0],
+      [143, 0],
+      [175, 0],
+      [410, ''],
+      [96 + 1, 0],
+      [145, 0],
+      [146, 0],
+      [147, 0],
+      [176, 0],
+    ],
+  };
+  const polarNodes: Node[] = [polar];
+  polarNodes.push(grip('BLOCKPOLARGRIP', 'AcDbBlockPolarGrip', 2, 3, 4, [-1.25, 0]), glc(3, 1, 'UpdatedEndX'), glc(4, 1, 'UpdatedEndY'));
+  polarNodes.push(grip('BLOCKPOLARGRIP', 'AcDbBlockPolarGrip', 5, 6, 7, [0, 0]), glc(6, 1, 'UpdatedBaseX'), glc(7, 1, 'UpdatedBaseY'));
+  polarNodes.push({
+    id: 8,
+    handle: H(),
+    type: 'BLOCKPOLARSTRETCHACTION',
+    body: [
+      ...action(8, 'Polar Stretch', [], [h.lineQ!], [-1, -0.5]),
+      [100, 'AcDbBlockPolarStretchAction'],
+      [92, 1],
+      [301, 'EndXDelta'],
+      [93, 1],
+      [302, 'EndYDelta'],
+      [94, 1],
+      [303, 'Base'],
+      [95, 1],
+      [304, 'End'],
+      [96, 1],
+      [305, 'UpdatedBase'],
+      [97, 1],
+      [306, 'UpdatedEnd'],
+      [73, 2],
+      [1011, -1.5],
+      [1021, 0.25],
+      [1011, -1],
+      [1021, -0.25],
+      [72, 0],
+      [74, 1],
+      [332, h.lineQ!],
+      [75, 0],
+      [141, 1],
+      [140, 0],
+      [77, 0],
+    ],
+  });
+  const polarEdges: [number, number][] = [
+    [2, 1],
+    [5, 1],
+    [1, 3],
+    [1, 4],
+    [1, 6],
+    [1, 7],
+    [1, 8],
+  ];
+
+  const o = new Out();
+  o.rec('SECTION', [[2, 'HEADER']]);
+  o.tags([
+    [9, '$ACADVER'],
+    [1, 'AC1032'],
+    [9, '$INSUNITS'],
+    [70, 4],
+    [9, '$HANDSEED'],
+    [5, 'FFF'],
+  ]);
+  o.rec('ENDSEC', []);
+  o.rec('SECTION', [[2, 'TABLES']]);
+  o.rec('TABLE', [[2, 'LAYER'], [5, '2'], [330, '0'], [100, 'AcDbSymbolTable'], [70, 1]]);
+  o.rec('LAYER', [[5, '10'], [330, '2'], [100, 'AcDbSymbolTableRecord'], [100, 'AcDbLayerTableRecord'], [2, '0'], [70, 0], [62, 7], [6, 'Continuous']]);
+  o.rec('ENDTAB', []);
+  o.rec('TABLE', [[2, 'BLOCK_RECORD'], [5, '1'], [330, '0'], [100, 'AcDbSymbolTable'], [70, 4]]);
+  const br = (hh: string, nm: string, extra: Tag[] = [], xd?: string) =>
+    o.rec('BLOCK_RECORD', [[5, hh], ...(xd ? ([[102, '{ACAD_XDICTIONARY'], [360, xd], [102, '}']] as Tag[]) : []), [330, '1'], [100, 'AcDbSymbolTableRecord'], [100, 'AcDbBlockTableRecord'], [2, nm], [340, '0'], [70, 4], [280, 1], [281, 0], ...extra]);
+  br('1F', '*Model_Space');
+  br('1B', '*Paper_Space');
+  br(h.recP!, 'PT-TEST', [[1001, 'AcDbBlockRepETag'], [1070, 1], [1071, 2], [1001, 'AcDbDynamicBlockGUID'], [1000, '{00000000-0000-0000-0000-000000000004}']], h.xdP);
+  br(h.recQ!, 'POLAR-TEST', [[1001, 'AcDbBlockRepETag'], [1070, 1], [1071, 2], [1001, 'AcDbDynamicBlockGUID'], [1000, '{00000000-0000-0000-0000-000000000005}']], h.xdQ);
+  o.rec('ENDTAB', []);
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'BLOCKS']]);
+  const block = (begin: string, end: string, rec: string, nm: string, flags: number) => {
+    o.rec('BLOCK', [[5, begin], [330, rec], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockBegin'], [2, nm], [70, flags], ...P(10, 0, 0), [3, nm], [1, '']]);
+    return () => o.rec('ENDBLK', [[5, end], [330, rec], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockEnd']]);
+  };
+  block('20', '21', '1F', '*Model_Space', 0)();
+  block('1C', '1D', '1B', '*Paper_Space', 0)();
+  let end = block(h.beginP!, h.endP!, h.recP!, 'PT-TEST', 0);
+  o.rec('CIRCLE', [...ent(h.circleP!, h.recP!, 'AcDbCircle'), ...P(10, 0, 0), [40, 1], ...etag(0, h.circleP!)]);
+  o.rec('LINE', [...ent(h.lineP!, h.recP!, 'AcDbLine'), ...P(10, 2, 0), ...P(11, 4, 0), ...etag(1, h.lineP!)]);
+  end();
+  end = block(h.beginQ!, h.endQ!, h.recQ!, 'POLAR-TEST', 0);
+  o.rec('CIRCLE', [...ent(h.circleQ!, h.recQ!, 'AcDbCircle'), ...P(10, 0, 0), [40, 0.25], ...etag(0, h.circleQ!)]);
+  o.rec('LINE', [...ent(h.lineQ!, h.recQ!, 'AcDbLine'), ...P(10, -1.25, 0), ...P(11, -0.25, 0), ...etag(1, h.lineQ!)]);
+  end();
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'ENTITIES']]);
+  o.rec('INSERT', [[5, h.insP!], [330, '1F'], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockReference'], [2, 'PT-TEST'], ...P(10, 0, 0)]);
+  o.rec('INSERT', [[5, h.insQ!], [330, '1F'], [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockReference'], [2, 'POLAR-TEST'], ...P(10, 20, 0)]);
+  o.rec('ENDSEC', []);
+
+  o.rec('SECTION', [[2, 'OBJECTS']]);
+  o.rec('DICTIONARY', [[5, 'C'], [330, '0'], [100, 'AcDbDictionary'], [281, 1], [3, 'ACAD_GROUP'], [350, 'D']]);
+  o.rec('DICTIONARY', [[5, 'D'], [102, '{ACAD_REACTORS'], [330, 'C'], [102, '}'], [330, 'C'], [100, 'AcDbDictionary'], [281, 1]]);
+  for (const [xd, rec, graphH, purge, nodes, edges] of [
+    [h.xdP!, h.recP!, h.graphP!, h.purgeP!, ptNodes, ptEdges],
+    [h.xdQ!, h.recQ!, h.graphQ!, h.purgeQ!, polarNodes, polarEdges],
+  ] as const) {
+    o.rec(
+      'DICTIONARY',
+      dict(xd, rec, [
+        ['ACAD_ENHANCEDBLOCK', graphH],
+        ['AcDbDynamicBlockRoundTripPurgePreventer', purge],
+      ]),
+    );
+    o.rec('ACAD_EVALUATION_GRAPH', graph(graphH, xd, [...nodes], [...edges]));
+    for (const n of nodes) o.rec(n.type, [[5, n.handle], [330, graphH], ...n.body]);
+    o.rec('ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION', [[5, purge], [102, '{ACAD_REACTORS'], [330, xd], [102, '}'], [330, xd], [100, 'AcDbDynamicBlockPurgePreventer'], [70, 1]]);
+  }
   o.rec('ENDSEC', []);
   o.tag(0, 'EOF');
   return { text: o.lines.join('\n') + '\n', h };

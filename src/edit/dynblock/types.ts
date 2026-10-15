@@ -76,6 +76,12 @@ export interface PolarParam extends ParamBase {
   base: Vec3;
   end: Vec3;
   baseLocation: number;
+  /** 각도 레이블·설명(307·308). 거리 레이블·설명은 label·description(305·306) */
+  angleLabel: string;
+  angleDescription: string;
+  /** 거리 값 집합(96, 141~143)과 각도 값 집합(97, 145~147, 라디안) */
+  values: ValueSet;
+  angleValues: ValueSet;
 }
 
 export interface RotationParam extends ParamBase {
@@ -92,8 +98,11 @@ export interface XYParam extends ParamBase {
   kind: 'xy';
   base: Vec3;
   end: Vec3;
+  /** X·Y 레이블과 설명(DXF 306·305, 308·307 — AutoCAD는 Y를 먼저 쓴다) */
   labelX: string;
   labelY: string;
+  descriptionX: string;
+  descriptionY: string;
   valuesX: ValueSet;
   valuesY: ValueSet;
 }
@@ -185,6 +194,15 @@ export interface LookupAction extends ActionBase {
 export interface OtherAction extends ActionBase {
   kind: 'array' | 'polar_stretch';
   conns: Conn[];
+  /** 극좌표 신축: 틀(블록 좌표, 두 점이면 직사각형의 두 모서리) */
+  frame?: { x: number; y: number }[];
+  /** 극좌표 신축: 틀로 신축하고 회전하는 객체(332) */
+  stretchEntities?: string[];
+  /** 극좌표 신축: 점이 묶인 객체 수(72, 0이 아니면 평가하지 않는다) */
+  boundCount?: number;
+  /** 배열: 열·행 간격(140·141) */
+  columnSpacing?: number;
+  rowSpacing?: number;
 }
 
 export type DynAction = MoveAction | BaseAction | FlipAction | LookupAction | OtherAction;

@@ -6,11 +6,17 @@
  * - 객체(블록 참조의 속성 포함)를 대상 도면층으로 옮긴다. 설정에 따라 색상·선종류·투명도를 ByLayer로 강제하고 블록 정의 안 객체도 옮긴다.
  * - 현재 도면층과 배치 뷰포트의 동결 도면층 목록도 따라간다.
  * - "원본 도면층 삭제"가 켜져 있으면 객체가 남지 않은 원본 도면층을 지운다(0·Defpoints·대상 도면층은 지우지 않는다).
+ * - 매핑 저장·불러오기(AutoCAD 형식): 매핑을 저장한 도면(DWS·DWG)의 변환 대상 도면층마다 확장 자료 `ACLAYTRANS` —
+ *   1000마다 그 도면층으로 바꾸는 원본 도면층 이름(여럿이면 여러 개). AutoCAD가 저장한 실물(공개 연습 자료의 매핑 DWS)과
+ *   Autodesk 개발자 블로그(표준 파일의 도면층 변환 매핑)로 확인했다. 매핑은 그 파일에 들고, 변환하는 도면에는 남지 않는다.
  */
 import type { CadDocument, Entity, Layer } from '../../core/model';
 import { BYLAYER, TRANSPARENCY_BYLAYER, tableKey } from '../../core/model';
+import { createNewDocument } from '../../core/newdoc';
 import type { EditOp } from '../session';
-import { isLayoutBlock } from '../session';
+import { applyOps, isLayoutBlock } from '../session';
+import { maxHandle } from '../util/audit';
+import { DefinitionCopier } from './clone';
 
 export interface LayerMapping {
   /** 이 도면의 도면층 이름(변환 시작) */
@@ -218,4 +224,69 @@ export function translateLog(drawing: string, mappings: readonly LayerMapping[],
   if (r.removed.length) lines.push(`삭제한 도면층: ${r.removed.join(', ')}`);
   if (r.kept.length) lines.push(`객체가 남아 지우지 않은 도면층: ${r.kept.join(', ')}`);
   return lines.join('\r\n') + '\r\n';
+}
+
+// ---------------------------------------------------------------------------
+// 매핑 저장·불러오기(AutoCAD ACLAYTRANS)
+// ---------------------------------------------------------------------------
+
+/** 매핑을 적는 확장 자료 응용 이름 */
+export const LAYTRANS_APP = 'ACLAYTRANS';
+
+/** 도면(매핑을 저장한 DWS·DWG)의 매핑: 변환 대상 도면층 이름 → 원본 도면층 이름들(파일에 적힌 순서) */
+export function readLayTransMappings(doc: CadDocument): { target: string; sources: string[] }[] {
+  const out: { target: string; sources: string[] }[] = [];
+  for (const l of doc.layers.values()) {
+    const x = l.xdata?.find((d) => d.app.toUpperCase() === LAYTRANS_APP);
+    if (!x) continue;
+    const sources = x.items.filter((i) => i.code === 1000 && typeof i.value === 'string' && i.value).map((i) => String(i.value));
+    if (sources.length) out.push({ target: l.name, sources });
+  }
+  return out;
+}
+
+/** 저장할 매핑 하나: 변환 대상 정의, 그 정의(와 선종류)를 읽은 도면, 이 대상으로 바꾸는 원본 도면층 이름들 */
+export interface LayTransSaveItem {
+  layer: Layer;
+  source: CadDocument | null;
+  from: readonly string[];
+}
+
+/**
+ * 매핑을 담은 새 도면(AutoCAD가 LAYTRANS 저장(S)으로 만드는 DWS와 같은 꼴): 변환 대상 도면층(선종류 포함)마다
+ * ACLAYTRANS 확장 자료에 원본 도면층 이름을 적는다. base는 새로 만든 정의의 선종류를 찾을 도면이자 단위의 기준이다.
+ */
+export function layTransMappingDocument(items: readonly LayTransSaveItem[], base: CadDocument): CadDocument {
+  const metric = Number(base.header.get('$MEASUREMENT') ?? 1) !== 0;
+  const doc = createNewDocument(metric ? 'metric' : 'imperial');
+  let next = maxHandle(doc) + 1n;
+  const nh = () => (next++).toString(16).toUpperCase();
+  const copiers = new Map<CadDocument, DefinitionCopier>();
+  const copier = (src: CadDocument) => {
+    let c = copiers.get(src);
+    if (!c) {
+      c = new DefinitionCopier(src, doc, nh);
+      copiers.set(src, c);
+    }
+    return c;
+  };
+  const layerOps: EditOp[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const key = tableKey(it.layer.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const sources = [...new Set(it.from.filter((n) => !!n))];
+    const lt = it.layer.linetype ? (copier(it.source ?? base).linetype(it.layer.linetype) ?? 'Continuous') : 'Continuous';
+    const xdata = (it.layer.xdata ?? []).filter((x) => x.app.toUpperCase() !== LAYTRANS_APP).map((x) => structuredClone(x));
+    xdata.push({ app: LAYTRANS_APP, items: sources.map((n) => ({ code: 1000, value: n })) });
+    const have = doc.layers.get(key);
+    const after: Layer = { ...structuredClone(it.layer), handle: have?.handle ?? nh(), flags: it.layer.flags & ~(16 | 32 | 64), linetype: lt, xdata };
+    delete after.xdict;
+    delete after.plotStyle;
+    layerOps.push({ kind: 'layer', key, before: have ?? null, after });
+  }
+  applyOps(doc, [...[...copiers.values()].flatMap((c) => c.finish()), ...layerOps]);
+  doc.header.set('$HANDSEED', next.toString(16).toUpperCase());
+  return doc;
 }

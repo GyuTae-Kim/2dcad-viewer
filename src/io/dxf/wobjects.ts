@@ -21,6 +21,7 @@ import { TagOut, appGroups, cadColorToRaw, validLineweight, writeXData } from '.
 import { fieldTags } from '../fields';
 import { CTX_TYPES, ctxRawForVersion } from '../annoscale';
 import { parseTableStyleTags, tableStyleTags, tableStyleTagsFit } from '../tablestyle';
+import { ASSOC_OBJECT_TYPES, assocRawForVersion } from '../../edit/assocnet/codec';
 
 /** R2007 전후 형식 계열(필드 값 배치가 다르다) */
 const versionFamily = (v: string | undefined): number => (Number(String(v ?? 'AC1032').slice(2)) >= 1021 ? 2 : 1);
@@ -308,6 +309,8 @@ function writeObject(w: TagOut, p: PlannedObject): void {
       else if (o.type === 'TABLESTYLE' && g.raw && !tableStyleTagsFit(g.raw, ctx.ver) && parseTableStyleTags(g.raw)) w.raw(tableStyleTags(parseTableStyleTags(g.raw)!, ctx.ver));
       // 주석 축척 레코드: 클래스 판(70)은 저장 버전에 맞춘다
       else if (g.raw && CTX_TYPES.has(o.type)) w.raw(ctxRawForVersion(g.raw, ctx.ver, o.type) as RawTag[]);
+      // 연관 망 객체: 판(AC1024 이하 1, AC1027 이상 2)을 저장 버전에 맞춘다
+      else if (g.raw && ASSOC_OBJECT_TYPES.has(o.type)) w.raw((assocRawForVersion(g, ctx.ver, (h) => ctx.doc.objects.get(h) as GenericObject | undefined) ?? g.raw) as RawTag[]);
       else if (g.raw) w.raw(g.raw);
       else if (o.type === 'DBCOLOR' && g.color) {
         w.t(100, 'AcDbColor');

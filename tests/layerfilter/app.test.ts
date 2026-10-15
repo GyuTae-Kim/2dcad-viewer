@@ -23,7 +23,10 @@ import {
 } from '../../src/app/layerfilter-core';
 import { deleteLayer } from '../../src/app/layers';
 import { userRef } from '../../src/edit/layerfilter/match';
-import { listLayerFilters } from '../../src/edit/layerfilter/store';
+import { filterRecordTags } from '../../src/edit/layerfilter/record';
+import { FILTERS_KEY, layerFiltersDict, listLayerFilters, listStoredFilters } from '../../src/edit/layerfilter/store';
+import type { DictionaryObject, XRecordObject } from '../../src/core/model';
+import type { EditOp } from '../../src/edit/session';
 import { line, viewport } from '../layertools/helpers';
 import { makeHarness } from '../cmds2/harness';
 
@@ -44,6 +47,32 @@ function harness() {
 }
 
 const names = (h: ReturnType<typeof harness>) => listLayerFilters(h.doc).map((f) => f.name).sort();
+
+/** LAYER 표 확장 사전 아래에 사전 하나(name)와 XRECORD들을 넣는 작업(확장 사전이 없으면 만든다) */
+function tableDictOps(h: ReturnType<typeof harness>, name: string, recs: [string, XRecordObject['data']][]): EditOp[] {
+  const nh = () => h.st.session.newHandle();
+  const ops: EditOp[] = [];
+  const head0 = h.doc.tableHeads?.get('LAYER') ?? null;
+  const xdBefore = head0?.xdict ? ((h.doc.objects.get(head0.xdict) as DictionaryObject | undefined) ?? null) : null;
+  let xd: DictionaryObject;
+  if (xdBefore) xd = { ...xdBefore, entries: new Map(xdBefore.entries) };
+  else {
+    const head = { ...(head0 ?? { handle: nh() }) };
+    xd = { type: 'DICTIONARY', handle: nh(), owner: head.handle, entries: new Map(), hardOwner: true, cloning: 1 };
+    head.xdict = xd.handle;
+    ops.push({ kind: 'tableHead', key: 'LAYER', before: head0, after: head });
+  }
+  const d: DictionaryObject = { type: 'DICTIONARY', handle: nh(), owner: xd.handle, reactors: [xd.handle], entries: new Map(), hardOwner: false, cloning: 1 };
+  for (const [k, data] of recs) {
+    const rh = nh();
+    d.entries.set(k, rh);
+    ops.push({ kind: 'object', key: rh, before: null, after: { type: 'XRECORD', handle: rh, owner: d.handle, reactors: [d.handle], cloning: 1, data } });
+  }
+  ops.push({ kind: 'object', key: d.handle, before: null, after: d });
+  xd.entries.set(name, d.handle);
+  ops.push({ kind: 'object', key: xd.handle, before: xdBefore, after: xd });
+  return ops;
+}
 
 describe('저장 검사', () => {
   it('이름 겹침·기본 필터 이름·중첩 규칙·자기 아래로 옮기기', () => {
@@ -185,5 +214,62 @@ describe('FILTERS·상태 줄', () => {
     expect(h.app.commands.get('FILTERS')!.title).toBe('도면층 필터 삭제');
     expect(h.app.commands.get('FILTER')).toBe(filter);
     expect(filter.aliases ?? []).not.toContain('FILTERS');
+  });
+});
+
+describe('저장 형식(AutoCAD·이 앱 기록)', () => {
+  it('AutoCAD 형식으로 쓸 수 없는 조건은 이 앱 기록, 읽기 전용 AutoCAD 필터는 이름만 바꾸고 식은 그대로', () => {
+    const h = harness();
+    expect(saveLayerFilter(h.app, { name: '투명', kind: 'property', parent: null, rows: [{ TRANSPARENCY: '0' }], layers: [] })).toBeNull();
+    expect(saveLayerFilter(h.app, { name: '빨강', kind: 'property', parent: null, rows: [{ COLOR: '1' }], layers: [] })).toBeNull();
+    const fmt = () => Object.fromEntries(listStoredFilters(h.doc).map((s) => [s.filter.name, s.format]));
+    expect(fmt()).toEqual({ 빨강: 'acad', 투명: 'app' });
+    // AutoCAD가 쓴 바꿀 수 없는 식을 빨강 아래에 둔 것처럼
+    const red = listStoredFilters(h.doc).find((s) => s.filter.name === '빨강')!;
+    const expr = 'VPOVERRIDES=="TRUE" AND NAME=="A*"';
+    h.st.session.commit({ label: 'T', ops: (() => {
+      const x = h.doc.objects.get(red.handle) as XRecordObject;
+      const xh = h.st.session.newHandle();
+      const nd = h.st.session.newHandle();
+      const rh = h.st.session.newHandle();
+      return [
+        { kind: 'object', key: rh, before: null, after: { type: 'XRECORD', handle: rh, owner: nd, reactors: [nd], cloning: 1, data: [{ code: 1, value: 'AcLyLayerFilter' }, { code: 90, value: 1 }, { code: 300, value: 'VP' }, { code: 301, value: expr }] } },
+        { kind: 'object', key: nd, before: null, after: { type: 'DICTIONARY', handle: nd, owner: xh, reactors: [xh], entries: new Map([['*A1', rh]]), hardOwner: false, cloning: 1 } },
+        { kind: 'object', key: xh, before: null, after: { type: 'DICTIONARY', handle: xh, owner: x.handle, entries: new Map([['ACLYDICTIONARY', nd]]), hardOwner: true, cloning: 1 } },
+        { kind: 'object', key: x.handle, before: x, after: { ...x, xdict: xh } },
+      ] as EditOp[];
+    })() });
+    const vp = listLayerFilters(h.doc).find((f) => f.name === 'VP')!;
+    expect(vp.expression).toBe(expr);
+    expect(vp.parent).toBe('빨강');
+    expect(renameLayerFilter(h.app, 'VP', 'VP2')).toBeNull();
+    expect(listLayerFilters(h.doc).find((f) => f.name === 'VP2')!.expression).toBe(expr);
+    // 부모를 AutoCAD에서 읽지 못하는 조건으로 바꿀 수 없다
+    expect(saveLayerFilter(h.app, { name: '빨강', kind: 'property', parent: null, rows: [{ COLOR: '1', DESCRIPTION: '*' }], layers: [] }, '빨강')).toContain('VP2');
+    // 지우면 식도 함께 지운다
+    expect(deleteLayerFilter(h.app, 'VP2')).toEqual(['VP2']);
+    expect(saveLayerFilter(h.app, { name: '빨강', kind: 'property', parent: null, rows: [{ COLOR: '1', DESCRIPTION: '*' }], layers: [] }, '빨강')).toBeNull();
+    expect(fmt()).toEqual({ 빨강: 'app', 투명: 'app' });
+  });
+
+  it('확정 고리: 예전 이 앱 기록이 남은 도면은 다른 편집을 확정할 때 AutoCAD 형식으로 옮긴다', () => {
+    const h = harness();
+    registerLayerFilterCommands(h.app);
+    const recs: [string, XRecordObject['data']][] = [
+      ['P', filterRecordTags({ name: 'P', kind: 'property', parent: null, rows: [{ NAME: 'A-*' }], layers: [] }, null, { layer: () => null })],
+      ['G', filterRecordTags({ name: 'G', kind: 'group', parent: null, rows: [], layers: ['A-WALL'] }, null, { layer: (n) => h.doc.layers.get(tableKey(n))?.handle })],
+      ['T', filterRecordTags({ name: 'T', kind: 'property', parent: null, rows: [{ TRANSPARENCY: '10' }], layers: [] }, null, { layer: () => null })],
+    ];
+    h.st.session.commit({ label: 'OLD', ops: tableDictOps(h, FILTERS_KEY, recs) });
+    expect(listStoredFilters(h.doc).map((s) => s.format)).toEqual(['app', 'app', 'app']);
+    h.add(line(0, 0, 1, 1, 'A-WALL'));
+    const st = listStoredFilters(h.doc);
+    expect(Object.fromEntries(st.map((s) => [s.filter.name, s.format]))).toEqual({ P: 'acad', G: 'acad', T: 'app' });
+    expect(st.find((s) => s.filter.name === 'G')!.filter.layers).toEqual(['A-WALL']);
+    expect([...layerFiltersDict(h.doc)!.entries.keys()]).toEqual(['T']);
+    // 남은 것은 옮길 수 없는 것뿐 — 다음 확정은 그대로
+    const n = h.doc.objects.size;
+    h.add(line(0, 0, 2, 2, 'A-WALL'));
+    expect(h.doc.objects.size).toBe(n);
   });
 });

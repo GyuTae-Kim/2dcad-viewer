@@ -52,6 +52,7 @@ import {
   mtextRecordRaw,
   removeRecordOps,
   removeViewCollectionOps,
+  syncHatchViewsOps,
   retagRecord,
   rewriteRecordOps,
   textFields,
@@ -143,6 +144,17 @@ function mtextFieldsOf(doc: CadDocument, m: MTextEntity): MTextFields {
     f.gutter = m.columns.gutter;
     f.autoHeight = m.columns.autoHeight;
     f.flowReversed = m.columns.flowReversed;
+    if (m.columns.type === 2 && !m.columns.autoHeight) f.columnHeights = Array.from({ length: m.columns.count }, (_, k) => m.columns!.heights[k] ?? 0);
+  } else if (!(m.rectHeight && m.rectHeight > 0)) {
+    // 열이 없고 정의 높이도 없는 MTEXT: AutoCAD는 동적 열 하나(폭 = MTEXT 폭, 자동 높이 아님)로 쓴다(공개 도면 레코드 160여 개 모두).
+    // 거터·높이는 만들 때 값이 남는 칸이라 모른다: 거터는 문자 높이 × 5(공개 도면 일곱 묶음 중 셋이 이 비), 높이는 0(실물에도 있다)
+    f.columnType = 2;
+    f.columnCount = 1;
+    f.columnWidth = m.width;
+    f.gutter = m.height * 5;
+    f.autoHeight = false;
+    f.flowReversed = false;
+    f.columnHeights = [0];
   }
   return f;
 }
@@ -167,6 +179,7 @@ function recordRawOf(env: EditEnv, e: Entity, scaleH: string, isDefault: boolean
           textRotation: e.textRotation || 0,
           flip1: old?.flip1,
           flip2: old?.flip2,
+          flags: old?.flags,
           points: dimPointsOf(e, cls),
         }),
       };
@@ -361,9 +374,10 @@ function markPart<T extends Entity>(e: T): T {
 /**
  * 치수·해치·다중 지시선의 레코드를 지금 객체 e(보이는 축척 st.current의 표현)에서 만든다.
  * all이 거짓이면 레코드가 없는 축척(예전 빌드의 자체 기록)만, 참이면 모든 축척을 다시 만든다(다른 편집을 따라갈 때).
- * 새 상태(레코드가 모두 있는 상태)를 돌려준다. 해치의 뷰포트별 모음은 지운다.
+ * 새 상태(레코드가 모두 있는 상태)를 돌려준다. views가 참이면 해치의 뷰포트별 모음(HATCHVIEW)을 새 레코드에 맞춰 다시 만든다
+ * (거짓이면 부르는 쪽이 뒤에서 한 번 맞춘다).
  */
-function buildPartRecords(env: EditEnv, e: Entity, st: AnnoState, all: boolean, ops: EditOp[], release = true): { entity: Entity; st: AnnoState } {
+function buildPartRecords(env: EditEnv, e: Entity, st: AnnoState, all: boolean, ops: EditOp[], release = true, views = true): { entity: Entity; st: AnnoState } {
   const missing = st.scales.filter((k) => !st.byScale.get(k));
   if (!all && !missing.length) return { entity: e, st };
   let out = e;
@@ -408,7 +422,7 @@ function buildPartRecords(env: EditEnv, e: Entity, st: AnnoState, all: boolean, 
       records.push(nr);
     }
   }
-  if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
+  if (out.type === 'HATCH' && views) syncHatchViewsOps(env.doc, out, env.alloc, ops);
   return { entity: markPart(out), st: { ...st, records, byScale, own: false } };
 }
 
@@ -417,10 +431,10 @@ function bodyOf(raw: readonly RawTag[]): RawTag[] {
   return raw.slice(i + 1);
 }
 
-/** 레코드가 없는 축척이 있는 치수·해치·다중 지시선이면 먼저 레코드를 만든다(아니면 그대로) */
+/** 레코드가 없는 축척이 있는 치수·해치·다중 지시선이면 먼저 레코드를 만든다(아니면 그대로). 해치의 뷰포트별 모음은 부르는 쪽이 맞춘다 */
 function ensurePartRecords(env: EditEnv, e: Entity, st: AnnoState, ops: EditOp[]): { entity: Entity; st: AnnoState } {
   if (!isPartKind(e)) return { entity: e, st };
-  return buildPartRecords(env, e, st, false, ops);
+  return buildPartRecords(env, e, st, false, ops, true, false);
 }
 
 /** 예전 빌드의 자체 기록(OPENCAD_ANNOSCALE)을 가진 치수·해치·다중 지시선을 AutoCAD 레코드로(도면을 열 때) */
@@ -468,8 +482,8 @@ function writeFirstRecords(env: EditEnv, e: Entity, scaleName: string, ops: Edit
   if (chain.newXdict) out = { ...out, xdict: chain.newXdict };
   // 이미 있던 레코드(주석이 아니던 시절의 것)는 지운다
   for (const r of contextRecords(env.doc, e)) removeRecordOps(env.doc, chain.scales, r, ops);
-  if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
   addRecordOps(env.doc, chain.scales, rr.type, rr.raw, env.alloc, ops);
+  if (out.type === 'HATCH') syncHatchViewsOps(env.doc, out, env.alloc, ops);
   if (out.type === 'DIMENSION') moveDimBlockRef(env, '', out.block, [], ops);
   if (out.type === 'INSERT') {
     const ins = out as InsertEntity;
@@ -608,7 +622,7 @@ export function addScales(env: EditEnv, e: Entity, names: readonly string[]): Ed
       addRecordOps(env.doc, chain.scales, rr.type, rr.raw, env.alloc, ops);
       if (rep.type === 'DIMENSION') moveDimBlockRef(env, '', rep.block, [], ops);
     }
-    if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
+    if (out.type === 'HATCH') syncHatchViewsOps(env.doc, out, env.alloc, ops);
     return { entity: markPart(out), ops };
   }
   const st = st0;
@@ -684,7 +698,10 @@ export function switchScale(env: EditEnv, e: Entity, name: string): Edited {
   if (!st0 || st0.foreign || !st0.byScale.has(k) || st0.current === k) return { entity: e, ops };
   if (isPartKind(e)) {
     const { entity, st } = ensurePartRecords(env, e, st0, ops);
-    return { entity: switchPart(env, entity, st, k, ops), ops };
+    const out = switchPart(env, entity, st, k, ops);
+    // 해치의 뷰포트별 모음도 기본 표지를 따른다
+    if (out.type === 'HATCH') syncHatchViewsOps(env.doc, out, env.alloc, ops);
+    return { entity: out, ops };
   }
   const st = st0;
   let out = representation(env.doc, e, st, k, env.idx).entity;
@@ -736,7 +753,7 @@ export function removeScales(env: EditEnv, e: Entity, names: readonly string[]):
       removeRecordOps(env.doc, scalesDict, rec, ops);
       if (rec.kind === 'dim') moveDimBlockRef(env, dimFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) })?.block ?? '', '', entity.type === 'DIMENSION' ? [entity.block] : [], ops);
     }
-    if (entity.type === 'HATCH') removeViewCollectionOps(env.doc, entity, ops);
+    if (entity.type === 'HATCH') syncHatchViewsOps(env.doc, entity, env.alloc, ops);
     return { entity, ops, kept };
   }
   const st = st0;
@@ -911,6 +928,7 @@ export function followEdit(env: EditEnv, before: Entity, after: Entity): Edited 
               extHeight: f.extHeight * sim.k,
               columnWidth: f.columnWidth !== undefined ? f.columnWidth * sim.k : undefined,
               gutter: f.gutter !== undefined ? f.gutter * sim.k : undefined,
+              columnHeights: f.columnHeights?.map((h) => h * sim.k),
             }),
             ops,
           );
@@ -1040,7 +1058,18 @@ function movedRaw(env: EditEnv, r: ContextRecord, s: Similarity): ContextRecord[
     const c = Math.cos(s.rot);
     const n = Math.sin(s.rot);
     const d = f.direction;
-    return mtextRecordRaw(ver, r.isDefault, r.scale, { ...f, insert: { x: p.x, y: p.y, z: f.insert.z }, direction: { x: c * d.x - n * d.y, y: n * d.x + c * d.y, z: d.z }, width: f.width * s.k, rectHeight: f.rectHeight * s.k, extWidth: f.extWidth * s.k, extHeight: f.extHeight * s.k });
+    return mtextRecordRaw(ver, r.isDefault, r.scale, {
+      ...f,
+      insert: { x: p.x, y: p.y, z: f.insert.z },
+      direction: { x: c * d.x - n * d.y, y: n * d.x + c * d.y, z: d.z },
+      width: f.width * s.k,
+      rectHeight: f.rectHeight * s.k,
+      extWidth: f.extWidth * s.k,
+      extHeight: f.extHeight * s.k,
+      columnWidth: f.columnWidth !== undefined ? f.columnWidth * s.k : undefined,
+      gutter: f.gutter !== undefined ? f.gutter * s.k : undefined,
+      columnHeights: f.columnHeights?.map((h) => h * s.k),
+    });
   }
   return null;
 }

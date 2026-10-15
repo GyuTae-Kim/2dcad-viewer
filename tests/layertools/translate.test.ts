@@ -2,8 +2,11 @@
 import { describe, expect, it } from 'vitest';
 import type { InsertEntity, ViewportEntity } from '../../src/core/model';
 import { MODEL_SPACE, tableKey } from '../../src/core/model';
-import { DEFAULT_TRANSLATE_SETTINGS, sameNameMappings, translateLayersOps, translateLog } from '../../src/edit/layertools/translate';
-import { add, addBlock, addLayer, attdef, commit, insert, layer, line, newDoc, viewport } from './helpers';
+import { DEFAULT_TRANSLATE_SETTINGS, LAYTRANS_APP, layTransMappingDocument, readLayTransMappings, sameNameMappings, translateLayersOps, translateLog } from '../../src/edit/layertools/translate';
+import { readCadFile } from '../../src/io/index';
+import { writeDxf } from '../../src/io/dxf/writer';
+import { writeDwg } from '../../src/io/dwg/writer/index';
+import { add, addBlock, addLayer, addLinetype, attdef, commit, insert, layer, line, newDoc, viewport } from './helpers';
 
 function drawing() {
   const t = newDoc();
@@ -108,5 +111,45 @@ describe('변환', () => {
     expect(log).toContain('A-WALL → S-WALL: 객체 2개');
     expect(log).toContain('삭제한 도면층: A-WALL');
     expect(log.endsWith('\r\n')).toBe(true);
+  });
+});
+
+describe('매핑 저장·불러오기(ACLAYTRANS)', () => {
+  it('대상 도면층의 확장 자료 ACLAYTRANS(1000 = 원본 도면층 이름)를 읽는다', () => {
+    const t = newDoc();
+    addLayer(t, 'A-DOOR', { xdata: [{ app: 'ACLAYTRANS', items: [{ code: 1000, value: 'DOORS' }, { code: 1000, value: 'ELEVATORS' }] }] });
+    addLayer(t, 'A-GLAZ', { xdata: [{ app: 'acLayTrans', items: [{ code: 1000, value: 'WINDOWS' }] }] });
+    addLayer(t, 'X', { xdata: [{ app: 'OTHER', items: [{ code: 1000, value: 'Y' }] }] });
+    expect(readLayTransMappings(t.doc)).toEqual([
+      { target: 'A-DOOR', sources: ['DOORS', 'ELEVATORS'] },
+      { target: 'A-GLAZ', sources: ['WINDOWS'] },
+    ]);
+  });
+
+  it('매핑 도면: 대상 도면층·선종류와 ACLAYTRANS, DWG·DXF로 써도 그대로 읽힌다', () => {
+    const std = newDoc();
+    addLinetype(std, 'HIDDEN2', [3, -1.5]);
+    const wall = addLayer(std, 'A-WALL', { color: { aci: 1 }, linetype: 'HIDDEN2', lineweight: 35, xdata: [{ app: 'ACLAYTRANS', items: [{ code: 1000, value: 'OLD' }] }] });
+    const base = newDoc();
+    const doc = layTransMappingDocument(
+      [
+        { layer: wall, source: std.doc, from: ['WALLS', 'walls-2'] },
+        { layer: layer('NEW-L', { color: { aci: 4 } }), source: null, from: ['TEXT'] },
+        { layer: layer('0'), source: null, from: ['0'] },
+      ],
+      base.doc,
+    );
+    expect(doc.layers.get('A-WALL')!.linetype).toBe('HIDDEN2');
+    expect(doc.linetypes.has('HIDDEN2')).toBe(true);
+    for (const back of [readCadFile(writeDwg(doc, { version: 'AC1032' as never }).data, 'm.dws'), readCadFile(writeDxf(doc, { version: 'AC1032' as never }).data, 'm.dxf')]) {
+      expect(readLayTransMappings(back).sort((a, b) => a.target.localeCompare(b.target))).toEqual([
+        { target: '0', sources: ['0'] },
+        { target: 'A-WALL', sources: ['WALLS', 'walls-2'] },
+        { target: 'NEW-L', sources: ['TEXT'] },
+      ]);
+      const w = back.layers.get('A-WALL')!;
+      expect([w.color.aci, w.linetype, w.lineweight]).toEqual([1, 'HIDDEN2', 35]);
+      expect(back.appIds.has(tableKey(LAYTRANS_APP))).toBe(true);
+    }
   });
 });

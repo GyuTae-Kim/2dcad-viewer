@@ -1,11 +1,11 @@
 /**
- * 도면층 필터 레코드: 이 앱의 XRECORD 태그와 필터 모델 사이의 변환.
+ * 예전 이 앱의 도면층 필터 레코드(XRECORD 태그)와 필터 모델 사이의 변환.
  *
- * AutoCAD는 도면층 필터를 LAYER 표 확장 사전의 `ACLYDICTIONARY`(예전 판은 `ACAD_LAYERFILTERS`)에 두지만, 그 레코드
- * 형식을 확인할 실물(표본 도면의 ACLYDICTIONARY는 모두 비어 있다)도 공개 문서도 없어 이 앱의 기록으로 저장한다.
- * 같은 확장 사전 아래 `OPENCAD_LAYERFILTERS` 사전 → 필터 이름마다 XRECORD(AutoCAD는 읽지 않고 그대로 둔다):
+ * AutoCAD 형식(ACLYDICTIONARY, acly.ts)을 확인하기 전에 쓰던 기록이다. 지금은 읽어서 AutoCAD 형식으로 옮기고(store.ts),
+ * AutoCAD 형식으로 쓸 수 없는 필터(투명도·플롯 스타일·설명·트루컬러 조건 등 — expr.ts)만 이 기록으로 쓴다.
+ * LAYER 표 확장 사전 아래 `OPENCAD_LAYERFILTERS` 사전 → 필터 이름마다 XRECORD(AutoCAD는 읽지 않고 그대로 둔다):
  *   1 `OPENCAD_LAYERFILTER`(표지), 70 형식 번호(1), 90 종류(1 특성 필터, 2 그룹 필터), 300 필터 이름,
- *   340 부모 필터 XRECORD 핸들(중첩일 때만),
+ *   340 부모 필터 XRECORD 핸들(중첩일 때만 — 부모는 AutoCAD 형식 레코드일 수도 있다),
  *   특성 필터: 행마다 92 행 번호, 그 뒤 조건마다 301 열 열쇠(NAME·COLOR …) + 302 값,
  *   그룹 필터: 도면층마다 330 도면층 핸들(핸들이 없는 도면층이면 8 이름).
  * 모르는 태그는 뒤에 그대로 다시 쓴다.
