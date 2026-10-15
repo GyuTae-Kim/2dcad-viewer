@@ -836,8 +836,11 @@ export class Shell implements UiHooks {
   palette!: Palette;
   readonly recent = new RecentStore();
   private readonly workspace: HTMLDivElement;
+  private readonly guide: HTMLElement | null;
 
   constructor(root: HTMLElement) {
+    // Keep the same useful guide for static crawlers and the running start screen.
+    this.guide = root.querySelector<HTMLElement>('#viewer-guide');
     this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.lsp,.DXF,.DWG,.SCR,.LSP', multiple: true, hidden: true });
     this.title = h('div', { class: 'titlebar' });
     this.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist' });
@@ -1492,8 +1495,8 @@ export class Shell implements UiHooks {
       h(
         'div',
         { class: 'start-inner' },
-        h('h1', {}, 'OpenCAD 2D 뷰어'),
-        h('p', { class: 'lead' }, 'CAD 프로그램 없이 브라우저에서 DXF·DWG 도면을 열어 보고, 치수를 확인하고, 거리와 면적을 잽니다. 파일은 서버로 보내지 않고 이 컴퓨터 안에서만 읽습니다.'),
+        h('h1', {}, 'OpenCAD 무료 캐드 뷰어'),
+        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열고, 치수를 재고, 고쳐서 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
         h(
           'div',
           { class: 'start-grid' },
@@ -1517,6 +1520,7 @@ export class Shell implements UiHooks {
         ),
       ),
     );
+    if (this.guide) this.start.querySelector('.start-inner')!.append(this.guide);
   }
 
   private async refreshRecent(): Promise<void> {
