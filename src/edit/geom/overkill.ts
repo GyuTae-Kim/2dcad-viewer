@@ -9,6 +9,7 @@
  */
 import type { ArcEntity, CircleEntity, Entity, LineEntity, LwPolylineEntity } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { lwVertices, packLw } from '../../core/lwpoly';
 import type { ArcPiece } from './curve';
 import { TAU, bulgeToSweep, ccwFrom, cross, dist, dot, normAngle, sub, sweepToBulge } from './math';
 import { bulgePieces, cloneEntity, entityPath, inherit, lwVerts } from './path';
@@ -423,7 +424,7 @@ function arcOverlaps(items: Item[], tol: number, combineOverlap: boolean, combin
       if (!pc) continue;
       const z = entityPath(e)!.z;
       arcs.push({ it, fixed: false, full: e.type === 'CIRCLE', c: pc.c, r: pc.r, a0: normAngle(pc.a0), sw: Math.abs(pc.sw), z, pk: it.pk, rank: it.rank });
-    } else if (e.type === 'LWPOLYLINE' && !e.vertices.some((v) => v.startWidth > 0 || v.endWidth > 0) && !(e.constantWidth > 0)) {
+    } else if (e.type === 'LWPOLYLINE' && !e.widths?.some((w) => w > 0) && !(e.constantWidth > 0)) {
       for (const p of bulgePieces(lwVerts(e), e.closed, planProj(e.extrusion, e.elevation))) {
         if (p.k !== 'arc') continue;
         const a0 = p.sw >= 0 ? p.a0 : p.a0 + p.sw;
@@ -540,7 +541,7 @@ function cocircular(g: ArcItem[], tol: number, combineOverlap: boolean, combineE
 // ---------------------------------------------------------------------------
 
 function optimizeLw(e: LwPolylineEntity, tol: number): { e: LwPolylineEntity; removed: number } | null {
-  const vs = e.vertices.map((v) => ({ ...v }));
+  const vs = lwVertices(e);
   if (vs.some((v) => Math.abs(v.startWidth - vs[0]!.startWidth) > 1e-12 || Math.abs(v.endWidth - vs[0]!.startWidth) > 1e-12)) return null;
   let removed = 0;
   let changed = true;
@@ -600,7 +601,7 @@ function optimizeLw(e: LwPolylineEntity, tol: number): { e: LwPolylineEntity; re
     }
   }
   if (!removed) return null;
-  return { e: { ...cloneEntity(e), vertices: vs }, removed };
+  return { e: { ...cloneEntity(e), ...packLw(vs) }, removed };
 }
 
 function bulgeCenter(a: { x: number; y: number }, b: { x: number; y: number }, bulge: number): { c: { x: number; y: number }; r: number } | null {

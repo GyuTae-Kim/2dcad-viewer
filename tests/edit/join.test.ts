@@ -4,6 +4,7 @@ import { joinEntities } from '../../src/edit/geom/join';
 import { entityPath } from '../../src/edit/geom/path';
 import { flattenPath, pathNearest } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, line, lw, near, newDoc, poly2d, renders, spline } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -63,8 +64,8 @@ describe('joinEntities', () => {
     const o = r.add![0] as LwPolylineEntity;
     expect(o.type).toBe('LWPOLYLINE');
     expect(o.closed).toBe(true);
-    expect(o.vertices.length).toBe(4);
-    expect(o.vertices.filter((v) => Math.abs(Math.abs(v.bulge) - 1) < 1e-9).length).toBe(1);
+    expect(lwVertices(o).length).toBe(4);
+    expect(lwVertices(o).filter((v) => Math.abs(Math.abs(v.bulge) - 1) < 1e-9).length).toBe(1);
     expect(r.remove!.length).toBe(4);
     covers([a, b, c, d], o);
     renders(doc, [o]);
@@ -84,7 +85,7 @@ describe('joinEntities', () => {
     const r = joinEntities([p, l1, l2]);
     const o = r.replace![0] as LwPolylineEntity;
     expect(o.handle).toBe(p.handle);
-    expect(o.vertices.length).toBe(4);
+    expect(lwVertices(o).length).toBe(4);
     expect(o.constantWidth).toBeCloseTo(0.5);
     covers([p, l1, l2], o);
   });
@@ -131,7 +132,7 @@ describe('joinEntities', () => {
     const a = arc(5, 2, 2, -90, 0);
     const r = joinEntities([p, a]);
     const o = r.replace![0] as LwPolylineEntity;
-    expect(o.vertices[1]!.bulge).toBeCloseTo(Math.tan(Math.PI / 8));
-    near(o.vertices[2]!, V(7, 2));
+    expect(lwVertices(o)[1]!.bulge).toBeCloseTo(Math.tan(Math.PI / 8));
+    near(lwVertices(o)[2]!, V(7, 2));
   });
 });

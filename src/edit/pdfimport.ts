@@ -8,6 +8,7 @@ import { entityDefaults } from '../core/model';
 import type { CadDocument } from '../core/model';
 import { createHatch } from './hatch';
 import { nearestAci } from '../core/color';
+import { packLwPoints } from '../core/lwpoly';
 
 export type PdfSeg = { k: 'L'; x: number; y: number } | { k: 'C'; x1: number; y1: number; x2: number; y2: number; x: number; y: number };
 
@@ -180,7 +181,7 @@ export function pdfToEntities(doc: CadDocument, page: PdfPageData, opt: PdfImpor
           out.push({
             type: 'LWPOLYLINE',
             ...base(layer, color, lw),
-            vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+            ...packLwPoints(pts),
             closed: closedLines,
             plinegen: false,
             constantWidth: 0,

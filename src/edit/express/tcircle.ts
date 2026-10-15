@@ -8,6 +8,7 @@
  */
 import type { CadDocument, CircleEntity, Entity, EntityBase, LwPolylineEntity, Vec2 } from '../../core/model';
 import { type TextBox, hasTextBox, textBox } from './textbox';
+import { packLw } from '../../core/lwpoly';
 
 export type EncloseShape = 'circle' | 'slot' | 'rect';
 
@@ -52,7 +53,7 @@ function lw(base: Omit<EntityBase, 'type'>, pts: { x: number; y: number; bulge: 
   return {
     ...base,
     type: 'LWPOLYLINE',
-    vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: p.bulge, startWidth: 0, endWidth: 0 })),
+    ...packLw(pts.map((p) => ({ x: p.x, y: p.y, bulge: p.bulge, startWidth: 0, endWidth: 0 }))),
     closed: true,
     plinegen: false,
     constantWidth: 0,

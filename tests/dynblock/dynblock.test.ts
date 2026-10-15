@@ -19,6 +19,7 @@ import {
 import { actionsOf } from '../../src/edit/dynblock/definition';
 import { dynFixture, dynMiniFixture, dynPointPolarFixture, loadDyn, withFullRaw } from './fixture';
 import { FIXTURES } from '../dim/compare';
+import { lwVertices } from '../../src/core/lwpoly';
 
 function handles(start = 0x9000): () => string {
   let n = start;
@@ -362,7 +363,7 @@ describe('XY', () => {
     let r = dynSetOps(doc, ins('insC'), { key: '1:x', value: 7 }, nh);
     apply(doc, r.ops);
     let p = at<LwPolylineEntity>(doc, ins('insC'), 0);
-    expect(p.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(p).map((v) => [v.x, v.y])).toEqual([
       [0, 0],
       [6, 0],
       [6, 3],
@@ -371,7 +372,7 @@ describe('XY', () => {
     r = dynSetOps(doc, ins('insC'), { key: '세로', value: 5 }, nh);
     apply(doc, r.ops);
     p = at<LwPolylineEntity>(doc, ins('insC'), 0);
-    expect(p.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(p).map((v) => [v.x, v.y])).toEqual([
       [0, 0],
       [6, 0],
       [6, 5],
@@ -387,7 +388,7 @@ describe('XY', () => {
     const r = applyDynGrip(doc, c, 'dyn:5', { x: -2, y: 54 }, nh);
     apply(doc, r.ops);
     const p = at<LwPolylineEntity>(doc, ins('insC'), 0);
-    expect(p.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(p).map((v) => [v.x, v.y])).toEqual([
       [-2, 0],
       [4, 0],
       [4, 4],

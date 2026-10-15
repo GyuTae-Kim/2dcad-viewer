@@ -15,6 +15,7 @@ import { makeSpline } from '../../src/edit/geom/path';
 import { fitPolyline, splinePolyline } from '../../src/edit/geom/pedit';
 import { closeSpline, refit } from '../../src/edit/geom/splinedit';
 import { V, line, lw, near } from '../edit/helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 describe('DXF 왕복', () => {
   it('새 객체를 쓰고 읽으면 같다', () => {
@@ -75,8 +76,8 @@ describe('DXF 왕복', () => {
     expect(s2.smoothType).toBe(6);
     expect(s2.vertices.filter((v) => v.flags & 16).length).toBe(4);
     const c2 = get<LwPolylineEntity>(cloud.handle);
-    expect(c2.vertices.length).toBe(cloud.vertices.length);
-    expect(c2.vertices[0]!.endWidth).toBeCloseTo(cloud.vertices[0]!.endWidth, 12);
+    expect(lwVertices(c2).length).toBe(lwVertices(cloud).length);
+    expect(lwVertices(c2)[0]!.endWidth).toBeCloseTo(lwVertices(cloud)[0]!.endWidth, 12);
     const p2 = get<SplineEntity>(closed.handle);
     expect(p2.flags & 3).toBe(3);
     expect(p2.controlPoints.length).toBe(closed.controlPoints.length);

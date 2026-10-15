@@ -9,6 +9,7 @@ import type { EditOp } from '../edit/session';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { dialog, h } from './ui/dom';
+import { lwPoints } from '../core/lwpoly';
 
 type Pt = { x: number; y: number };
 
@@ -105,7 +106,7 @@ function ucsFromEntity(e: Entity, pick: Pt): Ucs | null {
       return { ox: a.x, oy: a.y, angle: Math.atan2(b.y - a.y, b.x - a.x) };
     }
     case 'LWPOLYLINE': {
-      const v = e.vertices;
+      const v = lwPoints(e);
       if (v.length < 2) return null;
       return { ox: v[0]!.x, oy: v[0]!.y, angle: Math.atan2(v[1]!.y - v[0]!.y, v[1]!.x - v[0]!.x) };
     }

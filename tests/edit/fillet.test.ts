@@ -4,6 +4,7 @@ import { chamfer, chamferAngle, chamferPolyline, chamferPolylineAngle, fillet, f
 import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest, pieceTangent } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, line, lw, near, newDoc, renders, spline, xline } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -285,7 +286,7 @@ describe('fillet — 폴리선', () => {
     const l = line(15, 2, 15, 10);
     const r = fillet(pl, V(5, 0), l, V(15, 8), 2);
     const np = (r.replace ?? []).find((e) => e.handle === pl.handle) as LwPolylineEntity;
-    near(np.vertices[2]!, V(13, 0));
+    near(lwVertices(np)[2]!, V(13, 0));
     const nl = (r.replace ?? []).find((e) => e.handle === l.handle) as LineEntity;
     near(nl.start, P(15, 2));
     near((byType(r, 'ARC')[0] as ArcEntity).center, P(13, 2));
@@ -309,13 +310,13 @@ describe('fillet — 폴리선', () => {
     const r = fillet(pl, V(0, 5), pl, V(5, 0), 2);
     const np = r.replace![0] as LwPolylineEntity;
     expect(np.handle).toBe(pl.handle);
-    expect(np.vertices.length).toBe(4);
-    near(np.vertices[1]!, V(0, 2));
-    near(np.vertices[2]!, V(2, 0));
-    expect(np.vertices[1]!.bulge).toBeCloseTo(Math.tan(Math.PI / 8));
+    expect(lwVertices(np).length).toBe(4);
+    near(lwVertices(np)[1]!, V(0, 2));
+    near(lwVertices(np)[2]!, V(2, 0));
+    expect(lwVertices(np)[1]!.bulge).toBeCloseTo(Math.tan(Math.PI / 8));
     // 반대 순서로 골라도 같다
     const r2 = fillet(pl, V(5, 0), pl, V(0, 5), 2);
-    expect((r2.replace![0] as LwPolylineEntity).vertices.length).toBe(4);
+    expect(lwVertices(r2.replace![0] as LwPolylineEntity).length).toBe(4);
   });
   it('닫힌 폴리선의 마지막-첫 세그먼트 꼭짓점', () => {
     const pl = lw(
@@ -330,7 +331,7 @@ describe('fillet — 폴리선', () => {
     const r = fillet(pl, V(0, 5), pl, V(5, 0), 1);
     const np = r.replace![0] as LwPolylineEntity;
     expect(np.closed).toBe(true);
-    expect(np.vertices.length).toBe(5);
+    expect(lwVertices(np).length).toBe(5);
     const path = entityPath(np)!;
     expect(pathNearest(path, V(0, 0)).d).toBeCloseTo(Math.SQRT2 - 1, 6);
   });
@@ -343,10 +344,10 @@ describe('fillet — 폴리선', () => {
     ]) as LwPolylineEntity;
     const r = fillet(pl, V(0, 5), pl, V(4, 5), 0);
     const np = r.replace![0] as LwPolylineEntity;
-    expect(np.vertices.length).toBe(4);
-    near(np.vertices[1]!, V(0, 0));
-    expect(np.vertices[1]!.bulge).toBeCloseTo(1);
-    near(np.vertices[2]!, V(4, 0));
+    expect(lwVertices(np).length).toBe(4);
+    near(lwVertices(np)[1]!, V(0, 0));
+    expect(lwVertices(np)[1]!.bulge).toBeCloseTo(1);
+    near(lwVertices(np)[2]!, V(4, 0));
     // 비스듬한 두 직선 사이 세그먼트를 모깎기 호로
     const pl2 = lw([
       [0, 10],
@@ -356,10 +357,10 @@ describe('fillet — 폴리선', () => {
     ]) as LwPolylineEntity;
     const r2 = fillet(pl2, V(0, 5), pl2, V(8, -0.3), 1);
     const np2 = r2.replace![0] as LwPolylineEntity;
-    expect(np2.vertices.length).toBe(4);
+    expect(lwVertices(np2).length).toBe(4);
     const th = Math.acos(1 / Math.sqrt(37));
-    near(np2.vertices[1]!, V(0, -5 / 3 + 1 / Math.tan(th / 2)), 1e-9);
-    expect(np2.vertices[1]!.bulge).toBeGreaterThan(0);
+    near(lwVertices(np2)[1]!, V(0, -5 / 3 + 1 / Math.tan(th / 2)), 1e-9);
+    expect(lwVertices(np2)[1]!.bulge).toBeGreaterThan(0);
   });
   it('filletPolyline: 모든 꼭짓점, 짧은 세그먼트는 건너뜀, 다시 하면 바꾼다', () => {
     const pl = lw(
@@ -374,13 +375,13 @@ describe('fillet — 폴리선', () => {
     const r = filletPolyline(pl, 0.4);
     const np = r.replace![0] as LwPolylineEntity;
     expect(r.message).toMatch(/모깎기/);
-    const arcs = np.vertices.filter((v) => Math.abs(v.bulge) > 1e-9).length;
+    const arcs = lwVertices(np).filter((v) => Math.abs(v.bulge) > 1e-9).length;
     expect(arcs).toBeGreaterThanOrEqual(2);
     // 반지름 0으로 다시: 원래 모서리
     const back = filletPolyline(np, 0);
     const bp = back.replace![0] as LwPolylineEntity;
-    expect(bp.vertices.length).toBe(4);
-    for (const q of pl.vertices) expect(bp.vertices.some((v) => Math.hypot(v.x - q.x, v.y - q.y) < 1e-9)).toBe(true);
+    expect(lwVertices(bp).length).toBe(4);
+    for (const q of lwVertices(pl)) expect(lwVertices(bp).some((v) => Math.hypot(v.x - q.x, v.y - q.y) < 1e-9)).toBe(true);
     // 큰 반지름: 너무 짧음
     const big = filletPolyline(pl, 5);
     expect(big.message).toMatch(/너무 짧습니다/);
@@ -450,13 +451,13 @@ describe('chamfer', () => {
     ) as LwPolylineEntity;
     const r = chamfer(pl, V(5, 0), pl, V(10, 5), 1, 2);
     const np = r.replace![0] as LwPolylineEntity;
-    expect(np.vertices.length).toBe(5);
-    expect(np.vertices.some((v) => Math.hypot(v.x - 9, v.y) < 1e-9)).toBe(true);
-    expect(np.vertices.some((v) => Math.hypot(v.x - 10, v.y - 2) < 1e-9)).toBe(true);
+    expect(lwVertices(np).length).toBe(5);
+    expect(lwVertices(np).some((v) => Math.hypot(v.x - 9, v.y) < 1e-9)).toBe(true);
+    expect(lwVertices(np).some((v) => Math.hypot(v.x - 10, v.y - 2) < 1e-9)).toBe(true);
     const all = chamferPolyline(pl, 1, 1);
-    expect((all.replace![0] as LwPolylineEntity).vertices.length).toBe(8);
+    expect(lwVertices(all.replace![0] as LwPolylineEntity).length).toBe(8);
     const ang = chamferPolylineAngle(pl, 1, deg(45));
-    expect((ang.replace![0] as LwPolylineEntity).vertices.length).toBe(8);
+    expect(lwVertices(ang.replace![0] as LwPolylineEntity).length).toBe(8);
     renders(doc, [np, all.replace![0]!]);
   });
 });

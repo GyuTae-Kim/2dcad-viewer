@@ -2,7 +2,7 @@
  * 특성 팔레트에서 고칠 수 있는 항목.
  * 항목마다 값을 읽고(get) 복사본에 쓰는(set) 함수를 가진다. 여러 객체에 한 번에 적용한다.
  */
-import type { AttribEntity, CadColor, CadDocument, Entity, InsertEntity, Vec3 } from '../core/model';
+import type { AttribEntity, CadColor, CadDocument, Entity, InsertEntity, LwPolylineEntity, Vec3 } from '../core/model';
 import { tableKey } from '../core/model';
 import { formatAngle, formatLength, parseAngle, parseLength, type UnitSettings } from '../core/units';
 import type { EditOp } from '../edit/session';
@@ -11,6 +11,7 @@ import type { App } from './app';
 import { colorText, lineweightText } from './inquiry';
 import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
+import { lwCount, lwVertices, tidyWidths, zeros } from '../core/lwpoly';
 
 export type FieldKind = 'length' | 'angle' | 'number' | 'text' | 'multiline' | 'select' | 'color' | 'bool';
 
@@ -246,14 +247,16 @@ export function geometryFields(type: string): Field[] {
           label: '전역 폭',
           kind: 'length',
           get: (e) => {
-            const p = e as Entity & { constantWidth: number; vertices: { startWidth: number; endWidth: number }[] };
-            const w = p.vertices[0]?.startWidth ?? p.constantWidth;
-            return p.vertices.every((x) => x.startWidth === w && x.endWidth === w) ? (w || p.constantWidth) : undefined;
+            const p = e as LwPolylineEntity;
+            const vs = lwVertices(p);
+            const w = vs[0]?.startWidth ?? p.constantWidth;
+            return vs.every((x) => x.startWidth === w && x.endWidth === w) ? (w || p.constantWidth) : undefined;
           },
           set: (e, v) => {
-            const p = e as Entity & { constantWidth: number; vertices: { startWidth: number; endWidth: number }[] };
+            const p = e as LwPolylineEntity;
             p.constantWidth = Math.max(0, num(v));
-            for (const x of p.vertices) x.startWidth = x.endWidth = p.constantWidth;
+            // 정점 폭도 모두 전역 폭으로(0이면 정점 폭 없음)
+            p.widths = tidyWidths(zeros(lwCount(p) * 2).fill(p.constantWidth));
           },
         },
         scalar('고도', 'elevation'),

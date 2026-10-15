@@ -17,6 +17,7 @@ import { createLayoutOps, defaultPlot, mediaName, nextLayoutName } from './layou
 import { PAPERS, unitMm } from './plot';
 import { paperInfo } from './scene';
 import { dialog, h } from './ui/dom';
+import { packLw } from '../core/lwpoly';
 
 type Pt = { x: number; y: number };
 
@@ -219,7 +220,7 @@ async function modelSetup(app: App, ctx: CommandContext): Promise<void> {
     type: 'LWPOLYLINE',
     handle: st.session.newHandle(),
     owner: st.doc.blocks.get(MODEL_SPACE)?.recordHandle,
-    vertices: [0, 2, 4, 6].map((i) => ({ x: pts[i]!, y: pts[i + 1]!, bulge: 0, startWidth: 0, endWidth: 0 })),
+    ...packLw([0, 2, 4, 6].map((i) => ({ x: pts[i]!, y: pts[i + 1]!, bulge: 0, startWidth: 0, endWidth: 0 }))),
     closed: true,
     plinegen: false,
     constantWidth: 0,

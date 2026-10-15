@@ -31,6 +31,7 @@ import { entityPath, segOf } from '../geom/path';
 import { insertionPoint, intersections } from '../geom/query';
 import { generateDimensionGeometry } from './generate';
 import { type P, add, ccw, cross, dir, dist, dot, intersect, madd, mid, perp, sub, unit } from './vec';
+import { lwCount } from '../../core/lwpoly';
 
 // ---------------------------------------------------------------------------
 // 기록
@@ -365,7 +366,7 @@ function candidates(e: Entity, osnap: number): Cand[] {
       else if (!fullCurve(e)) {
         const path = pathPieces(e);
         if (!path || (e.type === 'SPLINE' && path.closed)) return out;
-        const nv = e.type === 'LWPOLYLINE' ? e.vertices.length : e.type === 'POLYLINE' ? e.vertices.filter((v) => !(v.flags & 16)).length : 2;
+        const nv = e.type === 'LWPOLYLINE' ? lwCount(e) : e.type === 'POLYLINE' ? e.vertices.filter((v) => !(v.flags & 16)).length : 2;
         const poly = POLY.has(e.type);
         path.pieces.forEach((pc, k) => {
           const s = segOf(pc) ?? k;

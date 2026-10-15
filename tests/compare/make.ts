@@ -1,6 +1,7 @@
 /** 도면 비교 시험용 문서·객체 만들기 */
 import type { BlockDef, CadDocument, Entity, HatchEntity, InsertEntity, Vec3 } from '../../src/core/model';
 import { MODEL_SPACE, createDocument, entityDefaults, tableKey } from '../../src/core/model';
+import { packLw } from '../../src/core/lwpoly';
 
 export const P = (x: number, y: number, z = 0): Vec3 => ({ x, y, z });
 export const deg = (d: number) => (d * Math.PI) / 180;
@@ -69,7 +70,7 @@ export function arc(cx: number, cy: number, r: number, a0: number, a1: number): 
 }
 
 export function lw(pts: [number, number][], closed = false): Entity {
-  return { type: 'LWPOLYLINE', ...base(), vertices: pts.map(([x, y]) => ({ x, y, bulge: 0, startWidth: 0, endWidth: 0 })), closed, plinegen: false, constantWidth: 0, elevation: 0 };
+  return { type: 'LWPOLYLINE', ...base(), ...packLw(pts.map(([x, y]) => ({ x, y, bulge: 0, startWidth: 0, endWidth: 0 }))), closed, plinegen: false, constantWidth: 0, elevation: 0 };
 }
 
 export function text(x: number, y: number, s: string): Entity {

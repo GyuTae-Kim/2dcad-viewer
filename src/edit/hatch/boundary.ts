@@ -9,6 +9,7 @@ import { ocsMatrix } from '../../geom/matrix';
 import { pathLoop } from '../../render/hatch';
 import { type Box, type Curve, TAU, clipXLines, entitiesToCurves, isCircle, pointAt, reverseNurbs, roughBox, splineSub } from './curves';
 import { Graph, buildGraph, pointInRing, signedArea } from './graph';
+import { lwCount, lwVertices } from '../../core/lwpoly';
 
 export type IslandStyle = 'normal' | 'outer' | 'ignore';
 
@@ -699,9 +700,9 @@ function isClosedEntity(e: Entity): boolean {
     }
     case 'LWPOLYLINE': {
       if (e.closed) return true;
-      const a = e.vertices[0];
-      const b = e.vertices[e.vertices.length - 1];
-      return !!a && !!b && e.vertices.length > 2 && Math.hypot(a.x - b.x, a.y - b.y) < 1e-9;
+      const n = lwCount(e);
+      const v = e.verts;
+      return n > 2 && Math.hypot(v[0]! - v[n * 3 - 3]!, v[1]! - v[n * 3 - 2]!) < 1e-9;
     }
     case 'POLYLINE':
       return (e.kind === '2d' || e.kind === '3d') && !!(e.flags & 1);
@@ -761,7 +762,7 @@ function polyVertices(e: Entity): { x: number; y: number; bulge: number }[] | nu
     case 'LWPOLYLINE':
       ext = e.extrusion;
       z = e.elevation;
-      pts = e.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge }));
+      pts = lwVertices(e);
       break;
     case 'POLYLINE': {
       const smooth = !!(e.flags & 4);

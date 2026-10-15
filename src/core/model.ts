@@ -161,6 +161,7 @@ export interface EllipseEntity extends EntityBase {
   endParam: number;
 }
 
+/** 경량 폴리선 정점 하나를 풀어 쓴 모양(편집 계산용). 문서에는 LwPolylineEntity.verts·widths로 평탄하게 둔다(src/core/lwpoly.ts) */
 export interface LwVertex {
   x: number;
   y: number;
@@ -171,7 +172,13 @@ export interface LwVertex {
 
 export interface LwPolylineEntity extends EntityBase {
   type: 'LWPOLYLINE';
-  vertices: LwVertex[];
+  /**
+   * 정점 평탄 좌표 [x0, y0, 볼록0, x1, y1, 볼록1, …](OCS). 정점 수 = length / 3.
+   * 큰 도면에서 정점마다 객체를 두지 않으려고(문서 메모리·GC) 수만 이어 둔다.
+   */
+  verts: number[];
+  /** 정점별 폭 [시작0, 끝0, 시작1, 끝1, …]. 모두 +0이면 없다(undefined) */
+  widths?: number[];
   closed: boolean;
   /** 선종류 생성(PLINEGEN, 70 비트 128) */
   plinegen: boolean;

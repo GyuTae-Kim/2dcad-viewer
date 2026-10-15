@@ -8,6 +8,7 @@ import { entityDefaults } from '../../src/core/model';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathLength } from '../../src/edit/geom/curve';
 import { P, V, arc, circle, deg, line, lw, near, newDoc, renders } from '../edit/helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -82,7 +83,7 @@ describe('OVERKILL', () => {
     ]);
     const r = overkill([p]);
     const o = r.result.replace![0] as LwPolylineEntity;
-    expect(o.vertices.length).toBe(3);
+    expect(lwVertices(o).length).toBe(3);
     expect(r.overlaps).toBe(2);
     // 반원 둘(같은 원) → 정점 하나 제거
     const b = Math.tan(Math.PI / 8); // 90°
@@ -93,7 +94,7 @@ describe('OVERKILL', () => {
     ]);
     const r2 = overkill([q]);
     const o2 = r2.result.replace![0] as LwPolylineEntity;
-    expect(o2.vertices.length).toBe(2);
+    expect(lwVertices(o2).length).toBe(2);
     expect(pathLength(entityPath(o2)!)).toBeCloseTo(Math.PI * 10, 9);
   });
 });
@@ -150,7 +151,7 @@ describe('BOUNDARY', () => {
     expect(res).toBeTruthy();
     const objs = boundaryObjects(res.paths, { ...entityDefaults(), handle: '' });
     expect(objs.length).toBe(2);
-    const sq = objs.find((o) => o.type === 'LWPOLYLINE' && o.vertices.length === 4) as LwPolylineEntity;
+    const sq = objs.find((o) => o.type === 'LWPOLYLINE' && lwVertices(o).length === 4) as LwPolylineEntity;
     expect(sq).toBeTruthy();
     expect(sq.closed).toBe(true);
     expect(pathLength(entityPath(sq)!)).toBeCloseTo(40, 9);

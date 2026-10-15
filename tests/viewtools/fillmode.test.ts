@@ -6,6 +6,7 @@ import { buildSpace } from '../../src/render/build';
 import { boundaryEdges, contourSegments, stripOutline, textLineBoxes } from '../../src/render/fillmode';
 import { TextEngine } from '../../src/text/layout';
 import { P, add, newDoc } from '../hatch/helpers';
+import { packLw } from '../../src/core/lwpoly';
 
 let serial = 0x700;
 const H = () => (serial++).toString(16).toUpperCase();
@@ -49,11 +50,11 @@ function widePline(): Entity {
     type: 'LWPOLYLINE',
     ...entityDefaults(),
     handle: H(),
-    vertices: [
+    ...packLw([
       { x: 0, y: 0, bulge: 0, startWidth: 2, endWidth: 2 },
       { x: 10, y: 0, bulge: 0, startWidth: 2, endWidth: 2 },
       { x: 10, y: 10, bulge: 0, startWidth: 2, endWidth: 2 },
-    ],
+    ]),
     closed: false,
     plinegen: false,
     constantWidth: 2,
@@ -67,10 +68,10 @@ function donut(): Entity {
     type: 'LWPOLYLINE',
     ...entityDefaults(),
     handle: H(),
-    vertices: [
+    ...packLw([
       { x: -4, y: 0, bulge: 1, startWidth: 2, endWidth: 2 },
       { x: 4, y: 0, bulge: 1, startWidth: 2, endWidth: 2 },
-    ],
+    ]),
     closed: true,
     plinegen: false,
     constantWidth: 2,

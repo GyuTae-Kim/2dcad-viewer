@@ -5,6 +5,7 @@ import { prepareGeo } from '../../src/edit/constraint/make';
 import { addConstraints } from '../../src/edit/constraint/system';
 import type { GeoConstraint, GeoType } from '../../src/edit/constraint/types';
 import { L, apply, arc, circle, line, lwpoly, put, setup, store } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const geo = (type: GeoType, refs: [string, string][], extra: Partial<GeoConstraint> = {}): GeoConstraint => ({ id: 0, kind: 'geo', type, refs: refs.map(([h, part]) => ({ h, part })), ...extra });
 
@@ -200,8 +201,8 @@ describe('기하 구속 풀기', () => {
     addOk(doc, s, geo('PARALLEL', [[pl.handle, 'G0'], [a.handle, '']]), [pl.handle, a.handle]);
     expect(L(doc, a.handle).end.y - L(doc, a.handle).start.y).toBeCloseTo(0, 7);
     const P = doc.entityIndex.get(pl.handle) as LwPolylineEntity;
-    expect(P.vertices[1]!.y - P.vertices[0]!.y).toBeCloseTo(0, 8);
-    expect(P.vertices[2]!.bulge).toBeCloseTo(0.4, 9);
+    expect(lwVertices(P)[1]!.y - lwVertices(P)[0]!.y).toBeCloseTo(0, 8);
+    expect(lwVertices(P)[2]!.bulge).toBeCloseTo(0.4, 9);
     // 정점과 선 끝 일치
     addOk(doc, s, geo('COINCIDENT', [[pl.handle, 'V3'], [a.handle, 'S']]), [pl.handle, a.handle]);
     expect(L(doc, a.handle).start.y).toBeCloseTo(50, 7);

@@ -15,6 +15,7 @@ import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
 import { textStyleAnnotative } from '../edit/annoscale/xdata';
 import { isoCircleEllipse, isoEllipseKeyword } from './viewtools-iso';
+import { packLw, packLwPoints } from '../core/lwpoly';
 
 // ---------------------------------------------------------------------------
 // 공통
@@ -213,7 +214,7 @@ export function registerDrawCommands(app: App): void {
           ...base(),
           type: 'LWPOLYLINE',
           handle: handle ?? '',
-          vertices: verts.map((v) => ({ ...v })),
+          ...packLw(verts),
           closed,
           plinegen: false,
           constantWidth: 0,
@@ -607,7 +608,7 @@ export function registerDrawCommands(app: App): void {
         { x: b.x, y: b.y },
         { x: a.x, y: b.y },
       ].map((p) => ({ ...p, bulge: 0, startWidth: 0, endWidth: 0 }));
-      addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', vertices: vs, closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity], 'RECTANG');
+      addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', ...packLw(vs), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity], 'RECTANG');
     },
   });
 
@@ -667,7 +668,7 @@ export function registerDrawCommands(app: App): void {
         if (!q) return;
         verts = poly(q);
       }
-      addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', vertices: verts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity], 'POLYGON');
+      addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', ...packLwPoints(verts), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity], 'POLYGON');
     },
   });
 
@@ -900,7 +901,7 @@ export function registerDrawCommands(app: App): void {
           { x: c.x - rm, y: c.y, bulge: 1, startWidth: w, endWidth: w },
           { x: c.x + rm, y: c.y, bulge: 1, startWidth: w, endWidth: w },
         ];
-        addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', vertices: vs, closed: true, plinegen: false, constantWidth: w, elevation: 0 } as Entity], 'DONUT');
+        addEntities(app, ctx, [{ ...base(), type: 'LWPOLYLINE', handle: '', ...packLw(vs), closed: true, plinegen: false, constantWidth: w, elevation: 0 } as Entity], 'DONUT');
       }
     },
   });

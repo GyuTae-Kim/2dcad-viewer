@@ -24,6 +24,7 @@ import { ask, form, h } from './ui/dom';
 import { currentUcs } from './ucs';
 import type { Pt } from './view';
 import { installAcadConstraintSync } from './constraints-acad';
+import { lwCount } from '../core/lwpoly';
 
 const kw = (key: string, label: string): Keyword => ({ key, label });
 
@@ -512,7 +513,7 @@ async function twoPoints(app: App, ctx: CommandContext, hl: HL, first: Awaited<R
   if (e.type === 'LINE') return [{ h: o.ref.h, part: 'S' }, { h: o.ref.h, part: 'E' }, e.start, e.end];
   // 폴리선 세그먼트: 그 세그먼트의 두 정점
   const i = Number(o.ref.part.slice(1));
-  const n = e.type === 'LWPOLYLINE' ? e.vertices.length : e.type === 'POLYLINE' ? e.vertices.length : 0;
+  const n = e.type === 'LWPOLYLINE' ? lwCount(e) : e.type === 'POLYLINE' ? e.vertices.length : 0;
   const ra = { h: o.ref.h, part: `V${i}` };
   const rb = { h: o.ref.h, part: `V${(i + 1) % n}` };
   const pa = refPoint(app, ra);

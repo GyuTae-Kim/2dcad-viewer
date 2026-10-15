@@ -17,6 +17,7 @@ import { askAngleDeg, askInteger, askOption, askReal, askWord, askYN, fmt4 } fro
 import { dimensionBlockOps } from './dimcmds';
 import { purgeable } from './editcmds';
 import { fileNameMode } from './script';
+import { lwCount, lwPoint, lwPoints } from '../core/lwpoly';
 
 function headerOps(doc: { header: Map<string, HeaderValue> }, values: Record<string, HeaderValue>): EditOp[] {
   const ops: EditOp[] = [];
@@ -74,7 +75,7 @@ export function zeroLength(e: Entity): boolean {
     case 'ARC':
       return e.radius < 1e-10 || Math.abs(e.endAngle - e.startAngle) < 1e-12;
     case 'LWPOLYLINE':
-      return e.vertices.length > 0 && e.vertices.every((v) => near(v, e.vertices[0]!));
+      return lwCount(e) > 0 && lwPoints(e).every((v) => near(v, lwPoint(e, 0)));
     default:
       return false;
   }

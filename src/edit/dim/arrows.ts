@@ -5,6 +5,7 @@
 import { type Entity, type LwVertex, entityDefaults, tableKey } from '../../core/model';
 import type { Out } from './builder';
 import { type P, add, ang, madd, mul, perp, sub } from './vec';
+import { packLw } from '../../core/lwpoly';
 
 /** AutoCAD 기본 화살촉 이름(블록 이름 철자) */
 const BUILTIN = [
@@ -108,7 +109,7 @@ const S = (a: [number, number], b: [number, number], c: [number, number], d: [nu
   ent('SOLID', { points: [v3(...a), v3(...b), v3(...c), v3(...d)], invisibleEdges: 0 });
 const lw = (pts: [number, number, number?][], closed: boolean, width: number) =>
   ent('LWPOLYLINE', {
-    vertices: pts.map(([x, y, bulge]): LwVertex => ({ x, y, bulge: bulge ?? 0, startWidth: 0, endWidth: 0 })),
+    ...packLw(pts.map(([x, y, bulge]): LwVertex => ({ x, y, bulge: bulge ?? 0, startWidth: 0, endWidth: 0 }))),
     closed,
     plinegen: false,
     constantWidth: width,

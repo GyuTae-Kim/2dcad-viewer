@@ -44,8 +44,8 @@ export function anchorOf(e: Entity): [number, number] | null {
     case 'MTEXT':
       return [e.insert.x, e.insert.y];
     case 'LWPOLYLINE': {
-      const v = e.vertices[0];
-      return v && flat(e) ? [v.x, v.y] : null;
+      const v = e.verts;
+      return v.length >= 3 && flat(e) ? [v[0]!, v[1]!] : null;
     }
     case 'POLYLINE': {
       const v = e.vertices[0];

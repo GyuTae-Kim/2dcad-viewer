@@ -11,6 +11,7 @@ import { isNaturalExt, isPlanarExt, planProj, planZ } from '../geom/ocs';
 import { insertionPoint } from '../geom/query';
 import { transformEntity } from '../geom/transform';
 import { partIndex } from './types';
+import { lwVertices, packLw } from '../../core/lwpoly';
 
 const TAU = Math.PI * 2;
 
@@ -153,15 +154,16 @@ export function makePrim(e: Entity, vs: Vars): Prim | null {
     case 'LWPOLYLINE': {
       const m = planProj(e.extrusion, e.elevation);
       const flip = affDet(m) < 0 ? -1 : 1;
-      const v = e.vertices.map((p) => addPt(vs, affApply(m, p)));
-      const n = e.vertices.length;
+      const lv = lwVertices(e);
+      const v = lv.map((p) => addPt(vs, affApply(m, p)));
+      const n = lv.length;
       const segs = e.closed ? n : n - 1;
       const b: number[] = [];
       for (let i = 0; i < segs; i++) {
-        const bu = (e.vertices[i]!.bulge || 0) * flip;
+        const bu = (lv[i]!.bulge || 0) * flip;
         b.push(Math.abs(bu) > 1e-12 ? addVar(vs, bu, true) : -1);
       }
-      return { k: 'poly', h, e, v, b, closed: e.closed, idx: e.vertices.map((_, i) => i) };
+      return { k: 'poly', h, e, v, b, closed: e.closed, idx: lv.map((_, i) => i) };
     }
     case 'POLYLINE': {
       const idx = polyIndices(e)!;
@@ -512,7 +514,7 @@ export function writePrim(pr: Prim, x: X, doc: CadDocument): Entity {
         const out: LwPolylineEntity = {
           ...e,
           elevation: z,
-          vertices: e.vertices.map((v, i) => ({ ...v, x: x[pr.v[i]!]!, y: x[pr.v[i]! + 1]!, bulge: i < pr.b.length && pr.b[i]! >= 0 ? x[pr.b[i]!]! : 0 })),
+          ...packLw(lwVertices(e).map((v, i) => ({ ...v, x: x[pr.v[i]!]!, y: x[pr.v[i]! + 1]!, bulge: i < pr.b.length && pr.b[i]! >= 0 ? x[pr.b[i]!]! : 0 }))),
         };
         delete out.extrusion;
         return out;

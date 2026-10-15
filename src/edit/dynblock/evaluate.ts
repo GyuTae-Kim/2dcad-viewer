@@ -43,6 +43,7 @@ import {
   LOOKUP_CUSTOM,
   MSG_UNSUPPORTED,
 } from './types';
+import { lwPoints, lwVertices, setLwVertices } from '../../core/lwpoly';
 
 export class DynError extends Error {}
 
@@ -116,12 +117,14 @@ function stretchEntity(e: Entity, pts: readonly number[], d: Vec3, doc: CadDocum
     case 'LWPOLYLINE': {
       if (e.extrusion && Math.abs(e.extrusion.z - 1) > 1e-9) return null;
       const r = structuredClone(e);
-      r.vertices.forEach((v, i) => {
+      const vs = lwVertices(e);
+      vs.forEach((v, i) => {
         if (set.has(i)) {
           v.x += d.x;
           v.y += d.y;
         }
       });
+      setLwVertices(r, vs);
       return r;
     }
     case 'POLYLINE': {
@@ -172,7 +175,7 @@ function stretchPoints(e: Entity): { x: number; y: number }[] | null {
     case 'LINE':
       return [e.start, e.end];
     case 'LWPOLYLINE':
-      return flat ? e.vertices : null;
+      return flat ? lwPoints(e) : null;
     case 'POLYLINE':
       return e.kind === 'polyface' || e.kind === 'mesh' ? null : e.vertices.map((v) => v.location);
     case 'SOLID':

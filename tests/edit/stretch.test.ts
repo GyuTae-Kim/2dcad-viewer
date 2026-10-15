@@ -18,6 +18,7 @@ import { arrayPolar, arrayRectangular } from '../../src/edit/geom/array';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, fitSpline, line, lw, mtext, near, newDoc, renders, spline, text } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 const win = [V(4, -1), V(20, 20)]; // x ≥ 4 쪽을 덮는 걸침 창
@@ -102,10 +103,10 @@ describe('stretch', () => {
       [0, 5],
     ]);
     const o = stretch([p], win, D, doc).replace![0] as LwPolylineEntity;
-    near(o.vertices[0]!, V(0, 0));
-    near(o.vertices[1]!, V(8, 1));
-    near(o.vertices[2]!, V(8, 6));
-    expect(o.vertices[1]!.bulge).toBeCloseTo(0.3);
+    near(lwVertices(o)[0]!, V(0, 0));
+    near(lwVertices(o)[1]!, V(8, 1));
+    near(lwVertices(o)[2]!, V(8, 6));
+    expect(lwVertices(o)[1]!.bulge).toBeCloseTo(0.3);
     const n = lw([[0, 0], [-5, 0]], false, NEG_Z); // WCS (0,0) → (5,0)
     const on = stretch([n], win, D, doc).replace![0] as LwPolylineEntity;
     expect(entityPath(on)!.pieces[0]!.k).toBe('line');

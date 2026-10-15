@@ -10,6 +10,7 @@ import type { EditOp } from '../edit/session';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { layoutViewports, outlineOf, paperInfo, viewportXf } from './scene';
+import { packLw, packLwPoints } from '../core/lwpoly';
 
 type Pt = { x: number; y: number };
 type Rect = [number, number, number, number];
@@ -361,7 +362,7 @@ export function registerViewportCommands(app: App): void {
           else break;
         }
         if (pts.length < 3) return;
-        clip = { ...entityDefaults(), type: 'LWPOLYLINE', handle: st.session.newHandle(), owner: st.doc.blocks.get(block)?.recordHandle, paperSpace: true, vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity;
+        clip = { ...entityDefaults(), type: 'LWPOLYLINE', handle: st.session.newHandle(), owner: st.doc.blocks.get(block)?.recordHandle, paperSpace: true, ...packLwPoints(pts), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity;
         ops.push({ kind: 'add', block, entity: clip });
       }
       const pts = outlineOf(clip)!;
@@ -584,7 +585,7 @@ export function registerViewportCommands(app: App): void {
           }
           if (pts.length < 3) return;
           const vertices: LwVertex[] = pts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 }));
-          const poly: Entity = { ...entityDefaults(), type: 'LWPOLYLINE', handle: st.session.newHandle(), owner: st.doc.blocks.get(st.space)?.recordHandle, paperSpace: true, vertices, closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity;
+          const poly: Entity = { ...entityDefaults(), type: 'LWPOLYLINE', handle: st.session.newHandle(), owner: st.doc.blocks.get(st.space)?.recordHandle, paperSpace: true, ...packLw(vertices), closed: true, plinegen: false, constantWidth: 0, elevation: 0 } as Entity;
           const vp = makeViewport(st, [Math.min(...pts.map((p) => p.x)), Math.min(...pts.map((p) => p.y)), Math.max(...pts.map((p) => p.x)), Math.max(...pts.map((p) => p.y))]);
           vp.clipBoundary = poly.handle;
           vp.flags |= VP_NONRECT;

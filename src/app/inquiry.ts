@@ -7,6 +7,7 @@ import { bulgeArc, ccwSweep, interpolateFitPoints, nurbsPoints, TAU } from '../g
 import { hatchLoops } from '../render/hatch';
 import { decodePercent } from '../text/mtext';
 import { definitionName } from '../edit/dynblock';
+import { lwVertices } from '../core/lwpoly';
 
 export const TYPE_NAMES: Record<string, string> = {
   LINE: '선',
@@ -382,11 +383,12 @@ export function entityProperties(doc: CadDocument, e: Entity, u: UnitSettings): 
       break;
     }
     case 'LWPOLYLINE': {
-      geo.push({ k: '정점 수', v: String(e.vertices.length) }, { k: '닫힘', v: e.closed ? '예' : '아니요' }, { k: '길이', v: L(polyLength(e.vertices, e.closed)) });
-      if (e.closed) geo.push({ k: '면적', v: area(Math.abs(polyArea(e.vertices))) });
+      const vs = lwVertices(e);
+      geo.push({ k: '정점 수', v: String(vs.length) }, { k: '닫힘', v: e.closed ? '예' : '아니요' }, { k: '길이', v: L(polyLength(vs, e.closed)) });
+      if (e.closed) geo.push({ k: '면적', v: area(Math.abs(polyArea(vs))) });
       if (e.constantWidth) geo.push({ k: '전역 폭', v: L(e.constantWidth) });
       if (e.elevation) geo.push({ k: '고도', v: L(e.elevation) });
-      const v0 = e.vertices[0];
+      const v0 = vs[0];
       if (v0) geo.push({ k: '첫 정점', v: P(v0) });
       break;
     }
@@ -564,7 +566,7 @@ export function entityLength(e: Entity): number | null {
     case 'ARC':
       return e.radius * ccwSweep(e.startAngle, e.endAngle);
     case 'LWPOLYLINE':
-      return polyLength(e.vertices, e.closed);
+      return polyLength(lwVertices(e), e.closed);
     case 'POLYLINE':
       if (e.kind !== '2d') return null;
       return polyLength(

@@ -4,6 +4,7 @@
  */
 import type { CadDocument, Entity, PolyVertex, SplineEntity, Vec2, Vec3 } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { lwVertices, setLwVertices } from '../../core/lwpoly';
 import { pathLoop } from '../../render/hatch';
 import { type Piece, pathBox, pieceBox, pieceNearest } from './curve';
 import { edgePieces } from './edges';
@@ -284,7 +285,7 @@ export function reverseEntity(e: Entity): EditResult {
     }
     case 'LWPOLYLINE': {
       const r = cloneEntity(e);
-      r.vertices = reverseBulged(e.vertices, e.closed);
+      setLwVertices(r, reverseBulged(lwVertices(e), e.closed));
       return { replace: [r] };
     }
     case 'POLYLINE': {

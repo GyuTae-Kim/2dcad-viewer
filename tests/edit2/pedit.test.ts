@@ -19,6 +19,7 @@ import {
   toPolyline,
 } from '../../src/edit/geom/pedit';
 import { V, arc, line, lw, near, newDoc, poly2d, renders } from '../edit/helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 const zig = () =>
@@ -32,8 +33,8 @@ const zig = () =>
 describe('PEDIT 변환', () => {
   it('선 → LWPOLYLINE', () => {
     const p = toPolyline(line(0, 0, 5, 5))!;
-    expect(p.vertices.length).toBe(2);
-    near(p.vertices[1]!, V(5, 5));
+    expect(lwVertices(p).length).toBe(2);
+    near(lwVertices(p)[1]!, V(5, 5));
   });
   it('호 → 볼록도 폴리선(같은 곡선)', () => {
     const a = arc(1, 1, 5, 30, 300);
@@ -65,9 +66,9 @@ describe('PEDIT 변환', () => {
     };
     const p = splineToPolyline(s, 4) as LwPolylineEntity;
     expect(p.type).toBe('LWPOLYLINE');
-    expect(p.vertices.length).toBe(9);
-    near(p.vertices[0]!, V(0, 0));
-    near(p.vertices[8]!, V(20, 0));
+    expect(lwVertices(p).length).toBe(9);
+    near(lwVertices(p)[0]!, V(0, 0));
+    near(lwVertices(p)[8]!, V(20, 0));
   });
 });
 
@@ -174,16 +175,16 @@ describe('PEDIT 단순 편집', () => {
   it('정점 삽입·이동·삭제·폭', () => {
     const p = zig();
     const a = insertVertex(p, 0, V(5, 10)) as LwPolylineEntity;
-    expect(a.vertices.length).toBe(5);
-    near(a.vertices[1]!, V(5, 10));
+    expect(lwVertices(a).length).toBe(5);
+    near(lwVertices(a)[1]!, V(5, 10));
     const m = moveVertex(a, 1, V(5, 20)) as LwPolylineEntity;
-    near(m.vertices[1]!, V(5, 20));
+    near(lwVertices(m)[1]!, V(5, 20));
     const r = removeVertex(m, 1) as LwPolylineEntity;
-    expect(r.vertices.length).toBe(4);
+    expect(lwVertices(r).length).toBe(4);
     expect(removeVertex(lw([[0, 0], [1, 1]]) as LwPolylineEntity, 0)).toBeNull();
     const w = setSegmentWidth(p, 1, 0.5, 2) as LwPolylineEntity;
-    expect(w.vertices[1]!.startWidth).toBe(0.5);
-    expect(w.vertices[1]!.endWidth).toBe(2);
+    expect(lwVertices(w)[1]!.startWidth).toBe(0.5);
+    expect(lwVertices(w)[1]!.endWidth).toBe(2);
     renders(doc, [a, m, r, w]);
   });
 });

@@ -36,6 +36,7 @@ import { askNumber } from './modify2-util';
 import type { Affine } from './modify';
 import { commitResults } from './modify';
 import type { OverlayGeom, Pt, SnapKind } from './view';
+import { lwCount, lwVertices } from '../core/lwpoly';
 
 // ---------------------------------------------------------------------------
 // DIMASSOC 변수
@@ -644,8 +645,8 @@ function objectEnds(e: Entity, pick: Pt): [Pt, Pt] | null {
       { x: e.center.x + e.radius * Math.cos(e.startAngle), y: e.center.y + e.radius * Math.sin(e.startAngle) },
       { x: e.center.x + e.radius * Math.cos(e.endAngle), y: e.center.y + e.radius * Math.sin(e.endAngle) },
     ];
-  if (e.type === 'LWPOLYLINE' && e.vertices.length >= 2) {
-    const vs = e.vertices;
+  if (e.type === 'LWPOLYLINE' && lwCount(e) >= 2) {
+    const vs = lwVertices(e);
     const n = e.closed ? vs.length : vs.length - 1;
     let best = 0;
     let bd = Infinity;

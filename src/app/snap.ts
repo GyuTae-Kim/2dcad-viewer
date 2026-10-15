@@ -5,6 +5,7 @@ import { type Mat, applyXY, identity, multiply, rotationZ, scaling, translation,
 import { bulgeArc, ccwSweep, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import type { Picker } from './pick';
 import type { Pt, SnapKind } from './view';
+import { lwVertices } from '../core/lwpoly';
 
 export interface SnapPoint {
   x: number;
@@ -95,7 +96,7 @@ export function entitySnaps(doc: CadDocument, e: Entity, m: Mat, out: SnapPoint[
       return;
     }
     case 'LWPOLYLINE':
-      polySnaps(withOcs(m, e.extrusion), e.vertices, e.closed, e.elevation, out);
+      polySnaps(withOcs(m, e.extrusion), lwVertices(e), e.closed, e.elevation, out);
       return;
     case 'POLYLINE': {
       const vs = e.vertices.filter((v) => !(v.flags & 16) && !(v.faceIndices && !(v.flags & 64)));

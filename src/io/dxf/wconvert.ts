@@ -21,6 +21,7 @@ import type {
   Vec3,
 } from '../../core/model';
 import { ellipsePoints, nurbsPoints, interpolateFitPoints, TAU } from '../../geom/curves';
+import { lwVertices } from '../../core/lwpoly';
 import { rawTagsValid } from './tagwriter';
 import type { WriteContext } from './wcontext';
 
@@ -382,7 +383,7 @@ function convertOnce(e: Entity, ctx: WriteContext): Entity[] | null {
   // R12
   switch (e.type) {
     case 'LWPOLYLINE': {
-      const vs = e.vertices.map((p) => ({ ...v({ x: p.x, y: p.y, z: e.elevation }, 0, p.bulge), startWidth: p.startWidth, endWidth: p.endWidth }));
+      const vs = lwVertices(e).map((p) => ({ ...v({ x: p.x, y: p.y, z: e.elevation }, 0, p.bulge), startWidth: p.startWidth, endWidth: p.endWidth }));
       const pl = polyline(e, '2d', vs, (e.closed ? 1 : 0) | (e.plinegen ? 128 : 0), e.handle, e.elevation);
       pl.defaultStartWidth = pl.defaultEndWidth = e.constantWidth;
       return [pl];

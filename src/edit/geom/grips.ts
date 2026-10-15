@@ -26,6 +26,7 @@ import type {
   Vec3,
 } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { lwVertices, setLwVertices } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
 import { type EllPiece, pieceAt } from './curve';
 import { type Affine, TAU, add, affApply, affInv, affLin, affTranslate, angleOf, ccwFrom, dist, mid, normAngle, sub } from './math';
@@ -88,7 +89,7 @@ export function gripPoints(e: Entity, doc: CadDocument): GripPoint[] {
     }
     case 'LWPOLYLINE':
       return polyGrips(
-        e.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge })),
+        lwVertices(e),
         e.closed,
         planProj(e.extrusion, e.elevation),
       );
@@ -521,13 +522,15 @@ function lwGrip(e: LwPolylineEntity, id: string, to: Vec2): LwPolylineEntity {
   const q = affApply(inv, to);
   const r = cloneEntity(e);
   const i = Number(id.slice(1));
+  const vs = lwVertices(e);
   if (id[0] === 'v') {
-    r.vertices[i]!.x = q.x;
-    r.vertices[i]!.y = q.y;
+    vs[i]!.x = q.x;
+    vs[i]!.y = q.y;
   } else {
-    const gp = segMid(e.vertices[i]!, e.vertices[(i + 1) % e.vertices.length]!, e.vertices[i]!.bulge);
-    segmentGrip(r.vertices, i, e.closed, q, sub(q, gp));
+    const gp = segMid(vs[i]!, vs[(i + 1) % vs.length]!, vs[i]!.bulge);
+    segmentGrip(vs, i, e.closed, q, sub(q, gp));
   }
+  setLwVertices(r, vs);
   return r;
 }
 

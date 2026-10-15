@@ -19,7 +19,6 @@ import type {
   LeaderEntity,
   LineEntity,
   LwPolylineEntity,
-  LwVertex,
   MLeaderEntity,
   MLeaderLeader,
   MLeaderLine,
@@ -264,30 +263,42 @@ function ellipse(c: Common): EllipseEntity {
 
 function lwpolyline(c: Common): LwPolylineEntity {
   const t = c.tags;
-  const vertices: LwVertex[] = [];
-  let cur: LwVertex | null = null;
+  // 정점 평탄 좌표(x, y, 볼록)와 정점별 폭(시작, 끝 — 0이 아닌 값이 나올 때만 만든다)
+  const verts: number[] = [];
+  let widths: number[] | undefined;
+  /** 지금 정점의 verts 시작 자리(-1 = 아직 정점 없음) */
+  let cur = -1;
   let flags = 0;
   let constantWidth = 0;
   let elevation = 0;
+  const width = (k: 0 | 1, x: number): void => {
+    if (!widths) {
+      if (x === 0 && 1 / x > 0) return;
+      widths = [];
+    }
+    const at = (cur / 3) * 2;
+    while (widths.length < at + 2) widths.push(0);
+    widths[at + k] = x;
+  };
   for (let i = 0; i < t.length; i++) {
     const code = t.codes[i]!;
     const v = t.values[i];
     switch (code) {
       case 10:
-        cur = { x: num(v), y: 0, bulge: 0, startWidth: 0, endWidth: 0 };
-        vertices.push(cur);
+        cur = verts.length;
+        verts.push(num(v), 0, 0);
         break;
       case 20:
-        if (cur) cur.y = num(v);
+        if (cur >= 0) verts[cur + 1] = num(v);
         break;
       case 40:
-        if (cur) cur.startWidth = num(v);
+        if (cur >= 0) width(0, num(v));
         break;
       case 41:
-        if (cur) cur.endWidth = num(v);
+        if (cur >= 0) width(1, num(v));
         break;
       case 42:
-        if (cur) cur.bulge = num(v);
+        if (cur >= 0) verts[cur + 2] = num(v);
         break;
       case 70:
         flags = int(v);
@@ -300,10 +311,13 @@ function lwpolyline(c: Common): LwPolylineEntity {
         break;
     }
   }
+  if (widths) while (widths.length < (verts.length / 3) * 2) widths.push(0);
   const e = {
     ...c.base,
     type: 'LWPOLYLINE',
-    vertices,
+    // push로 키운 배열은 남는 칸이 있다 — 꼭 맞는 사본으로 둔다
+    verts: verts.slice(),
+    widths: widths?.slice(),
     closed: (flags & 1) !== 0,
     plinegen: (flags & 128) !== 0,
     constantWidth,

@@ -1,7 +1,7 @@
 /**
  * 편집 명령: MATCHPROP(특성 일치), DRAWORDER(그리기 순서), TEXTEDIT(문자 고치기), PURGE(안 쓰는 항목 지우기)
  */
-import type { DimensionEntity, Entity } from '../core/model';
+import type { DimensionEntity, Entity, LwPolylineEntity } from '../core/model';
 import { tableKey } from '../core/model';
 import type { EditOp } from '../edit/session';
 import { cloneEntity, isLayoutBlock } from '../edit/session';
@@ -10,6 +10,7 @@ import { editAttributes } from './blocks';
 import { textDialog } from './draw';
 import { unlockedOnly } from './layers';
 import { form } from './ui/dom';
+import { lwCount, tidyWidths, zeros } from '../core/lwpoly';
 
 /** MATCHPROP이 옮기는 특성 */
 const MATCH_KEYS = ['layer', 'color', 'linetype', 'ltscale', 'lineweight', 'transparency', 'thickness'] as const;
@@ -42,7 +43,9 @@ function matchProps(src: Entity, dst: Entity): Entity {
   }
   if (src.type === 'LWPOLYLINE' && dst.type === 'LWPOLYLINE') {
     c.constantWidth = s.constantWidth;
-    for (const v of c.vertices as { startWidth: number; endWidth: number }[]) v.startWidth = v.endWidth = s.constantWidth as number;
+    // 정점 폭도 모두 전역 폭으로(0이면 정점 폭 없음)
+    const w = s.constantWidth as number;
+    c.widths = tidyWidths(zeros(lwCount(dst as LwPolylineEntity) * 2).fill(w));
   }
   return c as unknown as Entity;
 }

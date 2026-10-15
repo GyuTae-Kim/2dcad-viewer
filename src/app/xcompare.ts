@@ -26,6 +26,7 @@ import { linkXrefFiles, refHooks, xrefFileKey, xrefOfDoc } from './refs';
 import { type Box, type ChangeSet, type CompareOptions, type CompareSettings, changeSets, cloudArc, cloudOf, compareMargin, diagonal, setOutlines, unionBox } from '../edit/compare';
 import { type Affine, type XrefDiff, diffXrefVersions, fadeStyles, placeBox, placedDiffBoxes, placementMatrix, xcompareSummary, xrefBlockKeys, xrefChanged, xrefInserts } from '../edit/viewtools/xcompare';
 import { h, toast } from './ui/dom';
+import { packLw } from '../core/lwpoly';
 
 /** 참조 파일 한 버전 */
 interface Version {
@@ -249,7 +250,7 @@ export class XCompareSession {
       layer: '0',
       color: { aci: c.set === this.current ? CLOUD_CURRENT_ACI : CLOUD_ACI },
       lineweight: 0,
-      vertices: c.verts,
+      ...packLw(c.verts),
       closed: true,
       plinegen: false,
       constantWidth: 0,

@@ -3,6 +3,7 @@
  * DXF 리더와 DWG 리더를 같은 기준(ezdxf 요약)과 비교할 때 쓴다.
  */
 import type { CadDocument, Entity, Vec3 } from '../../src/core/model';
+import { lwVertices } from '../../src/core/lwpoly';
 
 export type Summary = Record<string, unknown>;
 
@@ -58,7 +59,7 @@ export function summarizeEntity(e: Entity): Summary {
       break;
     case 'LWPOLYLINE':
       d.closed = e.closed;
-      d.vertices = e.vertices.map((v) => [r(v.x), r(v.y), r(v.bulge), r(v.startWidth), r(v.endWidth)]);
+      d.vertices = lwVertices(e).map((v) => [r(v.x), r(v.y), r(v.bulge), r(v.startWidth), r(v.endWidth)]);
       d.constantWidth = r(e.constantWidth);
       d.elevation = r(e.elevation);
       break;

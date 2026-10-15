@@ -17,6 +17,7 @@ import { prin1 } from './printer';
 import { wcmatch } from './text';
 import { makeObject, mergeXData, modLayer, modObject, objectGroups, objectOf, readXData, recordXData, tableRecordGroups, xdataPair } from './objects';
 import { Cons, Ename, LispError, Real, fromArray, isNum, numOf, toArray, type Value } from './types';
+import { lwCount, lwVertices, setLwVertices } from '../../core/lwpoly';
 
 type Pair = [number, Value];
 
@@ -261,13 +262,15 @@ export function entityGroups(it: Interp, d: LispDrawing, h: string): Pair[] | nu
     case 'ELLIPSE':
       out.push([100, 'AcDbEllipse'], [10, P3(e.center)], [11, P3(e.majorAxis)], [210, P3(e.extrusion ?? Z)], [40, R(e.ratio)], [41, R(e.startParam)], [42, R(e.endParam)]);
       break;
-    case 'LWPOLYLINE':
-      out.push([100, 'AcDbPolyline'], [90, e.vertices.length], [70, (e.closed ? 1 : 0) | (e.plinegen ? 128 : 0)], [43, R(e.constantWidth)]);
+    case 'LWPOLYLINE': {
+      const vs = lwVertices(e);
+      out.push([100, 'AcDbPolyline'], [90, vs.length], [70, (e.closed ? 1 : 0) | (e.plinegen ? 128 : 0)], [43, R(e.constantWidth)]);
       if (e.elevation) out.push([38, R(e.elevation)]);
       if (e.thickness) out.push([39, R(e.thickness)]);
-      for (const v of e.vertices) out.push([10, P2(v)], [40, R(v.startWidth)], [41, R(v.endWidth)], [42, R(v.bulge)], [91, 0]);
+      for (const v of vs) out.push([10, P2(v)], [40, R(v.startWidth)], [41, R(v.endWidth)], [42, R(v.bulge)], [91, 0]);
       out.push([210, P3(e.extrusion ?? Z)]);
       break;
+    }
     case 'POLYLINE':
       out.push([100, e.kind === '3d' ? 'AcDb3dPolyline' : e.kind === '2d' ? 'AcDb2dPolyline' : 'AcDbPolygonMesh'], [66, 1], [10, P3({ x: 0, y: 0, z: e.elevation })], [70, e.flags]);
       out.push([40, R(e.defaultStartWidth)], [41, R(e.defaultEndWidth)], [210, P3(e.extrusion ?? Z)]);
@@ -555,7 +558,7 @@ function applyGroups(d: LispDrawing, e: Entity, pairs: Pair[], ctx: Apply): void
         else last.bulge = n;
       }
     }
-    e.vertices = vs;
+    setLwVertices(e, vs);
   }
   let text3 = '';
   let hasText3 = false;
@@ -758,7 +761,7 @@ function blank(d: LispDrawing, type: string): Entity | null {
     case 'ELLIPSE':
       return { ...base, type, center: { ...o }, majorAxis: { x: 1, y: 0, z: 0 }, ratio: 1, startParam: 0, endParam: Math.PI * 2 };
     case 'LWPOLYLINE':
-      return { ...base, type, vertices: [], closed: false, plinegen: false, constantWidth: 0, elevation: 0 };
+      return { ...base, type, verts: [], widths: undefined, closed: false, plinegen: false, constantWidth: 0, elevation: 0 };
     case 'TEXT':
       return { ...base, type, insert: { ...o }, height: textH, text: '', rotation: 0, widthFactor: 1, oblique: 0, style, generation: 0, halign: 0, valign: 0 };
     case 'ATTRIB':
@@ -824,7 +827,7 @@ export function entmake(d: LispDrawing, list: Value, made?: (handle: string) => 
     if (err instanceof LispError && !err.message.startsWith('잘못된 DXF')) return null;
     throw err;
   }
-  if (type === 'LWPOLYLINE' && (e as { vertices: LwVertex[] }).vertices.length < 1) return null;
+  if (e.type === 'LWPOLYLINE' && lwCount(e) < 1) return null;
   if (!applyXData(d, e, pairs)) return null;
   e.handle = d.session.newHandle();
   if (type === 'ATTRIB') {

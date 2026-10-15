@@ -2,6 +2,7 @@
 import type { BlockDef, CadDocument, Entity, HatchPath, LwVertex, Vec2, Vec3 } from '../../src/core/model';
 import { MODEL_SPACE, createDocument, entityDefaults } from '../../src/core/model';
 import { pathLoop } from '../../src/render/hatch';
+import { packLw } from '../../src/core/lwpoly';
 
 export const P = (x: number, y: number, z = 0): Vec3 => ({ x, y, z });
 export const deg = (d: number) => (d * Math.PI) / 180;
@@ -46,7 +47,7 @@ export function ellipse(cx: number, cy: number, mx: number, my: number, ratio: n
 
 export function lw(pts: [number, number, number?][], closed = false, ext?: Vec3): Entity {
   const vertices: LwVertex[] = pts.map(([x, y, b]) => ({ x, y, bulge: b ?? 0, startWidth: 0, endWidth: 0 }));
-  return { type: 'LWPOLYLINE', ...base(), vertices, closed, plinegen: false, constantWidth: 0, elevation: 0, extrusion: ext };
+  return { type: 'LWPOLYLINE', ...base(), ...packLw(vertices), closed, plinegen: false, constantWidth: 0, elevation: 0, extrusion: ext };
 }
 
 export function rect(x0: number, y0: number, x1: number, y1: number): Entity {

@@ -12,6 +12,7 @@ import { unlockedOnly } from './layers';
 import { ask, form } from './ui/dom';
 import type { Pt } from './view';
 import { withAnnotativeFlag } from '../edit/annoscale/xdata';
+import { numArray } from '../core/lwpoly';
 
 const BAD_BLOCK_NAME = /[<>/\\":;?*|,=`]/;
 
@@ -92,9 +93,11 @@ function blockOutline(b: BlockDef): { minX: number; minY: number; maxX: number; 
         add(c.x + r, c.y + r);
         break;
       }
-      case 'LWPOLYLINE':
-        for (const v of a.vertices as { x: number; y: number }[]) add(v.x, v.y);
+      case 'LWPOLYLINE': {
+        const vs = a.verts as number[];
+        for (let i = 0; i + 1 < vs.length; i += 3) add(vs[i]!, vs[i + 1]!);
         break;
+      }
       case 'TEXT':
       case 'ATTDEF':
       case 'MTEXT':
@@ -522,14 +525,18 @@ function explodeInsertSimple(app: App, ins: InsertEntity, def: BlockDef): Entity
           c.endAngle = (c.endAngle as number) + ins.rotation;
         }
         break;
-      case 'LWPOLYLINE':
+      case 'LWPOLYLINE': {
         if (uniform === null) continue;
-        for (const v of c.vertices as { x: number; y: number }[]) {
-          const q = tf({ x: v.x, y: v.y, z: 0 });
-          v.x = q.x;
-          v.y = q.y;
+        // 복제한 정점을 그 자리에서(새 배열로 받아 빈칸 없는 수 배열로)
+        const vs = numArray(c.verts as number[]);
+        for (let i = 0; i + 1 < vs.length; i += 3) {
+          const q = tf({ x: vs[i]!, y: vs[i + 1]!, z: 0 });
+          vs[i] = q.x;
+          vs[i + 1] = q.y;
         }
+        c.verts = vs;
         break;
+      }
       case 'TEXT':
       case 'MTEXT':
         c.insert = tf(c.insert as Vec3);

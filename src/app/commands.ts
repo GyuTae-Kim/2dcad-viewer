@@ -8,6 +8,7 @@ import { type LayerPatch, patchLayers } from './layers';
 import { entityLength, entityProperties, hatchArea, polyArea, ringArea, ringPerimeter, typeName } from './inquiry';
 import type { Pt } from './view';
 import { h } from './ui/dom';
+import { lwVertices } from '../core/lwpoly';
 
 function pointOf(r: PointResult): Pt | null {
   return 'point' in r ? r.point : null;
@@ -507,7 +508,7 @@ async function measureArea(app: App, ctx: CommandContext): Promise<void> {
       a = Math.PI * e.radius * e.radius;
       per = Math.PI * 2 * e.radius;
     } else if (e.type === 'LWPOLYLINE') {
-      a = Math.abs(polyArea(e.vertices));
+      a = Math.abs(polyArea(lwVertices(e)));
       per = entityLength(e);
     } else if (e.type === 'POLYLINE' && e.kind === '2d') {
       const vs = e.vertices.filter((v) => !(v.flags & 16)).map((v) => ({ x: v.location.x, y: v.location.y, bulge: v.bulge }));

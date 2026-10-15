@@ -6,6 +6,7 @@ import type { CadDocument, Entity, Vec2, Vec3 } from '../../core/model';
 import { tableKey } from '../../core/model';
 import { type Mat, identity, multiply, ocsMatrix, rotationZ, scaling, translation } from '../../geom/matrix';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
+import { lwCount, lwVertices } from '../../core/lwpoly';
 
 export const TAU = Math.PI * 2;
 
@@ -397,8 +398,8 @@ function addEntity(ctx: Ctx, e: Entity, src: string, m: Mat, depth: number, chai
     }
     case 'LWPOLYLINE': {
       const mm = withExt(m, e.extrusion);
-      if (!flat(mm) || e.vertices.length < 2) return;
-      bulgeVerts(src, mm, e.vertices, e.closed, e.elevation, ctx);
+      if (!flat(mm) || lwCount(e) < 2) return;
+      bulgeVerts(src, mm, lwVertices(e), e.closed, e.elevation, ctx);
       return;
     }
     case 'POLYLINE': {

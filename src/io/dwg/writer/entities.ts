@@ -29,6 +29,7 @@ import { HARD_OWNER, HARD_PTR, SOFT_PTR, type EntCommonOut, type ObjWriter } fro
 import { eedOf, wcolor } from './common';
 import { lwIndex } from './util';
 import { tableKey } from '../../../core/model';
+import { lwCount, lwHasBulge } from '../../../core/lwpoly';
 import { tableCellsOut } from '../../tablecells';
 import { tableOld, tableR24, writeIO } from '../tablecodec';
 import { tableToOld, tableToR24 } from '../tablemodel';
@@ -419,9 +420,11 @@ export class EntityWriter {
         this.begin(T.LWPOLYLINE, h, e);
         this.common(e, l);
         const d = this.ow.dat;
-        const v = e.vertices;
-        const hasBulge = v.some((x) => x.bulge !== 0);
-        const hasWidth = v.some((x) => x.startWidth !== 0 || x.endWidth !== 0);
+        const v = e.verts;
+        const ws = e.widths;
+        const n = lwCount(e);
+        const hasBulge = lwHasBulge(e);
+        const hasWidth = !!ws && ws.some((x) => x !== 0);
         let flag = 0;
         if (e.constantWidth) flag |= 4;
         if (e.elevation) flag |= 8;
@@ -436,22 +439,22 @@ export class EntityWriter {
         if (flag & 8) d.BD(e.elevation);
         if (flag & 2) d.BD(e.thickness!);
         if (flag & 1) d.BD3(e.extrusion!);
-        d.BL(v.length);
-        if (flag & 16) d.BL(v.length);
-        if (flag & 32) d.BL(v.length);
-        if (v.length) {
-          d.RD(v[0].x);
-          d.RD(v[0].y);
-          for (let i = 1; i < v.length; i++) {
-            d.DD(v[i].x, v[i - 1].x);
-            d.DD(v[i].y, v[i - 1].y);
+        d.BL(n);
+        if (flag & 16) d.BL(n);
+        if (flag & 32) d.BL(n);
+        if (n) {
+          d.RD(v[0]!);
+          d.RD(v[1]!);
+          for (let i = 1; i < n; i++) {
+            d.DD(v[i * 3]!, v[i * 3 - 3]!);
+            d.DD(v[i * 3 + 1]!, v[i * 3 - 2]!);
           }
         }
-        if (flag & 16) for (const x of v) d.BD(x.bulge);
+        if (flag & 16) for (let i = 0; i < n; i++) d.BD(v[i * 3 + 2]!);
         if (flag & 32)
-          for (const x of v) {
-            d.BD(x.startWidth);
-            d.BD(x.endWidth);
+          for (let i = 0; i < n; i++) {
+            d.BD(ws![i * 2]!);
+            d.BD(ws![i * 2 + 1]!);
           }
         break;
       }

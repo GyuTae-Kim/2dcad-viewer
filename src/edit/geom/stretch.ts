@@ -9,6 +9,7 @@
  */
 import type { BlockDef, CadDocument, DimensionEntity, Entity, HatchEntity, MLineEntity, SplineEntity, Vec2, Vec3 } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { lwPoints, lwVertices, setLwVertices } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
 import { type Affine, add, affApply, affInv, affTranslate, ccwSweep, dist, norm, normAngle, pointInPolygon, rot90, sub } from './math';
 import { cloneEntity, freshEntity, makeArc } from './path';
@@ -84,7 +85,7 @@ function keyPoints(e: Entity): Vec2[] {
       return [P(e.center)];
     case 'LWPOLYLINE': {
       const pr = planProj(e.extrusion, e.elevation);
-      return e.vertices.map((v) => affApply(pr, v));
+      return lwPoints(e).map((v) => affApply(pr, v));
     }
     case 'POLYLINE': {
       if (e.kind === '2d') {
@@ -215,12 +216,15 @@ function partial(e: Entity, inside: (p: Vec2) => boolean, d: Vec2, doc: CadDocum
       const pr = planProj(e.extrusion, e.elevation);
       const inv = affInv(pr)!;
       const r = cloneEntity(e);
-      r.vertices = e.vertices.map((v) => {
-        const w = affApply(pr, v);
-        if (!inside(w)) return { ...v };
-        const q = affApply(inv, add(w, d));
-        return { ...v, x: q.x, y: q.y };
-      });
+      setLwVertices(
+        r,
+        lwVertices(e).map((v) => {
+          const w = affApply(pr, v);
+          if (!inside(w)) return v;
+          const q = affApply(inv, add(w, d));
+          return { ...v, x: q.x, y: q.y };
+        }),
+      );
       return { replace: [r] };
     }
     case 'POLYLINE': {

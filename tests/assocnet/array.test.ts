@@ -20,6 +20,7 @@ import { readCadFile } from '../../src/io';
 import { writeDwg } from '../../src/io/dwg';
 import { writeDxf } from '../../src/io/dxf/writer';
 import { PYTHON, hasPython } from '../oracle/ezdxf';
+import { packLw } from '../../src/core/lwpoly';
 
 const ROOT = join(__dirname, '../..');
 const OUT = join(ROOT, '.runtime/assocnet/test-out');
@@ -193,11 +194,11 @@ describe('새 배열의 AutoCAD 연관 객체', () => {
           ...entityDefaults(),
           type: 'LWPOLYLINE',
           handle: '',
-          vertices: [
+          ...packLw([
             { x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
             { x: 60, y: 0, bulge: -0.5, startWidth: 0, endWidth: 0 },
             { x: 60, y: 40, bulge: 0, startWidth: 0, endWidth: 0 },
-          ],
+          ]),
           closed: false,
           plinegen: false,
           constantWidth: 0,

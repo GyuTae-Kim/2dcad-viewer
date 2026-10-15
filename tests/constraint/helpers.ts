@@ -6,6 +6,7 @@ import { type EditOp, EditSession } from '../../src/edit/session';
 import { readStore, storeOps } from '../../src/edit/constraint/store';
 import { acadCommitOps } from '../../src/edit/assocnet/writeback';
 import type { ConstraintStore } from '../../src/edit/constraint/types';
+import { packLw } from '../../src/core/lwpoly';
 
 export function setup(): { doc: CadDocument; s: EditSession; h: () => string } {
   const doc = createNewDocument('metric');
@@ -30,7 +31,7 @@ export function lwpoly(h: string, pts: [number, number, number?][], closed = fal
     ...entityDefaults(),
     handle: h,
     type: 'LWPOLYLINE',
-    vertices: pts.map(([x, y, b]) => ({ x, y, bulge: b ?? 0, startWidth: 0, endWidth: 0 })),
+    ...packLw(pts.map(([x, y, b]) => ({ x, y, bulge: b ?? 0, startWidth: 0, endWidth: 0 }))),
     closed,
     plinegen: false,
     constantWidth: 0,

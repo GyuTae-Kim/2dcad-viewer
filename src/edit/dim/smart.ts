@@ -8,6 +8,7 @@
 import type { DimensionEntity, Entity, Vec3 } from '../../core/model';
 import { bulgeArc } from '../../geom/curves';
 import { angularVertex, extDir, isAngularDim, isLinearDim, linearDir } from '../annot/dimedit';
+import { lwCount, lwVertices } from '../../core/lwpoly';
 
 export interface P {
   x: number;
@@ -33,8 +34,8 @@ export function smartTarget(e: Entity | undefined, pick: P): SmartTarget | null 
   }
   if (e.type === 'CIRCLE') return planar(e.extrusion) ? { kind: 'circle', c: { x: e.center.x, y: e.center.y }, r: e.radius } : null;
   if (e.type === 'ARC') return planar(e.extrusion) ? { kind: 'arc', c: { x: e.center.x, y: e.center.y }, r: e.radius, a0: e.startAngle, a1: e.endAngle } : null;
-  if (e.type === 'LWPOLYLINE' && e.vertices.length >= 2 && planar(e.extrusion)) {
-    const vs = e.vertices;
+  if (e.type === 'LWPOLYLINE' && lwCount(e) >= 2 && planar(e.extrusion)) {
+    const vs = lwVertices(e);
     const n = e.closed ? vs.length : vs.length - 1;
     let best = -1;
     let bd = Infinity;

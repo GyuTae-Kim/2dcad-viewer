@@ -5,6 +5,7 @@
 import type { AttribEntity, BlockDef, CadDocument, DictionaryObject, Entity, HatchEntity, ImageDefObject, MLeaderEntity } from '../../src/core/model';
 import { entityDefaults, tableKey } from '../../src/core/model';
 import { finalizeDocument } from '../../src/core/finalize';
+import { packLw } from '../../src/core/lwpoly';
 
 /** 문서의 $HANDSEED에서 핸들을 하나씩(편집 세션과 같은 방식) */
 function handles(doc: CadDocument): () => string {
@@ -48,11 +49,11 @@ export function addSampleEntities(doc: CadDocument): void {
   push({ ...base('ELLIPSE'), center: p(120, 50), majorAxis: p(20, 5), ratio: 0.4, startParam: 0, endParam: Math.PI * 1.5 });
   push({
     ...base('LWPOLYLINE'),
-    vertices: [
+    ...packLw([
       { x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
       { x: 10, y: 0, bulge: 0.5, startWidth: 0, endWidth: 0 },
       { x: 10, y: 10, bulge: 0, startWidth: 1, endWidth: 2 },
-    ],
+    ]),
     closed: true,
     plinegen: false,
     constantWidth: 0,
