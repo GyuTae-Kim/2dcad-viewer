@@ -94,7 +94,7 @@ DXF·DWG 리더와 DXF 쓰기, 치수 생성기 테스트는 로컬 도면을 ez
 
 ## 로드맵
 
-[docs/ROADMAP.md](docs/ROADMAP.md)
+[docs/ROADMAP.md](docs/ROADMAP.md), 지금까지의 작업 내역은 [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
 ## 라이선스
 
