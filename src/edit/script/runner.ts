@@ -8,6 +8,7 @@
  * - 한 번 이어서 실행한 동안의 편집은 명령 취소 한 번으로 되돌린다.
  */
 import { type ScriptToken, ScriptReader, parseCommandWord, parseScriptPoint, scriptCommandName, stripKeywordPrefix } from './reader';
+import { lispExtent } from '../lisp/reader';
 
 export type HostState = 'command' | 'input' | 'busy';
 type Pt = { x: number; y: number };
@@ -52,6 +53,8 @@ export interface ScriptHost {
   now(): number;
   /** 편집을 화면 장면에 반영한다(범위를 쓰는 ZOOM 등 앞에서. 없으면 생략) */
   flush?(): Promise<void>;
+  /** 명령 자리의 AutoLISP 식("(…)"·"!변수")을 평가한다. AutoLISP가 없으면 false(없으면 생략) */
+  evalLisp?(text: string): boolean;
 }
 
 /** 부르기 전에 편집을 장면에 반영해야 하는 명령(도면 범위를 쓴다) */
@@ -225,8 +228,10 @@ export class ScriptRunner {
       }
       return;
     }
-    if (raw.startsWith('(')) {
-      this.fail('AutoLISP 식은 이 웹 버전에서 실행할 수 없습니다.');
+    if (raw.startsWith('(') || (raw.startsWith('!') && raw.length > 1)) {
+      // AutoLISP 식: 명령행 입력처럼 평가한다(평가가 끝나기를 settle이 기다린다)
+      if (raw.startsWith('(') && lispExtent(raw, 0) < 0) this.fail('AutoLISP 식의 괄호가 닫히지 않았습니다.');
+      else if (!h.evalLisp?.(raw)) this.fail('AutoLISP 식은 이 웹 버전에서 실행할 수 없습니다.');
       return;
     }
     const w = parseCommandWord(raw);

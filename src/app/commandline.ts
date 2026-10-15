@@ -1,7 +1,9 @@
 /**
  * 명령행: 기록, 프롬프트(키워드 클릭), 입력, 명령 자동 완성.
  * AutoCAD처럼 Enter·Space로 입력을 마치고, 빈 입력의 Enter는 직전 명령을 다시 실행한다.
+ * 닫히지 않은 AutoLISP 식("(" 로 시작)을 치는 동안은 Space가 글자다.
  */
+import { lispUnclosed } from '../edit/lisp/reader';
 export interface Suggestion {
   name: string;
   title: string;
@@ -28,6 +30,8 @@ export class CommandLine {
   private histIdx = -1;
   /** 공백을 입력으로 받는지(문자열 입력 중) */
   acceptSpaces = false;
+  /** 닫히지 않은 AutoLISP 식을 이어 받는 중(공백은 글자) */
+  lispContinue = false;
 
   constructor(
     parent: HTMLElement,
@@ -126,7 +130,8 @@ export class CommandLine {
   private updateSuggest(): void {
     this.onChange?.(this.input.value);
     const v = this.input.value.trim();
-    if (!v || this.promptEl.hidden === false) {
+    // AutoLISP 식("(…)"·"!변수")에는 명령 이름을 권하지 않는다
+    if (!v || this.promptEl.hidden === false || v.startsWith('(') || v.startsWith('!')) {
       this.sugg.hidden = true;
       this.items = [];
       return;
@@ -183,7 +188,7 @@ export class CommandLine {
       this.input.value = this.history[this.histIdx] ?? '';
       return;
     }
-    const space = ev.key === ' ' && !this.acceptSpaces;
+    const space = ev.key === ' ' && !this.acceptSpaces && !this.lispContinue && !lispUnclosed(this.input.value);
     if (ev.key === 'Enter' || space || ev.key === 'Tab') {
       if (ev.key === 'Tab' && this.sugg.hidden) return;
       ev.preventDefault();

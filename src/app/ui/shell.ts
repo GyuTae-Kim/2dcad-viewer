@@ -11,6 +11,7 @@ import { type Field, GENERAL_FIELDS, applyField, commonValue } from '../propedit
 import { currentLayer, setCurrentLayer } from '../layers';
 import { layerStateNames, newLayerState, restoreLayerStateNamed } from '../layerstate';
 import { runScriptFile } from '../dashcmds';
+import { loadLispFile } from '../lisp';
 import { isoState, setIso } from '../viewtools-iso';
 import { maximized, maximizedLabel } from '../viewtools-vpmax';
 import { pickColor } from './colorpick';
@@ -658,6 +659,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'RESUME', label: '이어서', icon: 'redo', noDoc: true, tip: '멈춘 스크립트를 이어서 실행 (RESUME)' },
             { cmd: 'RSCRIPT', label: '처음부터', icon: 'undo', noDoc: true, tip: '스크립트를 처음부터 다시 (RSCRIPT)' },
           ],
+          [{ cmd: 'APPLOAD', label: 'AutoLISP 로드', icon: 'folder', noDoc: true, tip: 'AutoLISP(.lsp) 파일 로드 (AP, 파일을 끌어 놓아도 됨)' }],
         ],
       },
       {
@@ -836,7 +838,7 @@ export class Shell implements UiHooks {
   private readonly workspace: HTMLDivElement;
 
   constructor(root: HTMLElement) {
-    this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.DXF,.DWG,.SCR', multiple: true, hidden: true });
+    this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.lsp,.DXF,.DWG,.SCR,.LSP', multiple: true, hidden: true });
     this.title = h('div', { class: 'titlebar' });
     this.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist' });
     this.ribbon = h('div', { class: 'ribbon' });
@@ -899,6 +901,11 @@ export class Shell implements UiHooks {
       // 스크립트 파일은 도면으로 열지 않고 명령행에 차례로 넣는다
       if (/\.scr$/i.test(f.name)) {
         await runScriptFile(this.app, f);
+        continue;
+      }
+      // AutoLISP 파일은 읽어 평가한다(APPLOAD와 같다)
+      if (/\.(lsp|mnl)$/i.test(f.name)) {
+        await loadLispFile(this.app, f);
         continue;
       }
       if (f.size > 512 * 1024 * 1024) {

@@ -62,6 +62,7 @@ import { registerViewToolCommands } from './app/viewtools';
 import { registerAssocArrayCommands } from './app/assocarray';
 import { registerLayerFilterCommands } from './app/layerfilter';
 import { registerDashCommands } from './app/dashcmds';
+import { registerLispCommands } from './app/lisp';
 import { Shell } from './app/ui/shell';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportRaster, exportSvg } from './app/export';
@@ -149,6 +150,7 @@ registerAssocArrayCommands(app);
 registerLayerFilterCommands(app);
 // 명령행 버전 명령은 이미 등록된 이름을 건너뛰므로 맨 뒤에 둔다
 registerDashCommands(app);
+registerLispCommands(app);
 // 필드 회색 배경(FIELDDISPLAY): 화면 표시 설정만 바꾸고 다시 그린다
 displayFlags.fieldBackground = fieldDisplay() === 1;
 onFieldDisplayChange((v) => {

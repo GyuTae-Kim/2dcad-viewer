@@ -5,7 +5,9 @@
  * - 공백을 받지 않는 프롬프트에서 `"…"`로 감싼 입력은 공백을 포함한 한 입력이다(따옴표는 뗀다. 파일 이름·도면층 이름 등).
  * - 줄의 첫 글자가 `;`인 줄은 주석이다(Enter도 아니다). 빈 줄은 Enter다.
  * - 마지막 줄은 줄바꿈이 없어도 입력한다.
+ * - 공백을 받지 않는 프롬프트에서 `(`로 시작하는 입력은 괄호가 닫힐 때까지(여러 줄 포함) 한 입력이다(AutoLISP 식).
  */
+import { lispExtent } from '../lisp/reader';
 
 export interface ScriptToken {
   /** 넣을 글(빈 글 = Enter) */
@@ -69,12 +71,19 @@ export class ScriptReader {
       i = end < s.length && s[end] === '"' ? end + 1 : end;
       // 닫는 따옴표 뒤에 붙은 글자도 같은 입력
       while (i < s.length && s[i] !== ' ' && s[i] !== '\t' && s[i] !== '\n') text += s[i++];
+    } else if (s[i] === '(') {
+      // AutoLISP 식: 괄호가 닫힐 때까지(공백·줄바꿈 포함)가 한 입력
+      const end = lispExtent(s, i);
+      const stop = end < 0 ? s.length : end;
+      text = s.slice(i, stop);
+      for (let k = i; k < stop; k++) if (s[k] === '\n') this.line++;
+      i = stop;
     } else {
       while (i < s.length && s[i] !== ' ' && s[i] !== '\t' && s[i] !== '\n') i++;
       text = s.slice(this.pos, i);
     }
-    // 구분 글자(Enter) 먹기
-    if (i < s.length) {
+    // 구분 글자(Enter) 먹기(식 바로 뒤에 붙은 글자는 다음 입력)
+    if (i < s.length && (s[i] === ' ' || s[i] === '\t' || s[i] === '\n')) {
       if (s[i] === '\n') {
         this.line++;
         this.lineStart = true;

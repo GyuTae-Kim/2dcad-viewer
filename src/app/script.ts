@@ -18,13 +18,24 @@ export const scriptVars = { FILEDIA: 1, CMDDIA: 1, CMDECHO: 1 };
 
 const runners = new WeakMap<App, ScriptRunner>();
 
+/** AutoLISP 연결(lisp.ts가 단다): 평가 중인가(입력을 기다리지 않음), 식을 평가할 수 있는가 */
+let lispLink: { busy(app: App): boolean; available(app: App): boolean } | null = null;
+export function linkLisp(link: { busy(app: App): boolean; available(app: App): boolean }): void {
+  lispLink = link;
+}
+
 /** App과 실행기를 잇는다 */
 function appHost(app: App): ScriptHost {
   const picker = () => app.picker();
   const tolerance = () => app.view.overlay.pickbox * app.view.pixelSize();
   const removing = () => !!app.pendingInput?.remove;
   return {
-    state: () => (app.pendingInput ? 'input' : app.busyCommand ? 'busy' : 'command'),
+    state: () => (lispLink?.busy(app) ? 'busy' : app.pendingInput ? 'input' : app.busyCommand ? 'busy' : 'command'),
+    evalLisp: (t) => {
+      if (!lispLink?.available(app)) return false;
+      app.submitInput(t);
+      return true;
+    },
     inputKind: () => app.pendingInput?.kind ?? null,
     acceptsSpaces: () => app.cmd.acceptSpaces,
     findCommand: (n) => app.findCommand(n)?.name ?? null,
