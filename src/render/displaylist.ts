@@ -180,6 +180,8 @@ class ChunkBuilder {
   minY = Infinity;
   maxX = -Infinity;
   maxY = -Infinity;
+  /** 미리 보기 조각으로 이미 보낸 길이(4바이트 단위): segs, tris, tsegs, ttris */
+  readonly sent = new Int32Array(4);
 
   constructor(
     readonly key: string,
@@ -187,6 +189,8 @@ class ChunkBuilder {
     readonly oy: number,
     /** 이 표시 목록에서 만든 순서 */
     readonly index: number,
+    /** 객체 크기 단계(객체 크기 ≤ 2^level) */
+    readonly level = 0,
   ) {}
 
   get size(): number {
@@ -215,6 +219,51 @@ class ChunkBuilder {
 }
 
 const MAX_CHUNK = 1 << 20;
+
+/** 미리 보기 화면(점진 빌드 조각에서 보이지 않을 것을 빼는 데 쓴다) */
+export interface SnapshotView {
+  /** 화면에 보일 수 있는 범위(도면 좌표) */
+  rect?: readonly [number, number, number, number];
+  /** 화면 픽셀 / 도면 단위 */
+  pxPerUnit?: number;
+  /** 이보다 작은 글자(픽셀)는 그리지 않는다(렌더러 기본 0.6) */
+  minTextPx?: number;
+}
+
+/**
+ * 객체(같은 깊이가 이어진 요소)마다 첫 요소만: 반 픽셀보다 작은 객체는 선분 하나로도 같은 한 점으로 보인다.
+ * out이 없으면 개수(4바이트 단위)만 센다. depthAt: 요소 안 깊이 칸, stride: 요소 하나의 4바이트 칸 수.
+ */
+function firstPerEntity(g: GrowBuffer, from: number, stride: number, depthAt: number, out: ArrayBuffer | null, at: number, dx: number, dy: number): number {
+  const f = g.f32;
+  const u = g.u32;
+  const end = g.length;
+  let last = NaN;
+  let w = 0;
+  const dst = out ? new Float32Array(out) : null;
+  const dstU = out ? new Uint32Array(out) : null;
+  for (let e = from; e < end; e += stride) {
+    const d = f[e + depthAt]!;
+    if (d === last) continue;
+    last = d;
+    if (dst && dstU) {
+      const o = at + w;
+      for (let q = 0; q < stride; q++) dstU[o + q] = u[e + q]!;
+      if (stride === SEG_STRIDE) {
+        dst[o] = f[e]! + dx;
+        dst[o + 1] = f[e + 1]! + dy;
+        dst[o + 2] = f[e + 2]! + dx;
+        dst[o + 3] = f[e + 3]! + dy;
+      } else
+        for (let v = 0; v < stride; v += TRI_STRIDE) {
+          dst[o + v] = f[e + v]! + dx;
+          dst[o + v + 1] = f[e + v + 1]! + dy;
+        }
+    }
+    w += stride;
+  }
+  return w;
+}
 
 /**
  * 객체 하나의 그림을 임시로 모았다가(월드 좌표, double) 범위가 정해지면 알맞은 묶음에 넣는다.
@@ -573,7 +622,7 @@ export class DisplayListBuilder {
     let ch = slot === undefined ? undefined : this.live[slot];
     if (!ch || ch.size > MAX_CHUNK) {
       if (ch) this.done.push(ch);
-      ch = new ChunkBuilder(`${level}:${ix}:${iy}`, (ix + 0.5) * cell, (iy + 0.5) * cell, this.chunkCount++);
+      ch = new ChunkBuilder(`${level}:${ix}:${iy}`, (ix + 0.5) * cell, (iy + 0.5) * cell, this.chunkCount++, level);
       if (slot === undefined) {
         slot = this.live.length;
         this.live.push(ch);
@@ -852,6 +901,203 @@ export class DisplayListBuilder {
     this.minY = Infinity;
     this.maxX = -Infinity;
     this.maxY = -Infinity;
+  }
+
+  /** 미리 보기 조각으로 이미 보낸 글리프 인스턴스 수 */
+  private instSent = 0;
+
+  /**
+   * 점진 빌드용 미리 보기 조각: 지난 조각 뒤로 마감한 객체들의 그림을 묶음 하나로(좌표는 (ox, oy) 기준 float32) 모은다.
+   * 만드는 중인 표시 목록은 바꾸지 않는다(보낸 위치만 적는다). 객체 상자·무한선·이미지·외부 참조는 넣지 않는다.
+   * view(미리 보기 화면 — 움직이지 않는다)를 주면 화면에서 보이지 않는 것을 뺀다:
+   * 범위 밖 묶음, 반 픽셀보다 작은 객체는 선분·삼각형 하나만(한 픽셀 점으로 보인다), 너무 작아 그리지 않을 글자.
+   */
+  snapshot(ox: number, oy: number, view?: SnapshotView): DisplayList {
+    const all = [...this.done, ...this.live];
+    const kinds = ['segs', 'tris', 'tsegs', 'ttris'] as const;
+    const rect = view?.rect;
+    const px = view?.pxPerUnit ?? 0;
+    // 묶음마다: 0 건너뜀(범위 밖), 1 모두, 2 객체마다 하나
+    const mode = new Uint8Array(all.length);
+    const total = [0, 0, 0, 0];
+    for (let ci = 0; ci < all.length; ci++) {
+      const c = all[ci]!;
+      if (rect && (c.maxX < rect[0] || c.minX > rect[2] || c.maxY < rect[1] || c.minY > rect[3])) continue;
+      const m = px > 0 && Math.pow(2, c.level) * px < 0.5 ? 2 : 1;
+      mode[ci] = m;
+      for (let k = 0; k < 4; k++) total[k]! += m === 1 ? c[kinds[k]!].length - c.sent[k]! : firstPerEntity(c[kinds[k]!], c.sent[k]!, k === 0 || k === 2 ? SEG_STRIDE : TRI_STRIDE * 3, k === 0 || k === 2 ? 4 : 2, null, 0, 0, 0);
+    }
+    const bufs = total.map((n) => new ArrayBuffer(n * 4));
+    const at = [0, 0, 0, 0];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let ci = 0; ci < all.length; ci++) {
+      const c = all[ci]!;
+      const m = mode[ci]!;
+      let any = false;
+      for (let k = 0; k < 4; k++) {
+        const g = c[kinds[k]!];
+        const from = c.sent[k]!;
+        const n = g.length - from;
+        c.sent[k] = g.length;
+        if (!n || !m) continue;
+        const stride = k === 0 || k === 2 ? SEG_STRIDE : TRI_STRIDE;
+        const dx = c.ox - ox;
+        const dy = c.oy - oy;
+        const o = at[k]!;
+        if (m === 2) {
+          const w = firstPerEntity(g, from, k === 0 || k === 2 ? SEG_STRIDE : TRI_STRIDE * 3, k === 0 || k === 2 ? 4 : 2, bufs[k]!, o, dx, dy);
+          at[k] = o + w;
+          any ||= w > 0;
+          continue;
+        }
+        any = true;
+        new Uint32Array(bufs[k]!, o * 4, n).set(g.u32.subarray(from, from + n));
+        const dst = new Float32Array(bufs[k]!, o * 4, n);
+        const src = g.f32;
+        for (let e = 0; e < n; e += stride) {
+          dst[e] = src[from + e]! + dx;
+          dst[e + 1] = src[from + e + 1]! + dy;
+          if (stride === SEG_STRIDE) {
+            dst[e + 2] = src[from + e + 2]! + dx;
+            dst[e + 3] = src[from + e + 3]! + dy;
+          }
+        }
+        at[k] = o + n;
+      }
+      if (any) {
+        if (c.minX < minX) minX = c.minX;
+        if (c.minY < minY) minY = c.minY;
+        if (c.maxX > maxX) maxX = c.maxX;
+        if (c.maxY > maxY) maxY = c.maxY;
+      }
+    }
+    const chunk: ChunkData = {
+      key: 'preview',
+      ox,
+      oy,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      segs: bufs[0]!,
+      segCount: total[0]! / SEG_STRIDE,
+      tris: bufs[1]!,
+      triCount: total[1]! / TRI_STRIDE / 3,
+      tsegs: bufs[2]!,
+      tsegCount: total[2]! / SEG_STRIDE,
+      ttris: bufs[3]!,
+      ttriCount: total[3]! / TRI_STRIDE / 3,
+    };
+    const glyphs = this.snapshotGlyphs(view);
+    return {
+      chunks: minX <= maxX ? [chunk] : [],
+      glyphs,
+      entities: [],
+      minX,
+      minY,
+      maxX,
+      maxY,
+      xlines: [],
+      xlineHandles: [],
+    };
+  }
+
+  /** 지난 조각 뒤로 마감한 객체의 글리프 인스턴스(쓰는 글리프만 이 조각 번호로). view: 범위 밖·너무 작은 글자는 뺀다 */
+  private snapshotGlyphs(view?: SnapshotView): GlyphSet {
+    const from = this.instSent;
+    const to = this.instDone;
+    this.instSent = to;
+    const G = this.instG;
+    const T = this.instT;
+    const F = this.instF;
+    // 넣을 인스턴스(글리프 높이 = |(c, d)|, 위치 = (e, f))
+    const keep = new Uint8Array(Math.max(0, to - from));
+    const rect = view?.rect;
+    const minH = view?.pxPerUnit ? (view.minTextPx ?? 0.6) / view.pxPerUnit : 0;
+    for (let i = from; i < to; i++) {
+      const s = i * 8;
+      if (minH && Math.hypot(F[s + 2]!, F[s + 3]!) < minH) continue;
+      if (rect && (F[s + 4]! < rect[0] || F[s + 4]! > rect[2] || F[s + 5]! < rect[1] || F[s + 5]! > rect[3])) continue;
+      keep[i - from] = 1;
+    }
+    // 전체 글리프 번호 → 조각 글리프 번호(-1 안 씀)
+    const local = new Int32Array(this.glyphDefs.length).fill(-1);
+    const used: number[] = [];
+    for (let i = from; i < to; i++) {
+      if (!keep[i - from]) continue;
+      const g = G[i]!;
+      if (local[g]! < 0) {
+        local[g] = used.length;
+        used.push(g);
+      }
+    }
+    let nFill = 0;
+    let nStroke = 0;
+    for (const g of used) {
+      const d = this.glyphDefs[g]!;
+      if (d.kind === 0) nFill += d.data.length;
+      else nStroke += d.data.length;
+    }
+    const fillVerts = new Float32Array(nFill);
+    const strokeSegs = new Float32Array(nStroke);
+    const glyphs: GlyphSet['glyphs'] = [];
+    let fo = 0;
+    let so = 0;
+    for (const g of used) {
+      const d = this.glyphDefs[g]!;
+      if (d.kind === 0) {
+        fillVerts.set(d.data, fo);
+        glyphs.push({ kind: 0, first: fo / 2, count: d.data.length / 2 });
+        fo += d.data.length;
+      } else {
+        strokeSegs.set(d.data, so);
+        glyphs.push({ kind: 1, first: so / 4, count: d.data.length / 4 });
+        so += d.data.length;
+      }
+    }
+    // (투명, 글리프) 순서로 셈 정렬
+    const nG = used.length;
+    const cnt = new Int32Array(nG * 2);
+    for (let i = from; i < to; i++) if (keep[i - from]) cnt[local[G[i]!]! * 2 + (T[i] ? 1 : 0)]!++;
+    const pos = new Int32Array(nG * 2);
+    const runs: GlyphSet['runs'] = [];
+    let k = 0;
+    for (const t of [0, 1])
+      for (let g = 0; g < nG; g++) {
+        const n = cnt[g * 2 + t]!;
+        if (!n) continue;
+        pos[g * 2 + t] = k;
+        runs.push({ glyph: g, start: k, count: n, transparent: t === 1 });
+        k += n;
+      }
+    const buf = new ArrayBuffer(k * GLYPH_STRIDE * 4);
+    const f = new Float32Array(buf);
+    for (let i = from; i < to; i++) {
+      if (!keep[i - from]) continue;
+      const slot = local[G[i]!]! * 2 + (T[i] ? 1 : 0);
+      const p = pos[slot]!;
+      pos[slot] = p + 1;
+      const o = p * GLYPH_STRIDE;
+      const s = i * 8;
+      f[o] = F[s]!;
+      f[o + 1] = F[s + 1]!;
+      f[o + 2] = F[s + 2]!;
+      f[o + 3] = F[s + 3]!;
+      const e = F[s + 4]!;
+      const ff = F[s + 5]!;
+      const eh = Math.fround(e);
+      const fh = Math.fround(ff);
+      f[o + 4] = eh;
+      f[o + 5] = e - eh;
+      f[o + 6] = fh;
+      f[o + 7] = ff - fh;
+      f[o + 8] = F[s + 6]!;
+      f[o + 9] = F[s + 7]!;
+    }
+    return { fillVerts, strokeSegs, glyphs, instances: buf, runs, instanceCount: k };
   }
 
   /** finishGlyphs가 만든 상자별 글리프 인스턴스 번호 */

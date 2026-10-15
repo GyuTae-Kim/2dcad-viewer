@@ -886,6 +886,11 @@ table.grid tr.clickable {
   background: rgba(20, 24, 30, 0.55);
   z-index: 8;
 }
+.busy.see-through {
+  align-items: flex-end;
+  padding-bottom: 56px;
+  background: transparent;
+}
 .busy-box {
   width: 300px;
   padding: 16px;

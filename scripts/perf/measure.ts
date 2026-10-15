@@ -2,10 +2,11 @@
  * 큰 도면 단계별 측정(개발 전용). 워커가 하는 일(읽기 → 글꼴 → 장면 만들기 → 메인으로 보내기)을 Node에서 따라 한다.
  *
  * 사용법(단계마다 깨끗한 최대 메모리를 보려면 파일마다 새 프로세스로):
- *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--no-old] [--each] [--hash] [--save dxf|dwg]
+ *   NODE_OPTIONS="--expose-gc --max-old-space-size=8192" npx vite-node scripts/perf/measure.ts <도면> [--no-scene] [--no-clone] [--no-old] [--partial] [--each] [--hash] [--save dxf|dwg]
  *
  * 출력: 한 줄 JSON
  * - readMs·sceneMs·cloneSceneMs: 단계 시간
+ * - partials: --partial이면 점진 빌드 조각 수·첫 조각까지 ms·조각 바이트(MB, 1280×800 첫 화면에서 보이지 않을 것을 뺀 양)
  * - drawsFullBefore·drawsFullAfter: 전체 보기 선·채우기 그리기 호출 수(묶음마다 → 묶음 무리)
  * - cloneDocCpu: 예전 방식(문서 통째 구조화 복제, --no-old면 생략), docSendCpu·docRecvCpu: 지금 방식(껍데기 + codec 묶음)의 워커 쪽·메인 쪽, docRecvWorstMs: 메인이 메시지 하나에 멈추는 가장 긴 시간
  * - heapAfterRead·heapAfterScene: GC 뒤 남은 JS 힙(MB) — 문서·장면이 실제로 차지하는 양
@@ -232,7 +233,29 @@ async function main(): Promise<void> {
     c = cpuMs();
     g = gcMark();
     // 워커처럼 상자를 형식 배열로 만든다(있으면). 지문·전송 흉내는 아래에서 푼다
-    const s = buildSpace(doc, '*Model_Space', { text, packBoxes: true } as Parameters<typeof buildSpace>[2]);
+    // --partial: 워커처럼 점진 빌드 조각을 만든다(1280×800 화면의 첫 화면 기준, 조각 수·첫 조각까지 시간·조각 바이트)
+    const parts = { n: 0, firstMs: 0, MB: 0 };
+    const tb = performance.now();
+    let partialView: { origin: [number, number]; rect?: [number, number, number, number]; pxPerUnit?: number } | undefined;
+    if (argv.includes('--partial')) {
+      const { planPreview } = await import('../../src/render/preview');
+      const plan = planPreview(doc, '*Model_Space', 1280 / 800);
+      partialView = { origin: [0, 0] };
+      if (plan) {
+        const [x0, y0, x1, y1] = plan.visible;
+        const w = x1 - x0;
+        const h = y1 - y0;
+        partialView = { origin: [(x0 + x1) / 2, (y0 + y1) / 2], rect: [x0 - w / 2, y0 - h / 2, x1 + w / 2, y1 + h / 2], pxPerUnit: 1280 / w };
+      }
+    }
+    const onPartial = partialView
+      ? (p: { list: DisplayList }) => {
+          if (!parts.n++) parts.firstMs = Math.round(performance.now() - tb);
+          parts.MB += sceneBytes(p.list) / MB;
+        }
+      : undefined;
+    const s = buildSpace(doc, '*Model_Space', { text, packBoxes: true, onPartial, partialView } as Parameters<typeof buildSpace>[2]);
+    if (onPartial) out.partials = { ...parts, MB: Math.round(parts.MB) };
     out.sceneMs = Math.round(performance.now() - t);
     out.sceneCpu = Math.round(cpuMs() - c);
     // GC 기록은 비동기로 오므로 한 번 쉬었다가 센다

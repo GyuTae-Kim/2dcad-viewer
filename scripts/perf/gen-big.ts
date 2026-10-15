@@ -2,13 +2,14 @@
  * 성능 측정용 큰 합성 도면 생성기(개발 전용).
  *
  * 사용법:
- *   npx vite-node scripts/perf/gen-big.ts <객체 수> <출력.dxf> [--dwg 출력.dwg] [--layers 300]
+ *   npx vite-node scripts/perf/gen-big.ts <객체 수> <출력.dxf> [--dwg 출력.dwg] [--layers 300] [--zoom 10]
  *
  * - ASCII DXF R2000(AC1015)을 조금씩 써 내려가므로 수백만 객체도 메모리를 적게 쓴다.
  * - 객체: 선·경량 폴리선·2D 폴리선(VERTEX)·원·호·문자·여러 줄 문자·해치(SOLID·ANSI31)·블록 참조(속성 포함)를 섞는다.
  * - 도면층은 기본 300개, 블록 정의 20개(그중 5개는 속성 정의 2개).
  * - --dwg를 주면 이 앱의 DXF 리더로 읽어 DWG 라이터(AC1032)로 같은 내용의 DWG를 쓴다.
  * - 같은 객체 수면 언제나 같은 파일이 나온다(고정 씨앗 난수).
+ * - --zoom N: 저장된 *Active 뷰를 가운데 1/N 높이로(점진 빌드가 첫 화면 객체를 먼저 그리는지 볼 때).
  * 산출물은 .runtime/perf/ 아래에 둔다(저장소에 넣지 않는다).
  */
 import { closeSync, openSync, writeSync, readFileSync, writeFileSync, statSync } from 'node:fs';
@@ -18,22 +19,26 @@ interface Args {
   out: string;
   dwg?: string;
   layers: number;
+  /** *Active 뷰를 도면의 1/zoom 높이로(가운데) — 점진 빌드의 "보이는 범위 먼저"를 볼 때 */
+  zoom?: number;
 }
 
 function parseArgs(argv: string[]): Args {
   const pos: string[] = [];
   let dwg: string | undefined;
   let layers = 300;
+  let zoom: number | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--dwg') dwg = argv[++i];
     else if (a === '--layers') layers = Number(argv[++i]);
+    else if (a === '--zoom') zoom = Number(argv[++i]);
     else pos.push(a);
   }
   const count = Number(pos[0]);
   const out = pos[1];
-  if (!Number.isFinite(count) || count <= 0 || !out) throw new Error('사용법: gen-big.ts <객체 수> <출력.dxf> [--dwg 출력.dwg] [--layers 300]');
-  return { count, out, dwg, layers };
+  if (!Number.isFinite(count) || count <= 0 || !out) throw new Error('사용법: gen-big.ts <객체 수> <출력.dxf> [--dwg 출력.dwg] [--layers 300] [--zoom 10]');
+  return { count, out, dwg, layers, zoom };
 }
 
 /** 고정 씨앗 난수(mulberry32) */
@@ -82,7 +87,7 @@ const BLOCKS = 20;
 const ATTR_BLOCKS = 5;
 
 /** 합성 도면을 ASCII DXF 문자열 조각으로 write에 넘긴다(시험은 메모리로, 명령은 파일로 받는다). */
-export function generate(args: { count: number; layers?: number }, write: (s: string) => void): { bytes: number; counts: Record<string, number> } {
+export function generate(args: { count: number; layers?: number; zoom?: number }, write: (s: string) => void): { bytes: number; counts: Record<string, number> } {
   const count = args.count;
   const layers = args.layers ?? 300;
   const o = new Out(write);
@@ -180,7 +185,7 @@ export function generate(args: { count: number; layers?: number }, write: (s: st
     o.tag(21, '1.0');
     o.tag(12, f(side / 2));
     o.tag(22, f(side / 2));
-    o.tag(40, f(side));
+    o.tag(40, f(args.zoom && args.zoom > 0 ? side / args.zoom : side));
     o.tag(41, '1.6');
   });
   table('LTYPE', T.LTYPE, 4, () => {

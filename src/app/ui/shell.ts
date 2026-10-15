@@ -1459,11 +1459,17 @@ export class Shell implements UiHooks {
   setBusy(text: string | null, fraction = 0): void {
     if (!text) {
       this.busy.hidden = true;
+      this.busy.classList.remove('see-through');
       return;
     }
     this.busy.hidden = false;
     this.busyText.textContent = text;
     this.busyBar.style.width = `${Math.round(Math.max(0.03, Math.min(1, fraction)) * 100)}%`;
+  }
+
+  /** 진행 상자 뒤로 그림이 보이게(도면을 여는 동안의 미리 보기). 화면은 여전히 덮어 조작은 막는다 */
+  setBusySeeThrough(on: boolean): void {
+    this.busy.classList.toggle('see-through', on);
   }
 
   // -------------------------------------------------------------------------

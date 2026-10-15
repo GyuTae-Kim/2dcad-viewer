@@ -4,10 +4,12 @@ import type { DisplayList, PackedBoxes } from '../render/displaylist';
 import type { LayerState, StyleSpec } from '../render/styles';
 import type { EditOp } from '../edit/session';
 import type { DocPart } from './doctransfer';
+import type { PartialScene } from '../render/build';
 
 export type ToWorker =
   | { type: 'init'; fontBase: string }
-  | { type: 'open'; id: number; name: string; data: ArrayBuffer }
+  /** view: 그림 영역 크기(CSS 픽셀) — 점진 빌드의 첫 화면을 정한다 */
+  | { type: 'open'; id: number; name: string; data: ArrayBuffer; view?: { width: number; height: number } }
   /** ltFactor: 선종류 배율(PSLTSCALE), annoScale·annoAllVisible: 주석 축척 표현(배치 뷰포트의 모형 장면) */
   | { type: 'build'; id: number; docId: number; space: string; ltFactor?: number; annoScale?: string | null; annoAllVisible?: boolean }
   /** 메인에서 적용한 편집을 워커 문서에도 적용한다(응답 없음) */
@@ -24,6 +26,11 @@ export type ToWorker =
   | { type: 'save'; id: number; docId: number; format: SaveFormat; version: string; binary?: boolean };
 
 export type SaveFormat = 'dxf' | 'dwg';
+
+export interface PreviewView {
+  rect: [number, number, number, number];
+  margin: number;
+}
 
 export interface SceneMessage {
   list: DisplayList;
@@ -44,5 +51,7 @@ export type FromWorker =
   | { type: 'document'; id: number; docId: number; doc: CadDocument; readMs: number; streamed: [string, number][] }
   | { type: 'docpart'; id: number; part: DocPart }
   | { type: 'scene'; id: number; docId: number; space: string; scene: SceneMessage }
+  /** 점진 빌드의 미리 보기 조각(모형 공간). view: 첫 화면(맞춰 보일 사각형과 여백), 대표점이 없으면 null */
+  | { type: 'partial'; id: number; part: PartialScene; view: PreviewView | null }
   | { type: 'saved'; id: number; data: ArrayBuffer; warnings: { code: string; message: string; count?: number }[]; ms: number }
   | { type: 'error'; id: number; code: string; message: string };

@@ -1,6 +1,7 @@
 /** 엔진 워커 클라이언트 */
 import type { CadDocument } from '../core/model';
-import type { FromWorker, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
+import type { FromWorker, PreviewView, SaveFormat, SceneMessage, ToWorker } from '../worker/protocol';
+import type { PartialScene } from '../render/build';
 import type { EditOp } from '../edit/session';
 import { unpackBoxes } from '../render/displaylist';
 import { DocAssembler } from '../worker/doctransfer';
@@ -31,6 +32,8 @@ type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
   onProgress?: (stage: string, f: number) => void;
+  /** 점진 빌드의 미리 보기 조각 */
+  onPartial?: (part: PartialScene, view: PreviewView | null) => void;
   /** 열기·받기: 문서(껍데기면 assembler가 묶음을 붙인다)와 장면이 모두 오면 끝난다 */
   doc?: { docId: number; doc: CadDocument; readMs: number };
   assembler?: DocAssembler;
@@ -60,6 +63,9 @@ export class EngineClient {
     switch (m.type) {
       case 'progress':
         p.onProgress?.(m.stage, m.fraction);
+        break;
+      case 'partial':
+        p.onPartial?.(m.part, m.view);
         break;
       case 'document':
         p.doc = { docId: m.docId, doc: m.doc, readMs: m.readMs };
@@ -109,11 +115,15 @@ export class EngineClient {
     p.resolve({ ...p.doc, model: p.scene } satisfies OpenResult);
   }
 
-  open(name: string, data: ArrayBuffer, onProgress?: (stage: string, f: number) => void): Promise<OpenResult> {
+  /**
+   * 파일을 읽어 문서와 모형 장면을 받는다. onPartial: 장면을 만드는 동안 오는 미리 보기 조각(점진 빌드),
+   * view: 그림 영역 크기(첫 화면을 정한다)
+   */
+  open(name: string, data: ArrayBuffer, onProgress?: (stage: string, f: number) => void, onPartial?: (part: PartialScene, view: PreviewView | null) => void, view?: { width: number; height: number }): Promise<OpenResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress, wantsDoc: true });
-      this.post({ type: 'open', id, name, data }, [data]);
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress, onPartial, wantsDoc: true });
+      this.post({ type: 'open', id, name, data, view }, [data]);
     });
   }
 
