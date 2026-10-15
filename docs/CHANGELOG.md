@@ -3,6 +3,53 @@
 OpenCAD 2D 뷰어를 만들어 온 과정을 단계별로 정리했습니다. 커밋 하나하나는 `git log`에, 남은 일은 [ROADMAP.md](ROADMAP.md)에 있습니다.
 모든 기능은 브라우저 안에서만 동작하며, 연 파일은 사용자 컴퓨터 밖으로 나가지 않습니다.
 
+## 2026-10-15 (4): 도면층 상태·Express Tools·스크립트
+
+여섯 갈래로 나눠 개발하고 합쳤습니다. 이 단계의 커밋은 `d9d15fe`부터입니다. 전체 시험 2750개가 통과한 상태로 배포했습니다.
+
+### 도면층
+- 도면층 상태 관리자(LAYERSTATE, Shift+Ctrl+L)와 명령행(-LAYERSTATE, -LAYER의 상태(A))
+  - AutoCAD와 같은 자리(LAYER 표 확장 사전의 `ACAD_LAYERSTATES`)에 같은 꼴로 DXF R2000 이상·DWG에 읽고 씁니다.
+  - .las 파일과 다른 도면에서 가져오고, .las로 내보냅니다. 복원할 특성을 고를 수 있습니다.
+  - 리본 도면층 패널에 상태 목록을 두어 고르면 바로 복원합니다.
+- 도면층 이전(LAYERP·LAYERPMODE): 도면층 설정 변경을 한 단계씩 되돌립니다.
+- ByLayer로 설정(SETBYLAYER·SETBYLAYERMODE): 블록 정의 안까지 바꿀 수 있습니다.
+
+### Express Tools
+- 리본에 Express Tools 탭을 새로 두었습니다.
+- 문자: TCASE(서식 코드 보존), TCOUNT, TORIENT, TEXTFIT, TEXTMASK·TEXTUNMASK, TCIRCLE, TXTEXP
+- 선택·조회: SSX, GETSEL, XLIST, XDLIST, NCOPY, GATTE
+- 그리기·수정: BREAKLINE, MPEDIT, EXOFFSET, FLATTEN, CDORDER, MKLTYPE(.lin 내려받기), SHOWURLS, REDIR
+
+### 스크립트
+- SCRIPT·RSCRIPT·RESUME·DELAY: .scr 파일을 고르거나 끌어 놓으면 명령행에 차례로 넣습니다. 오류나 Esc에서 줄 번호와 함께 멈추고, 한 번 실행한 것이 명령 취소 한 번입니다.
+- 스크립트에서 쓰는 명령행 버전 명령 14개: -INSERT, -ATTEDIT, -ARRAY, -HATCH, -BOUNDARY, -PURGE, -STYLE, -LINETYPE, -DIMSTYLE, -UNITS, -OVERKILL, -XREF, -IMAGE, -PLOT
+- 페이지 설정 가져오기(PSETUPIN·-PSETUPIN)
+
+### 연관 배열
+- ARRAYRECT·ARRAYPOLAR·ARRAYPATH가 연관(AS) = 예(ARRAYASSOCIATIVITY 기본값)일 때 연관 배열 하나를 만듭니다.
+- ARRAYEDIT(소스·대체·기준점·행·열·레벨·항목·방법·정렬·재설정)와 ARRAYCLOSE, 배열 그립, 특성 팔레트의 배열 항목, Ctrl+클릭으로 항목 지우기.
+- 경로 곡선을 고치면 경로 배열이 따라갑니다.
+- AutoCAD가 만든 DXF의 연관 배열(직사각형·원형·경로)을 읽어 고치고, 그 형식 그대로 다시 씁니다. 새로 만든 배열은 이 앱 기록으로 저장해 AutoCAD에서는 블록으로 보입니다.
+
+### 화면·뷰포트
+- 외부 참조 비교(XCOMPARE): 다시 불러온 외부 참조의 이전·지금 버전 차이를 참조 자리에 색과 구름형 리비전으로 보입니다. 외부 참조 창 메뉴에서도 시작합니다.
+- 뷰포트 최대화(VPMAX·VPMIN): 배치 뷰포트를 화면 가득 키워 고칩니다. 최대화 중에는 Ctrl+R로 다음 뷰포트로 갑니다. 상태 막대에 단추를 두었습니다.
+- 뷰포트 동기화(VPSYNC), 뷰포트 축척(VPSCALE)
+- 채우기(FILL), 빠른 문자(QTEXT), 끌기 모드(DRAGMODE): 화면·PDF·SVG·플롯이 같은 규칙으로 그립니다.
+- 등각투영 제도(ISODRAFT·ISOPLANE): 등각 격자·스냅·직교·추적과 등각원. F5·Ctrl+E로 평면을 바꾸고, 상태 막대 단추로 켭니다.
+
+### 파일 형식
+- 치수·해치·다중 지시선의 주석 축척 표현을 이 앱의 기록 대신 AutoCAD 축척 레코드로 DXF·DWG(R2000~R2018)에 저장합니다. 예전 기록이 든 파일도 계속 읽습니다.
+- DWG의 문자·속성·블록 참조 축척 레코드를 읽고 씁니다. 표본 레코드 176개를 비트 단위로 왕복해 확인했습니다.
+
+### 이 단계의 한계
+- 치수·해치 축척 레코드는 표본에 실물이 없어 기능 명세의 배치를 따랐습니다. 이 앱이 쓴 파일을 AutoCAD로 열어 본 확인은 아직 없습니다.
+- 도면층 필터는 표본에 자료가 없어 만들지 않았습니다. .las의 일부 코드 자리는 추측입니다.
+- 스크립트는 AutoLISP을 실행하지 않고, 스크립트 안에서 파일 선택 창을 열 수 없어 이번 세션에서 연 파일만 이름으로 찾습니다.
+- XCOMPARE는 모형 공간 최상위 참조만 비교하고, 이전 버전은 페이지 메모리에만 남습니다.
+- 연관 배열은 표본에 실물이 없어 공개된 AutoCAD DXF 도면으로 형식을 확인했습니다. DWG 안의 AutoCAD 배열은 항목 배치로 짐작해 고칩니다.
+
 ## 2026-10-15 (3): 주석·구속·비교와 명령 보강
 
 AutoCAD의 큰 기능 묶음을 여러 갈래로 나눠 개발하고 합쳤습니다. 이 단계의 커밋은 `cce9a5a`부터 `7778d8d`까지입니다.
