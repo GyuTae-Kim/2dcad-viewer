@@ -4,6 +4,7 @@ import { MODEL_SPACE, entityDefaults } from '../../src/core/model';
 import { createNewDocument } from '../../src/core/newdoc';
 import { type EditOp, EditSession } from '../../src/edit/session';
 import { readStore, storeOps } from '../../src/edit/constraint/store';
+import { acadCommitOps } from '../../src/edit/assocnet/writeback';
 import type { ConstraintStore } from '../../src/edit/constraint/types';
 
 export function setup(): { doc: CadDocument; s: EditSession; h: () => string } {
@@ -46,12 +47,12 @@ export function put(doc: CadDocument, ...ents: Entity[]): void {
   }
 }
 
-/** 풀이 결과(바뀐 객체·새 기록)를 한 트랜잭션으로 적용한다 */
+/** 풀이 결과(바뀐 객체·새 기록)를 한 트랜잭션으로 적용한다(앱의 확정 고리처럼 AutoCAD 구속 그룹 갱신을 덧붙인다) */
 export function apply(doc: CadDocument, s: EditSession, out: { entities: Map<string, Entity>; store: ConstraintStore | null }, label = 'TEST'): void {
   const ops: EditOp[] = [];
   if (out.store) ops.push(...storeOps(doc, out.store, () => s.newHandle())!);
   for (const [h, e] of out.entities) ops.push({ kind: 'modify', block: s.ownerOf(h)!, before: doc.entityIndex.get(h)!, after: e });
-  s.commit({ label, ops });
+  s.commit({ label, ops: acadCommitOps(doc, ops) ?? ops });
 }
 
 export const L = (doc: CadDocument, h: string) => doc.entityIndex.get(h) as LineEntity;

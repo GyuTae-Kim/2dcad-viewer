@@ -5,7 +5,7 @@ import { readDwg, writeDwg } from '../../src/io/dwg/index';
 import { readDxf } from '../../src/io/dxf/reader';
 import { writeDxf } from '../../src/io/dxf/writer';
 import { prepareDim, prepareGeo } from '../../src/edit/constraint/make';
-import { STORE_KEY, decodeStore, encodeStore, foreignConstraintInfo, foreignConstraintNotice, readStore, storeObject } from '../../src/edit/constraint/store';
+import { STORE_KEY, decodeStore, encodeStore, foreignConstraintInfo, foreignConstraintNotice, readAppStore, readStore, storeObject } from '../../src/edit/constraint/store';
 import { addConstraints, followEdit } from '../../src/edit/constraint/system';
 import type { ConstraintStore, DimConstraint } from '../../src/edit/constraint/types';
 import { apply, arc, circle, line, lwpoly, put, setup, store } from './helpers';
@@ -72,7 +72,11 @@ describe('구속 기록 저장', () => {
     const { doc } = sample();
     const s = readStore(doc);
     expect(s.constraints.length).toBe(7);
-    sameStore(s, decodeStore(encodeStore(s)));
+    // 선·원의 구속은 AutoCAD 구속 그룹으로 쓰고, 폴리선 구속과 다른 매개변수를 쓰는 식(d1/10)은 이 앱 기록에 남는다
+    expect(s.constraints.filter((c) => c.acad).map((c) => c.type).sort()).toEqual(['COINCIDENT', 'DIST', 'HORIZONTAL', 'PERPENDICULAR']);
+    const app = readAppStore(doc);
+    expect(app.constraints.map((c) => c.type).sort()).toEqual(['FIX', 'HORIZONTAL', 'RADIUS']);
+    sameStore(app, decodeStore(encodeStore(app)));
     const x = storeObject(doc)!;
     expect(x.type).toBe('XRECORD');
     expect(x.data[0]).toEqual({ code: 1, value: STORE_KEY });

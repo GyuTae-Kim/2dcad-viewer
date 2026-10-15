@@ -4,8 +4,10 @@
  *
  * AutoCAD가 만든 구속(연관 망 ACAD_ASSOCNETWORK의 2D 구속 그룹)은 src/edit/assocnet/constraints.ts가 읽어 readStore에
  * 함께 넣는다(acad 연결이 있는 구속·매개변수). 그 구속은 이 XRECORD에 쓰지 않고, storeOps가 바뀐 것을 원본 그룹·변수에
- * 같은 형식으로 고쳐 쓴다(src/edit/assocnet/writeback.ts). 이 앱이 새로 만든 구속은 이 XRECORD에만 있어 AutoCAD에서는
- * 보이지 않는다(형상만 보인다).
+ * 같은 형식으로 고쳐 쓴다(src/edit/assocnet/writeback.ts). 이 앱이 새로 만든 구속도 AutoCAD 그룹으로 쓸 수 있는 종류면
+ * storeOps가 그룹에 쓴다(src/edit/assocnet/cwrite.ts — 그 뒤로는 AutoCAD 구속으로 읽힌다). 쓸 수 없는 종류(각도·대칭·
+ * 부드러움, 폴리선·타원·스플라인, 다른 매개변수를 쓰는 식 등)와 이 앱 사용자 매개변수만 이 XRECORD에 남아 AutoCAD에서는
+ * 보이지 않는다.
  *
  * XRECORD 자료(그룹 코드):
  *   1 "OPENCAD_CONSTRAINTS", 70 형식 판, 90 다음 번호
@@ -20,6 +22,7 @@ import { normalizeHandle } from '../../core/model';
 import type { EditOp } from '../session';
 import { type AcadImport, importAcadConstraints } from '../assocnet/constraints';
 import { acadStoreOps } from '../assocnet/writeback';
+import { acadWriteOps } from '../assocnet/cwrite';
 import { type Constraint, type ConstraintStore, DIM_TYPES, type DimType, GEO_TYPES, type GeoRef, type GeoType, emptyStore } from './types';
 
 export const STORE_KEY = 'OPENCAD_CONSTRAINTS';
@@ -268,8 +271,23 @@ export function storeOps(doc: CadDocument, s: ConstraintStore, newHandle: () => 
   } catch {
     // AutoCAD 그룹을 고치지 못하면 원본은 그대로 둔다(저장하면 원본 그대로)
   }
+  // 이 앱이 새로 만든 구속 중 AutoCAD 그룹으로 쓸 수 있는 것은 그룹에 쓴다(src/edit/assocnet/cwrite.ts)
+  let written = new Map<number, { group: string; node: number }>();
+  try {
+    const w = acadWriteOps(doc, s.constraints, acadOps, newHandle);
+    if (w.written.size) {
+      acadOps = [...acadOps, ...w.ops];
+      written = w.written;
+    }
+  } catch {
+    // 쓰지 못하면 이 앱 기록에 남긴다
+  }
   const acadHidden = s.constraints.filter((c) => c.acad && c.kind === 'dim' && c.hidden).map((c) => `${normalizeHandle(c.acad!.group)}:${c.acad!.node}`);
-  const own: ConstraintStore = { ...s, constraints: s.constraints.filter((c) => !c.acad), userParams: s.userParams.filter((u) => !u.acad) };
+  for (const c of s.constraints) {
+    const at = !c.acad && c.kind === 'dim' && c.hidden ? written.get(c.id) : undefined;
+    if (at) acadHidden.push(`${at.group}:${at.node}`);
+  }
+  const own: ConstraintStore = { ...s, constraints: s.constraints.filter((c) => !c.acad && !written.has(c.id)), userParams: s.userParams.filter((u) => !u.acad) };
   if (acadHidden.length) own.acadHidden = acadHidden;
   else delete own.acadHidden;
   const data = encodeStore(own);
@@ -281,16 +299,25 @@ export function storeOps(doc: CadDocument, s: ConstraintStore, newHandle: () => 
     return [{ kind: 'object', key: old.handle, before: old, after }, ...acadOps];
   }
   if (!own.constraints.length && !own.userParams.length && !own.hiddenBars.length && !own.acadHidden?.length) return acadOps;
-  const root = rootDictionary(doc);
-  if (!root) return acadOps.length ? acadOps : null;
+  const root0 = rootDictionary(doc);
+  if (!root0) return acadOps.length ? acadOps : null;
   const h = newHandle();
-  const x: XRecordObject = { type: 'XRECORD', handle: h, owner: root.handle, reactors: [root.handle], cloning: 1, data };
+  const x: XRecordObject = { type: 'XRECORD', handle: h, owner: root0.handle, reactors: [root0.handle], cloning: 1, data };
   cache.set(x, structuredClone(own));
-  const entries = new Map(root.entries);
+  // 루트 사전: AutoCAD 망을 새로 만들며 이미 고친 것이면 그 작업에 항목을 더한다
+  const rootOp = acadOps.find((o): o is Extract<EditOp, { kind: 'object' }> => o.kind === 'object' && normalizeHandle(o.key) === normalizeHandle(root0.handle) && !!o.after);
+  if (rootOp) {
+    const r = rootOp.after as DictionaryObject;
+    const entries = new Map(r.entries);
+    entries.set(STORE_KEY, h);
+    rootOp.after = { ...r, entries };
+    return [{ kind: 'object', key: h, before: null, after: x }, ...acadOps];
+  }
+  const entries = new Map(root0.entries);
   entries.set(STORE_KEY, h);
   return [
     { kind: 'object', key: h, before: null, after: x },
-    { kind: 'object', key: root.handle, before: root, after: { ...root, entries } },
+    { kind: 'object', key: root0.handle, before: root0, after: { ...root0, entries } },
     ...acadOps,
   ];
 }
@@ -356,7 +383,7 @@ export function foreignConstraintNotice(doc: CadDocument): string | null {
     const parts: string[] = [];
     if (i.imported) parts.push(`구속 ${i.imported}개`);
     if (i.importedParams) parts.push(`사용자 매개변수 ${i.importedParams}개`);
-    out.push(`AutoCAD가 만든 ${parts.join('와 ')}를 읽었습니다. 구속 막대·PARAMETERS에서 고칠 수 있고, 저장하면 AutoCAD 형식 그대로 갱신됩니다.`);
+    out.push(`AutoCAD 구속 그룹의 ${parts.join('와 ')}를 읽었습니다. 구속 막대·PARAMETERS에서 고칠 수 있고, 저장하면 AutoCAD 형식 그대로 갱신됩니다.`);
   }
   if (i.skipped) out.push(`옮기지 못한 구속 ${i.skipped}개는 원본에 남아 있지만 이 앱에서는 보이지 않습니다.`);
   if (i.unreadGroups) out.push(`구속 그룹 ${i.unreadGroups}개는 읽지 못해(지원하지 않는 구속 종류) 원본 그대로 저장됩니다.`);

@@ -18,8 +18,11 @@ export const num = (v: string | number | undefined, d = 0): number => {
   return Number.isFinite(n) ? n : d;
 };
 export const int = (v: string | number | undefined, d = 0): number => Math.trunc(num(v, d));
-/** 글 값(앞뒤 빈칸은 DXF 줄 맞춤이 아니면 그대로 둔다 — 이름·식은 빈칸이 뜻을 가질 수 있다) */
-export const str = (v: string | number | undefined): string => (v === undefined ? '' : String(v));
+/**
+ * 글 값(앞뒤 빈칸은 DXF 줄 맞춤이 아니면 그대로 둔다 — 이름·식은 빈칸이 뜻을 가질 수 있다).
+ * R2007 이전 DXF·DWG가 코드 페이지 밖 문자를 적는 \U+XXXX는 문자로 푼다(쓸 때는 파일 쓰기가 다시 바꾼다).
+ */
+export const str = (v: string | number | undefined): string => (v === undefined ? '' : String(v).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, x: string) => String.fromCharCode(parseInt(x, 16))));
 /** 핸들(0·빈 값은 '') */
 export const hnd = (v: string | number | undefined): string => {
   const s = str(v).trim();

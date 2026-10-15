@@ -23,11 +23,12 @@
  *  - ASSOCDIMDEPENDENCYBODY: 100 AcDbAssocDependencyBody 90 1, 100 AcDbImpAssocDimDependencyBodyBase 90 1, 1 치수 글
  *    ("d1=10" 또는 "10"), 100 AcDbAssocDimDependencyBody 90 1.
  *  - AcDbAssocActionParam: 90 1, 90 0, 1 이름. AcDbAssocSingleDependencyActionParam: 90 0, 330 종속.
- *    AcDbAssocVertexActionParam: 90 0, 10 점. AcDbAssocEdgeActionParam: 90 0, 330, 290 곡선 있음 + 곡선 캐시(90 종류 …).
+ *    AcDbAssocVertexActionParam: 90 0, 10 점. AcDbAssocEdgeActionParam: 90 0, 330, 290 곡선 있음 + 곡선 캐시(90 종류 …,
+ *    curve.ts — 23 선분·11 원호·42 NURBS·47 복합, 공간 좌표).
  *  - AcDbAssocActionBody: 90 판(1 | 2). 판 1의 배열 몸체는 100 AcDbAssocParamBasedActionBody 90 0 + 매개변수 목록(동작 판 2와
  *    같은 꼴)이 따로 온다. AcDbAssocArrayActionBody: 90 1, 1 매개변수 클래스, 90 0, 90 항목 수, 1 AcDbAssocArrayItem,
  *    항목마다 100 AcDbAssocArrayItem 90 0, 90 i, 90 j, 90 k, 90 플래그(8: 11/21/31 이동, 12: 40×16 행렬), 330 항목 참조,
- *    끝에 40×16 배열 참조 행렬. 표본(391 항목)에 다른 플래그(지운 항목 등)는 없었다.
+ *    끝에 40×16 배열 참조 행렬. 표본(경로 배열 DXF 215개의 항목 8473개 포함)에 다른 플래그(지운 항목 등)는 없었다.
  */
 import type { RawTag, Vec3 } from '../../core/model';
 import { TagReader, TagWriter, fail, int, num, str } from './tags';
