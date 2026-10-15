@@ -175,14 +175,14 @@ describe('-LAYER 명령(스크립트 흐름)', () => {
     });
     registerDashLayerCommand(h.app);
     const e = h.add({ ...line(0, 0, 1, 1), layer: 'L1' });
-    await h.run('-LAYER', ['LO', '', { sel: [e.handle] }, 'L', 'NOPE', 'dashed', 'L1', 'N', 'a<b', 'C', '3', 'Q*', 'MAT', '', 'A', 'BOGUS', '']);
+    await h.run('-LAYER', ['LO', '', { sel: [e.handle] }, 'L', 'NOPE', 'dashed', 'L1', 'N', 'a<b', 'C', '3', 'Q*', 'MAT', '', 'A', 'BOGUS', '', '']);
     expect(layer(h, 'L1')?.locked).toBe(true);
     expect(layer(h, 'L1')?.linetype).toBe('DASHED');
     expect(h.printed.some((t) => t.includes('선종류 NOPE을(를) 찾을 수 없습니다'))).toBe(true);
     expect(h.printed).toContain('"a<b"은(는) 유효하지 않은 도면층 이름임.');
     expect(h.printed).toContain('일치하는 도면층 이름을 찾지 못함: Q*');
     expect(h.printed.some((t) => t.includes('재료는 3D'))).toBe(true);
-    expect(h.printed.some((t) => t.includes('도면층 상태(LAYERSTATE)'))).toBe(true);
+    expect(h.prompts).toContain('옵션입력 [?/저장(S)/복원(R)/편집(E)/이름(N)/삭제(D)/불러오기(I)/내보내기(EX)]:');
     expect(h.printed).toContain('옵션 키워드가 잘못되었습니다.');
   });
 });

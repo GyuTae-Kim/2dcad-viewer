@@ -1562,6 +1562,11 @@ export class App {
         void this.run('SAVEAS');
         return;
       }
+      if (k === 'l' && !typing) {
+        ev.preventDefault();
+        void this.run('LAYERSTATE');
+        return;
+      }
     }
     if (mod && !ev.shiftKey && !ev.altKey) {
       const k = ev.key.toLowerCase();

@@ -9,6 +9,7 @@ import { aciToRgb, rgbToCss } from '../../core/color';
 import { colorText } from '../inquiry';
 import { type Field, GENERAL_FIELDS, applyField, commonValue } from '../propedit';
 import { currentLayer, setCurrentLayer } from '../layers';
+import { layerStateNames, newLayerState, restoreLayerStateNamed } from '../layerstate';
 import { pickColor } from './colorpick';
 import { dialog, formatBytes, h, iconSpan, showMenu, toast } from './dom';
 import { icon } from './icons';
@@ -225,6 +226,11 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'LAYWALK', label: '도면층 탐색', icon: 'eye', tip: '고른 도면층만 잠시 보기 (LAYWALK)' },
             { cmd: 'COPYTOLAYER', label: '도면층에 복사', icon: 'copy', tip: '객체를 다른 도면층에 복사 (COPYTOLAYER)' },
+            { cmd: 'LAYERP', label: '이전', icon: 'undo', tip: '도면층 설정을 한 단계 전으로 (LAYERP)' },
+          ],
+          [
+            { cmd: 'LAYERSTATE', label: '도면층 상태', icon: 'layerAll', tip: '도면층 상태 저장·복원·가져오기 (LAS, Shift+Ctrl+L)' },
+            { cmd: 'SETBYLAYER', label: 'ByLayer로', icon: 'matchprop', tip: '고른 객체의 색·선종류·선가중치·투명도를 ByLayer로 (SETBYLAYER)' },
           ],
         ],
       },
@@ -870,7 +876,10 @@ export class Shell implements UiHooks {
       els[i]!.replaceWith(folded);
       // 접힌 패널의 고르기 상자는 펼칠 때 다시 만든다
       const cb = this.combos as Shell['combos'];
-      if (cb && p.custom === 'layer') delete cb.layer;
+      if (cb && p.custom === 'layer') {
+        delete cb.layer;
+        delete cb.layerState;
+      }
       if (cb && p.custom === 'props') {
         delete cb.color;
         delete cb.linetype;
@@ -923,7 +932,7 @@ export class Shell implements UiHooks {
   }
 
   /** 리본의 고르기 상자들 */
-  combos: { layer?: HTMLSelectElement; color?: HTMLButtonElement; linetype?: HTMLSelectElement; lineweight?: HTMLSelectElement } | null = null;
+  combos: { layer?: HTMLSelectElement; layerState?: HTMLSelectElement; color?: HTMLButtonElement; linetype?: HTMLSelectElement; lineweight?: HTMLSelectElement } | null = null;
 
   private layerCombo(): HTMLElement {
     const sel = h('select', { 'aria-label': '도면층', title: '현재 도면층 (객체를 고르면 그 객체의 도면층)' }) as HTMLSelectElement;
@@ -935,8 +944,20 @@ export class Shell implements UiHooks {
       else setCurrentLayer(app, sel.value);
       this.refreshRibbonState();
     });
-    this.combos = { ...(this.combos ?? {}), layer: sel };
-    return h('div', { class: 'rprop-col' }, h('label', { class: 'rprop' }, iconSpan('layers'), sel));
+    // 도면층 상태: 고르면 복원, 끝의 두 항목은 새 상태·관리자
+    const ls = h('select', { 'aria-label': '도면층 상태', title: '도면층 상태 (고르면 복원)' }) as HTMLSelectElement;
+    ls.addEventListener('change', async () => {
+      const app = this.app;
+      const v = ls.value;
+      ls.value = '';
+      if (!app.active || !v) return;
+      if (v === '\u0001new') await newLayerState(app);
+      else if (v === '\u0001manage') await app.run('LAYERSTATE');
+      else if (restoreLayerStateNamed(app, v)) app.cmd.print(`도면층 상태 "${v}"을(를) 복원했습니다.`);
+      this.refreshRibbonState();
+    });
+    this.combos = { ...(this.combos ?? {}), layer: sel, layerState: ls };
+    return h('div', { class: 'rprop-col' }, h('label', { class: 'rprop' }, iconSpan('layers'), sel), h('label', { class: 'rprop' }, iconSpan('layerAll'), ls));
   }
 
   private propCombos(): HTMLElement {
@@ -1001,7 +1022,12 @@ export class Shell implements UiHooks {
       const m = opts.find((o) => o.value.toUpperCase() === (value ?? '').toUpperCase());
       sel.value = varies ? '' : (m?.value ?? '');
     };
-    for (const el of [c.layer, c.color, c.linetype, c.lineweight]) if (el) el.disabled = !st;
+    for (const el of [c.layer, c.layerState, c.color, c.linetype, c.lineweight]) if (el) el.disabled = !st;
+    if (c.layerState) {
+      const names = st ? layerStateNames(this.app) : [];
+      const opts = [{ value: '', label: names.length ? '도면층 상태 고르기' : '저장된 도면층 상태 없음' }, ...names.map((n) => ({ value: n, label: n })), { value: '\u0001new', label: '새 도면층 상태…' }, { value: '\u0001manage', label: '도면층 상태 관리…' }];
+      fill(c.layerState, opts, '', false);
+    }
     if (!st) {
       if (c.color) c.color.textContent = '';
       return;

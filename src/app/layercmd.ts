@@ -1,7 +1,7 @@
 /**
  * 명령행 도면층 -LAYER(스크립트용): `현재 도면층: "0"` → `옵션 입력 [?/만들기(M)/설정(S)/…/조정(E)]:`을 Enter까지 되풀이한다.
  * 이름 리스트는 쉼표로 나누고 와일드카드(*, ?, #, @, ., [...], ~)를 받는다. 옵션 하나가 명령 취소 한 단계다.
- * 재료(MAT)는 3D 렌더링 특성이라 안내만 하고, 상태(A)는 이 웹 버전에 도면층 상태 기능이 아직 없어 안내만 한다.
+ * 재료(MAT)는 3D 렌더링 특성이라 안내만 하고, 상태(A)는 도면층 상태 명령행(-LAYERSTATE와 같은 옵션)으로 넘긴다.
  * 프롬프트는 AutoCAD 2026 한국어판을 따른다. 값 해석은 src/edit/layercmd.
  */
 import type { CadColor, Layer } from '../core/model';
@@ -26,6 +26,7 @@ import {
 } from '../edit/layercmd';
 import type { App, CommandContext, Keyword } from './app';
 import { currentLayer, renameLayer, setCurrentLayer, validLayerName } from './layers';
+import { runLayerStateOptions } from './layerstate-cmd';
 import { askText, padWide } from './util2-ui';
 
 const OPTION_KEYWORDS: Keyword[] = DASH_LAYER_OPTIONS.map((o) => ({ key: o.key, label: o.label }));
@@ -334,7 +335,7 @@ export function registerDashLayerCommand(app: App): void {
             break;
           }
           case 'A': {
-            ctx.print('도면층 상태(LAYERSTATE)는 아직 이 웹 버전에 없어 상태(A) 옵션을 쓸 수 없습니다.');
+            await runLayerStateOptions(app, ctx);
             break;
           }
           case 'D': {

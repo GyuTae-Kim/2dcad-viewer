@@ -4,7 +4,7 @@
  *
  * 변경 = 작업(op) 목록. 각 작업은 앞뒤 상태를 모두 담아 되돌리기가 그대로 반대 작업이다.
  */
-import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Layout, LayoutObject, Linetype, TextStyle, DimStyle, UcsRecord, ViewRecord, VPortRecord } from '../core/model';
+import type { BlockDef, BlockRecord, CadDocument, CadObject, Entity, HeaderValue, Layer, Layout, LayoutObject, Linetype, TableHead, TextStyle, DimStyle, UcsRecord, ViewRecord, VPortRecord } from '../core/model';
 import { tableKey, normalizeHandle } from '../core/model';
 
 export type EditOp =
@@ -30,7 +30,9 @@ export type EditOp =
   | { kind: 'object'; key: string; before: CadObject | null; after: CadObject | null }
   | { kind: 'header'; name: string; before: HeaderValue | undefined; after: HeaderValue | undefined }
   /** 배치(모형·종이 공간 탭). key = 배치 블록 이름(대문자). 같은 핸들의 LAYOUT 객체도 맞춘다 */
-  | { kind: 'layout'; key: string; before: Layout | null; after: Layout | null };
+  | { kind: 'layout'; key: string; before: Layout | null; after: Layout | null }
+  /** 표 머리(TABLE 제어 객체: 확장 사전 등). key = 표 이름(LAYER …) */
+  | { kind: 'tableHead'; key: string; before: TableHead | null; after: TableHead | null };
 
 export interface Transaction {
   /** 명령 이름(명령 취소 메시지용) */
@@ -184,6 +186,10 @@ export function applyOps(doc: CadDocument, ops: readonly EditOp[], summary?: Cha
       case 'object':
         if (op.after) doc.objects.set(op.key, op.after);
         else doc.objects.delete(op.key);
+        break;
+      case 'tableHead':
+        if (op.after) (doc.tableHeads ??= new Map()).set(op.key, op.after);
+        else doc.tableHeads?.delete(op.key);
         break;
       case 'header':
         if (op.after === undefined) doc.header.delete(op.name);
