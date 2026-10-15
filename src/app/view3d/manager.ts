@@ -270,7 +270,7 @@ export class View3dManager implements Mode3dHost {
     this.panel.show(d);
     this.panel.setOpen(this.panelOpen);
     this.shell.mode3dChanged();
-    document.title = `${d.name} - OpenCAD 3D 보기`;
+    document.title = `${d.name} - OpenCAD 3D 뷰어`;
   }
 
   /** 3D 모드에서 나간다(2D 탭·시작 화면으로) */

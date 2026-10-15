@@ -1486,9 +1486,6 @@ export class Shell implements UiHooks {
     this.root.classList.toggle('mode-3d', on);
     // 제목 막대·창 제목: 3D 문서를 보는 동안은 3D 뷰어
     this.titleKind.textContent = on ? ' 3D 뷰어' : ' 2D 뷰어';
-    const cur = on ? this.mode3d!.tabs().find((t) => t.active) : undefined;
-    if (cur) document.title = `${cur.name} - OpenCAD 3D 뷰어`;
-    else if (this.app.active) document.title = `${this.app.active.name} - OpenCAD 2D 뷰어`;
     if (on) this.start.hidden = true;
     document.querySelector('.ribbon-pop')?.remove();
     this.buildRibbon();
