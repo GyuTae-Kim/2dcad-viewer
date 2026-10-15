@@ -35,6 +35,7 @@ import { clampedKnots } from '../../geom/curves';
 import { CollectSink, kindOf, rawTagValid, rawTagsValid, type TagSink } from './tagwriter';
 import type { WriteContext } from './wcontext';
 import { mtextPlainLines } from './wconvert';
+import { annoDimWriteOverrides } from '../annoscale';
 import { parseDimOverrides } from './tagutil';
 import { acdbTableTags, tableCellsOut } from '../tablecells';
 
@@ -315,7 +316,11 @@ function dimXData(e: DimensionEntity | LeaderEntity, ctx: WriteContext): XData[]
 
 function xdataOf(e: Entity, ctx: WriteContext): XData[] | undefined {
   let x = e.xdata;
-  if ((e.type === 'DIMENSION' || e.type === 'LEADER') && e.overrides) x = dimXData(e, ctx);
+  if (e.type === 'DIMENSION') {
+    // 주석 치수의 DIMSCALE은 AutoCAD 값으로(io/annoscale.ts)
+    const ov = annoDimWriteOverrides(ctx.doc, e);
+    if (ov) x = dimXData({ ...e, overrides: ov }, ctx);
+  } else if (e.type === 'LEADER' && e.overrides) x = dimXData(e, ctx);
   if (e.hyperlink && e.hyperlink.url && !(x ?? []).some((a) => a.app.toUpperCase() === 'PE_URL')) {
     const items: XData['items'] = [{ code: 1000, value: e.hyperlink.url }];
     if (e.hyperlink.description || e.hyperlink.location) {

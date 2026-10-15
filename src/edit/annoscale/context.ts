@@ -11,11 +11,16 @@
  * - MTEXTATTRIBUTE(속성): TEXT의 필드 + 290 여러 줄
  * - BLKREF(블록 참조): 50 회전(도), 10·20·30 삽입점, 41·42·43 축척(예전 빌드의 42·43·44는 읽기만)
  * - MTEXT: 70 부착점, 10 X축 방향, 11 위치, 40 폭, 41 정의 높이, 42·43 문자 범위, 71 열 종류(열이 있으면 72·44·45·73·74)
- * - 치수(ALDIM 등): 10·20 문자 위치, 294 기본 자리, 140 문자 회전(라디안), 2 그 축척의 익명 블록 이름, …
- * - HATCHSCALE: 78 패턴 선 수, 선마다 53·43·44·45·46·79·49…, 40 배율, …
+ * - 치수(ALDIM 등): `100 AcDbDimensionObjectContextData`, 2 그 축척의 익명 블록 이름, 293, 10·20 문자 위치, 294 기본 자리,
+ *   140 문자 회전(라디안), 298·291·70·292·71·280·295(0), 296·297 화살표 뒤집기, 종류 표지 뒤 종류별 점 11(·12·13)
+ * - HATCHSCALE: `100 AcDbHatchObjectContextData`, 78 패턴 선 수, 선마다 53·43·44·45·46·79·49…, 40 배율, 10 패턴 방향,
+ *   90 루프 수, 루프마다 90 종류·290 1
+ * - MLEADER: 다중 지시선 컨텍스트 자료(mlctx.ts)
+ * DWG 비트 배치는 src/io/dwg/ctxcodec.ts.
  * 객체 자체 데이터는 기본 레코드(290 = 1)의 축척 표현이다(TEXT 레코드에는 높이가 없다: 높이 = 용지 높이 × 배율).
  */
-import type { CadDocument, DictionaryObject, Entity, GenericObject, HatchPatternLine, RawTag, Vec2, Vec3 } from '../../core/model';
+import type { CadDocument, DictionaryObject, DimensionEntity, Entity, GenericObject, HatchPatternLine, MLeaderEntity, RawTag, Vec2, Vec3 } from '../../core/model';
+import { mleaderContextFromTags, mleaderContextTags } from './mlctx';
 import type { EditOp } from '../session';
 import { changed, dictOf, entryOf, newDict, pendingObject, setDictEntries, upper } from './scales';
 
@@ -28,6 +33,21 @@ export const CLASS_TEXT = 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS';
 export const CLASS_ATTRIB = 'ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS';
 export const CLASS_BLKREF = 'ACDB_BLKREFOBJECTCONTEXTDATA_CLASS';
 export const CLASS_MTEXT = 'ACDB_MTEXTOBJECTCONTEXTDATA_CLASS';
+export const CLASS_HATCH = 'ACDB_HATCHSCALECONTEXTDATA_CLASS';
+export const CLASS_HATCHVIEW = 'ACDB_HATCHVIEWCONTEXTDATA_CLASS';
+export const CLASS_MLEADER = 'ACDB_MLEADEROBJECTCONTEXTDATA_CLASS';
+/** 해치의 뷰포트별 표현 모음(관리자 사전의 둘째 항목) */
+export const VIEWS_KEY = 'ACDB_ANNOTATIONSCALE_VIEW_COLLECTION';
+
+/** 치수 레코드 클래스 → DXF 종류 표지와 점 코드 */
+export const DIM_CLASSES: Readonly<Record<string, { marker: string; points: number[] }>> = {
+  ACDB_ALDIMOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbAlignedDimensionObjectContextData', points: [11] },
+  ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbAngularDimensionObjectContextData', points: [11] },
+  ACDB_RADIMOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbRadialDimensionObjectContextData', points: [11] },
+  ACDB_DMDIMOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbDiametricDimensionObjectContextData', points: [11, 12] },
+  ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbOrdinateDimensionObjectContextData', points: [11, 12] },
+  ACDB_RADIMLRGOBJECTCONTEXTDATA_CLASS: { marker: 'AcDbRadialDimensionLargeObjectContextData', points: [11, 12, 13] },
+};
 
 /** 컨텍스트 데이터 클래스(DXF 이름) → 종류 */
 export function recordKind(type: string): RecordKind | null {
@@ -50,6 +70,15 @@ export const CLASS_CPP: Readonly<Record<string, string>> = {
   [CLASS_ATTRIB]: 'AcDbMTextAttributeObjectContextData',
   [CLASS_BLKREF]: 'AcDbBlkRefObjectContextData',
   [CLASS_MTEXT]: 'AcDbMTextObjectContextData',
+  ACDB_ALDIMOBJECTCONTEXTDATA_CLASS: 'AcDbAlignedDimensionObjectContextData',
+  ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS: 'AcDbAngularDimensionObjectContextData',
+  ACDB_RADIMOBJECTCONTEXTDATA_CLASS: 'AcDbRadialDimensionObjectContextData',
+  ACDB_DMDIMOBJECTCONTEXTDATA_CLASS: 'AcDbDiametricDimensionObjectContextData',
+  ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS: 'AcDbOrdinateDimensionObjectContextData',
+  ACDB_RADIMLRGOBJECTCONTEXTDATA_CLASS: 'AcDbRadialDimensionLargeObjectContextData',
+  [CLASS_HATCH]: 'AcDbHatchScaleContextData',
+  [CLASS_HATCHVIEW]: 'AcDbHatchViewContextData',
+  [CLASS_MLEADER]: 'AcDbMLeaderObjectContextData',
 };
 
 export interface ContextRecord {
@@ -226,17 +255,91 @@ export interface DimFields {
   textRotation: number;
   block: string;
   textDefault: boolean;
+  /** 296·297 화살표 뒤집기 */
+  flip1?: boolean;
+  flip2?: boolean;
+  /** 종류 표지 뒤의 점(11·12·13 순서) */
+  points?: Vec3[];
 }
 
 export function dimFields(r: ContextRecord): DimFields | null {
   const b = r.body;
   const block = first(b, 2);
-  return {
+  const out: DimFields = {
     textPos: { x: num(first(b, 10)), y: num(first(b, 20)) },
     textRotation: num(first(b, 140)),
     block: block === undefined ? '' : String(block).trim(),
     textDefault: num(first(b, 294)) === 1,
+    flip1: num(first(b, 296)) === 1,
+    flip2: num(first(b, 297)) === 1,
   };
+  const spec = DIM_CLASSES[r.type];
+  const im = spec ? b.findIndex((t) => t.code === 100 && String(t.value).trim() === spec.marker) : -1;
+  if (spec && im >= 0) {
+    const rest = b.slice(im + 1);
+    out.points = spec.points.map((c) => ({ x: num(first(rest, c)), y: num(first(rest, c + 10)), z: num(first(rest, c + 20)) }));
+  }
+  return out;
+}
+
+/** 치수 종류 → 레코드 클래스 */
+export function dimClassOf(d: DimensionEntity): string {
+  if (d.subtype === 'ARC_DIMENSION') return 'ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS';
+  if (d.subtype === 'LARGE_RADIAL_DIMENSION') return 'ACDB_RADIMLRGOBJECTCONTEXTDATA_CLASS';
+  switch (d.dimType & 7) {
+    case 2:
+    case 5:
+      return 'ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS';
+    case 3:
+      return 'ACDB_DMDIMOBJECTCONTEXTDATA_CLASS';
+    case 4:
+      return 'ACDB_RADIMOBJECTCONTEXTDATA_CLASS';
+    case 6:
+      return 'ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS';
+    default:
+      return 'ACDB_ALDIMOBJECTCONTEXTDATA_CLASS';
+  }
+}
+
+/**
+ * 레코드의 종류별 점 ↔ 치수의 정의점(기능 명세 annotation-scale.md 6.1): ALDIM 11 = 10(치수선 점), ANGDIM 11 = 2선 각도 16·
+ * 3점 각도·호 길이 10, RADIM 11 = 15, DMDIM 11·12 = 15·10, ORDDIM 11·12 = 10·14, RADIMLRG 11·12·13 = 15·13·14.
+ */
+type DimPointKey = 'defPoint' | 'defPoint2' | 'defPoint3' | 'defPoint4' | 'defPoint5';
+function dimPointKeys(d: DimensionEntity, cls: string): DimPointKey[] {
+  switch (cls) {
+    case 'ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS':
+      return [!d.subtype && (d.dimType & 7) === 2 ? 'defPoint5' : 'defPoint'];
+    case 'ACDB_RADIMOBJECTCONTEXTDATA_CLASS':
+      return ['defPoint4'];
+    case 'ACDB_DMDIMOBJECTCONTEXTDATA_CLASS':
+      return ['defPoint4', 'defPoint'];
+    case 'ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS':
+      return ['defPoint', 'defPoint3'];
+    case 'ACDB_RADIMLRGOBJECTCONTEXTDATA_CLASS':
+      return ['defPoint4', 'defPoint2', 'defPoint3'];
+    default:
+      return ['defPoint'];
+  }
+}
+
+/** 치수의 레코드 점 */
+export function dimPointsOf(d: DimensionEntity, cls = dimClassOf(d)): Vec3[] {
+  return dimPointKeys(d, cls).map((k) => ({ ...d[k] }));
+}
+
+/** 레코드의 점을 치수에 넣은 것 */
+export function withDimPoints(d: DimensionEntity, cls: string, pts: readonly Vec3[]): DimensionEntity {
+  const out = { ...d };
+  dimPointKeys(d, cls).forEach((k, i) => {
+    if (pts[i]) out[k] = { ...pts[i]! };
+  });
+  return out;
+}
+
+/** 다중 지시선 레코드의 컨텍스트 자료 */
+export function mleaderFields(r: ContextRecord): MLeaderEntity['context'] | null {
+  return mleaderContextFromTags(r.body);
 }
 
 export interface HatchFields {
@@ -343,6 +446,77 @@ export function mtextRecordRaw(ver: number, isDefault: boolean, scale: string, f
     out.push({ code: 72, value: f.columnCount ?? 0 }, { code: 44, value: f.columnWidth ?? 0 }, { code: 45, value: f.gutter ?? 0 }, { code: 73, value: f.autoHeight ? 1 : 0 }, { code: 74, value: f.flowReversed ? 1 : 0 });
   }
   return out;
+}
+
+export interface DimRecord {
+  block: string;
+  textPos: Vec2;
+  textDefault: boolean;
+  textRotation: number;
+  flip1?: boolean;
+  flip2?: boolean;
+  points: Vec3[];
+}
+
+export function dimRecordRaw(ver: number, isDefault: boolean, scale: string, cls: string, f: DimRecord): RawTag[] {
+  const spec = DIM_CLASSES[cls] ?? DIM_CLASSES.ACDB_ALDIMOBJECTCONTEXTDATA_CLASS!;
+  const out: RawTag[] = [
+    ...head(ver, isDefault, scale),
+    { code: 100, value: 'AcDbDimensionObjectContextData' },
+    { code: 2, value: f.block },
+    { code: 293, value: 0 },
+    { code: 10, value: f.textPos.x },
+    { code: 20, value: f.textPos.y },
+    { code: 294, value: f.textDefault ? 1 : 0 },
+    { code: 140, value: f.textRotation },
+    { code: 298, value: 0 },
+    { code: 291, value: 0 },
+    { code: 70, value: 0 },
+    { code: 292, value: 0 },
+    { code: 71, value: 0 },
+    { code: 280, value: 0 },
+    { code: 295, value: 0 },
+    { code: 296, value: f.flip1 ? 1 : 0 },
+    { code: 297, value: f.flip2 ? 1 : 0 },
+    { code: 100, value: spec.marker },
+  ];
+  spec.points.forEach((c, i) => {
+    const p = f.points[i] ?? { x: 0, y: 0, z: 0 };
+    out.push({ code: c, value: p.x }, { code: c + 10, value: p.y }, { code: c + 20, value: p.z });
+  });
+  return out;
+}
+
+export interface HatchRecord {
+  lines: readonly HatchPatternLine[];
+  /** 그 축척의 배율(도면 단위 ÷ 용지 단위) */
+  factor: number;
+  /** 패턴 각도(라디안) — 레코드의 10은 이 각도의 단위 벡터 */
+  angle: number;
+  /** 루프마다 종류(경계 플래그에서 폴리선 비트 2를 뺀 것) */
+  loops: number[];
+}
+
+/** 해치 루프 종류: AutoCAD는 폴리선 비트(2)를 쓰지 않는다 */
+export function hatchLoopKind(flags: number): number {
+  return flags & ~2;
+}
+
+export function hatchRecordRaw(ver: number, isDefault: boolean, scale: string, f: HatchRecord): RawTag[] {
+  const out: RawTag[] = [...head(ver, isDefault, scale), { code: 100, value: 'AcDbHatchObjectContextData' }, { code: 78, value: f.lines.length }];
+  for (const l of f.lines) {
+    out.push({ code: 53, value: deg(l.angle) }, { code: 43, value: l.base.x }, { code: 44, value: l.base.y }, { code: 45, value: l.offset.x }, { code: 46, value: l.offset.y }, { code: 79, value: l.dashes.length });
+    for (const d of l.dashes) out.push({ code: 49, value: d });
+  }
+  const c = Math.cos(f.angle);
+  const n = Math.sin(f.angle);
+  out.push({ code: 40, value: f.factor }, { code: 10, value: Math.abs(c) < 1e-15 ? 0 : c }, { code: 20, value: Math.abs(n) < 1e-15 ? 0 : n }, { code: 30, value: 0 }, { code: 90, value: f.loops.length });
+  for (const k of f.loops) out.push({ code: 90, value: k }, { code: 290, value: 1 });
+  return out;
+}
+
+export function mleaderRecordRaw(ver: number, isDefault: boolean, scale: string, ctx: MLeaderEntity['context']): RawTag[] {
+  return [...head(ver, isDefault, scale), ...mleaderContextTags(ctx)];
 }
 
 /** 레코드의 기본 표지(290)·축척(340)을 바꾼 원시 태그 */
@@ -489,4 +663,30 @@ export function removeRecordOps(doc: CadDocument, scales: DictionaryObject, rec:
 export function rewriteRecordOps(doc: CadDocument, rec: ContextRecord, raw: RawTag[], ops: EditOp[]): void {
   const cur = pendingObject<GenericObject>(doc, ops, rec.handle) ?? rec.obj;
   ops.push({ kind: 'object', key: rec.handle, before: cur, after: changed(cur, { raw }) });
+}
+
+/**
+ * 해치의 뷰포트별 표현 모음(ACDB_ANNOTATIONSCALE_VIEW_COLLECTION)을 지운다. 축척 레코드를 이 앱이 다시 만들면 그 모음은
+ * 낡은 패턴 선을 갖게 되므로 빼고, AutoCAD가 필요할 때 다시 만들게 둔다.
+ */
+export function removeViewCollectionOps(doc: CadDocument, e: { xdict?: string }, ops: EditOp[]): void {
+  const xdict = dictOf(doc, e.xdict);
+  const mgrH = entryOf(xdict, MANAGER_KEY);
+  const mgr = mgrH ? pendingObject<DictionaryObject>(doc, ops, mgrH) : null;
+  const vh = entryOf(mgr, VIEWS_KEY);
+  if (!mgr || !vh) return;
+  const views = pendingObject<DictionaryObject>(doc, ops, vh);
+  if (views && (views.type === 'DICTIONARY' || views.type === 'ACDBDICTIONARYWDFLT')) {
+    for (const h of views.entries.values()) {
+      const o = pendingObject(doc, ops, h);
+      if (o) ops.push({ kind: 'object', key: upper(h), before: o, after: null });
+    }
+    ops.push({ kind: 'object', key: upper(vh), before: views, after: null });
+  }
+  setDictEntries(
+    doc,
+    ops,
+    mgr,
+    [...mgr.entries].filter(([k]) => k.toUpperCase() !== VIEWS_KEY),
+  );
 }

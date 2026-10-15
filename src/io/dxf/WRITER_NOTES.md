@@ -127,7 +127,13 @@ ACAD_PLOTSETTINGS·ACAD_PLOTSTYLENAME(기본값 Normal 자리 표시), R2007+는
   GROUP·XRECORD(280 복제 플래그 + 자료)·SPATIAL_FILTER·ACDBPLACEHOLDER, 그 밖의 종류는 읽을 때 남긴 원본 태그(`GenericObject.raw`).
   원본 태그가 없는 종류(DWG 리더가 해석하지 않은 VISUALSTYLE·MATERIAL·DICTIONARYVAR 등)는 뺀다(`object.no_data`).
   DWG의 DBCOLOR(색상표 색)는 원본 태그 없이 색(62·420·430)으로 쓴다(R2004+).
-- 버전에 없는 객체 종류(MLEADERSTYLE·SCALE·VISUALSTYLE … R2007+, TABLESTYLE R2004+ 등)는 그 버전에서 뺀다.
+- 버전에 없는 객체 종류(MLEADERSTYLE·VISUALSTYLE … R2007+, TABLESTYLE R2004+ 등)는 그 버전에서 뺀다. SCALE과 주석 축척
+  컨텍스트 데이터(ACDB_…CONTEXTDATA_CLASS 14종)는 R2000부터 쓴다(AutoCAD도 R2000 DXF에 SCALE을, SAVEFIDELITY 0이면 레코드를 쓴다).
+  레코드의 클래스 판(`AcDbObjectContextData` 70)은 저장 버전 값(AC1024 이상 4, 그 전 3)으로, 다중 지시선 레코드의 R2010+ 태그
+  (271·272·273, 지시선 선 재지정)는 R2007 이하에서 뺀다(`io/annoscale.ts`).
+- 이 버전에 맞게 다른 종류로 바꾸거나 나눈 도형(위 표)이 확장 사전을 잃으면 그 확장 사전과 그 아래 객체(주석 축척 레코드 등)도 쓰지 않는다.
+- 주석 치수(AutoCAD 레코드를 가진 치수)의 DSTYLE DIMSCALE(40)은 AutoCAD 값으로 쓴다: 치수 스타일이 주석이면 재지정 없음, 아니면 0.
+  읽을 때(`readCadFile`)는 보이는 축척의 배율을 재지정으로 넣어 이 앱이 다시 그릴 때 그 크기가 되게 한다.
 - 원본 태그에 구조를 깨는 값(0번 코드, 8비트 정수 280~289가 범위 밖 등)이 있는 XRECORD·모르는 객체는 통째로 뺀다
   (`object.corrupt_dropped`). DWG 리더가 일부 XRECORD 자료를 잘못 풀어 이런 값이 생긴다(아래 알려진 문제).
 

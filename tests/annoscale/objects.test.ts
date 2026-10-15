@@ -248,8 +248,8 @@ describe('주석 블록 참조', () => {
   });
 });
 
-describe('치수·해치·다중 지시선(자체 기록)', () => {
-  it('치수: DIMSCALE 재지정으로 다시 그리고, 다른 축척은 가상 블록', () => {
+describe('치수·해치·다중 지시선(AutoCAD 레코드)', () => {
+  it('치수: DIMSCALE 재지정으로 다시 그리고, 축척마다 레코드와 그 축척의 익명 블록', () => {
     const { doc, session } = newDoc();
     let d = addModel(doc, session, createDimension(doc, session));
     d = annotate(doc, session, d, '1:10');
@@ -258,16 +258,48 @@ describe('치수·해치·다중 지시선(자체 기록)', () => {
     d = apply(doc, session, d, addScales(envOf(doc, session), d, ['1:20']));
     const idx = new ScaleIndex(doc);
     const st = annoState(doc, d, idx)!;
-    expect(st.own).toBe(true);
+    expect(st.own).toBe(false);
+    expect(st.records.map((r) => r.type)).toEqual(['ACDB_ALDIMOBJECTCONTEXTDATA_CLASS', 'ACDB_ALDIMOBJECTCONTEXTDATA_CLASS']);
     expect(st.scales).toEqual(['1:10', '1:20']);
     const v = representation(doc, d, st, '1:20', idx);
-    expect(v.blocks?.[0]?.entities.length).toBeGreaterThan(0);
-    expect((v.entity as DimensionEntity).block).toBe(v.blocks![0]!.name);
-    // 전환하면 진짜 블록
+    // 그 축척의 그림은 레코드가 가리키는 진짜 블록(가상 블록 아님)
+    expect(v.blocks).toBeUndefined();
+    const b20 = (v.entity as DimensionEntity).block;
+    expect(b20).not.toBe(d.block);
+    expect(doc.blocks.get(tableKey(b20))?.entities.length).toBeGreaterThan(0);
+    // 전환하면 그 블록·DIMSCALE 20
     d = apply(doc, session, d, switchScale(envOf(doc, session), d, '1:20'));
     expect(d.overrides?.[40]).toBe(20);
-    expect(doc.blocks.get(tableKey(d.block))).toBeTruthy();
+    expect(d.block).toBe(b20);
     expect(annoState(doc, d)!.current).toBe('1:20');
+  });
+
+  it('치수: 옮기면 다른 축척의 그림을 다시 만들고 쓰이지 않는 옛 블록은 지운다', () => {
+    const { doc, session } = newDoc();
+    let d = addModel(doc, session, createDimension(doc, session));
+    d = annotate(doc, session, d, '1:10');
+    d = apply(doc, session, d, addScales(envOf(doc, session), d, ['1:20']));
+    const idx = new ScaleIndex(doc);
+    const old20 = (representation(doc, d, annoState(doc, d, idx)!, '1:20', idx).entity as DimensionEntity).block;
+    const moved: DimensionEntity = {
+      ...d,
+      defPoint: { ...d.defPoint, y: d.defPoint.y + 50 },
+      defPoint2: { ...d.defPoint2, y: d.defPoint2.y + 50 },
+      defPoint3: { ...d.defPoint3, y: d.defPoint3.y + 50 },
+      textMid: { ...d.textMid, y: d.textMid.y + 50 },
+    };
+    const r = followEdit(envOf(doc, session), d, moved);
+    d = apply(doc, session, d, { entity: r.entity, ops: [...r.ops, { kind: 'modify', block: MODEL_SPACE, before: d, after: r.entity }] });
+    const st = annoState(doc, d, new ScaleIndex(doc))!;
+    const rep = representation(doc, d, st, '1:20', new ScaleIndex(doc)).entity as DimensionEntity;
+    expect(rep.block).not.toBe(old20);
+    expect(rep.textMid.y).toBeGreaterThan(60);
+    expect(doc.blocks.has(tableKey(old20))).toBe(false);
+    // 도면층만 바꾸면 레코드는 그대로
+    const n = doc.objects.size;
+    const r2 = followEdit(envOf(doc, session), d, { ...d, layer: 'X' });
+    expect(r2.ops).toHaveLength(0);
+    expect(doc.objects.size).toBe(n);
   });
 
   it('해치: 패턴 선 × 배율, 다른 축척은 배율 비', () => {

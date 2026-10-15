@@ -1,17 +1,16 @@
 /**
  * 원본 태그(GenericObject.raw)나 필드 모델 값으로 쓰는 비도형 객체(objects/rawtags.ts·objects/field.ts의 짝):
- * FIELD·FIELDLIST(사양 20.4.76·77), DIMASSOC(표본으로 정한 배치), ACDB_TEXTOBJECTCONTEXTDATA_CLASS(사양 20.4.89·71 + 표본),
+ * FIELD·FIELDLIST(사양 20.4.76·77), DIMASSOC(표본으로 정한 배치), 주석 축척 컨텍스트 데이터 14종(../ctxcodec.ts),
  * 동적 블록 객체(../dyncodec.ts).
  */
 import type { CadDocument, FieldObject, FieldValue, GenericObject, RawTag } from '../../../core/model';
 import { fieldFromTags, fieldListHandles } from '../../fields';
+import { CTX_TYPES, encodeCtx, writeCtxOps } from '../ctxcodec';
 import { DYN_TYPES, type DynContext, encodeDyn, writeDynOps } from '../dyncodec';
-import { R2004, R2007, R2010 } from '../version';
+import { R2004, R2007 } from '../version';
 import type { BitWriter } from './bitwriter';
 import type { WCtx } from './context';
-import { HARD_OWNER, HARD_PTR, SOFT_PTR } from './objwriter';
-
-const DEG2RAD = Math.PI / 180;
+import { HARD_OWNER, SOFT_PTR } from './objwriter';
 const num = (v: string | number | undefined, d = 0): number => {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : d;
@@ -27,6 +26,8 @@ function dynContext(o: GenericObject, doc: CadDocument | undefined): DynContext 
 /** 이 종류를 원본 태그·모델 값으로 쓸 수 있는지 */
 export function rawObjectOk(o: GenericObject, ver: number, doc?: CadDocument): boolean {
   if (DYN_TYPES.has(o.type)) return !!encodeDyn(o.type, o.raw, ver, dynContext(o, doc));
+  // 주석 축척 레코드: AutoCAD는 SAVEFIDELITY 0이면 R2000부터 같은 레코드(클래스 판 3)를 쓴다
+  if (CTX_TYPES.has(o.type)) return !!encodeCtx(o.type, o.raw, ver);
   switch (o.type) {
     case 'FIELD':
       return ver >= R2004 && !!(o.field ?? fieldFromTags(o.raw));
@@ -34,8 +35,6 @@ export function rawObjectOk(o: GenericObject, ver: number, doc?: CadDocument): b
       return ver >= R2004 && !!o.raw?.some((t) => t.code === 100 && String(t.value).trim() === 'AcDbIdSet');
     case 'DIMASSOC':
       return !!parseDimAssoc(o.raw);
-    case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
-      return ver >= R2010 && !!parseTextContext(o.raw);
     default:
       return false;
   }
@@ -257,53 +256,6 @@ function writeDimAssoc(d: BitWriter, hd: BitWriter, ctx: WCtx, a: DimAssocRaw): 
   }
 }
 
-// ---------------------------------------------------------------------------
-// 문자 주석 축척 자료
-
-interface TextContext {
-  version: number;
-  isDefault: number;
-  scale: string;
-  hmode: number;
-  rotation: number;
-  insert: { x: number; y: number };
-  align: { x: number; y: number };
-}
-
-export function parseTextContext(raw: readonly RawTag[] | undefined): TextContext | null {
-  const a = afterMarker(raw, 'AcDbObjectContextData');
-  const b = afterMarker(raw, 'AcDbAnnotScaleObjectContextData');
-  if (!a || !b) return null;
-  const first = (tags: RawTag[], code: number) => {
-    for (const t of tags) {
-      if (t.code === 100) break;
-      if (t.code === code) return t.value;
-    }
-    return undefined;
-  };
-  return {
-    version: num(first(a, 70), 4),
-    isDefault: num(first(a, 290)),
-    scale: String(first(b, 340) ?? ''),
-    hmode: num(first(b, 70)),
-    rotation: num(first(b, 50)),
-    insert: { x: num(first(b, 10)), y: num(first(b, 20)) },
-    align: { x: num(first(b, 11)), y: num(first(b, 21)) },
-  };
-}
-
-function writeTextContext(d: BitWriter, hd: BitWriter, ctx: WCtx, c: TextContext): void {
-  d.BS(c.version);
-  d.B(c.isDefault ? 1 : 0);
-  hd.H(HARD_PTR, ctx.ref(c.scale));
-  d.BS(c.hmode);
-  d.BD(c.rotation * DEG2RAD);
-  d.RD(c.insert.x);
-  d.RD(c.insert.y);
-  d.RD(c.align.x);
-  d.RD(c.align.y);
-}
-
 /** 형식별 본문(공통 자료 다음). rawObjectOk가 참인 객체만 */
 export function writeRawObject(d: BitWriter, hd: BitWriter, ctx: WCtx, o: GenericObject): void {
   switch (o.type) {
@@ -321,11 +273,11 @@ export function writeRawObject(d: BitWriter, hd: BitWriter, ctx: WCtx, o: Generi
     case 'DIMASSOC':
       writeDimAssoc(d, hd, ctx, parseDimAssoc(o.raw)!);
       break;
-    case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
-      writeTextContext(d, hd, ctx, parseTextContext(o.raw)!);
-      break;
     default:
-      if (DYN_TYPES.has(o.type)) {
+      if (CTX_TYPES.has(o.type)) {
+        const ops = encodeCtx(o.type, o.raw, ctx.ver)!;
+        writeCtxOps(d, hd, ops, ctx.ver, (h) => ctx.ref(h), (name) => ctx.block(name));
+      } else if (DYN_TYPES.has(o.type)) {
         const ops = encodeDyn(o.type, o.raw, ctx.ver, dynContext(o, ctx.doc))!;
         writeDynOps(d, hd, ops, (h) => ctx.ref(h));
       }

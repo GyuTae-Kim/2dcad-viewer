@@ -26,6 +26,7 @@ import {
   dictVarOps,
   entryOf,
   findScale,
+  ownRecord,
   followEdit,
   isMetric,
   makeAnnotative,
@@ -33,6 +34,7 @@ import {
   scaleListOps,
   setDictEntries,
   switchScale,
+  upgradeOwnRecords,
   unitScale,
   upper,
   viewportAnnoScale,
@@ -558,6 +560,35 @@ export function normalizeShown(app: App, st: DocState): number {
   return n;
 }
 
+/**
+ * 연 도면 맞추기: 예전 빌드가 자체 기록(OPENCAD_ANNOSCALE)으로 저장한 주석 치수·해치·다중 지시선을 AutoCAD 레코드로 바꾼다
+ * (다시 저장하면 AutoCAD에서도 축척 표현이 보인다). 읽은 직후의 정리이므로 명령 취소 기록·수정 표시를 남기지 않는다.
+ */
+export function upgradeOwnOnOpen(app: App, st: DocState): number {
+  if (!readScaleList(st.doc).length) return 0;
+  const env = envFor(st);
+  const ops: EditOp[] = [];
+  let n = 0;
+  for (const [key, b] of st.doc.blocks) {
+    for (const e of b.entities) {
+      if (!e.xdata || !ownRecord(e.xdata)) continue;
+      try {
+        const r = upgradeOwnRecords(env, e);
+        if (r.entity === e && !r.ops.length) continue;
+        ops.push(...r.ops);
+        if (r.entity !== e) ops.push({ kind: 'modify', block: key, before: e, after: r.entity });
+        n++;
+      } catch (err) {
+        console.warn('주석 축척 자체 기록 바꾸기 실패', err);
+      }
+    }
+  }
+  if (!ops.length) return 0;
+  applyOps(st.doc, ops);
+  app.engine.edit(st.docId, ops);
+  return n;
+}
+
 /** 상태가 바뀐 문서의 장면을 다시 그린다(상태 막대가 새로 그려질 때마다 부른다 — 편집·명령 취소 뒤 포함) */
 export function watchAnnoDisplay(app: App): void {
   for (const st of app.docs) {
@@ -565,6 +596,7 @@ export function watchAnnoDisplay(app: App): void {
     if (cur && cur.gen === st.gen) continue;
     if (!cur) {
       try {
+        upgradeOwnOnOpen(app, st);
         normalizeShown(app, st);
       } catch (e) {
         console.warn('주석 축척 맞추기 실패', e);

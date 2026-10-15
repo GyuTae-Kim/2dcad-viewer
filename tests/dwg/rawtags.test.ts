@@ -90,9 +90,10 @@ describe.skipIf(!existsSync(DWG('AC1032')))('DWG 쓰기: 원본 태그로 쓴 �
       const b = readDwg(res.data);
       const dstVer = Number(dst!.slice(2));
       for (const [h, o] of rawObjects(a)) {
-        // 문자 주석 축척 자료는 R2010+에만 쓴다
-        if (o.type === 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS' && dstVer < 1024) {
-          expect(b.objects.get(h)).toBeUndefined();
+        // 주석 축척 자료는 R2000부터 쓴다(AutoCAD SAVEFIDELITY 0과 같다). 클래스 판(70)만 저장 버전의 값(AC1024 이상 4, 그 전 3)
+        if (o.type === 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS') {
+          const want = o.raw!.map((t, i) => (i === 1 && t.code === 70 ? { code: 70, value: dstVer >= 1024 ? 4 : 3 } : t));
+          expect((b.objects.get(h) as GenericObject).raw, `${o.type} ${h}`).toEqual(want);
           continue;
         }
         expect((b.objects.get(h) as GenericObject).raw, `${o.type} ${h}`).toEqual(o.raw);

@@ -8,6 +8,7 @@ import type {
   MLineStyleObject,
   PlotSettings,
   PlotSettingsObject,
+  RawTag,
   ScaleObject,
   SortEntsTableObject,
   SpatialFilterObject,
@@ -18,6 +19,7 @@ import type { TagSink } from './tagwriter';
 import { type PlannedLayout, type PlannedObject, type WriteContext, standardTableStyle } from './wcontext';
 import { TagOut, appGroups, cadColorToRaw, validLineweight, writeXData } from './wentities';
 import { fieldTags } from '../fields';
+import { CTX_TYPES, ctxRawForVersion } from '../annoscale';
 import { parseTableStyleTags, tableStyleTags, tableStyleTagsFit } from '../tablestyle';
 
 /** R2007 전후 형식 계열(필드 값 배치가 다르다) */
@@ -304,6 +306,8 @@ function writeObject(w: TagOut, p: PlannedObject): void {
       if (o.type === 'FIELD' && g.field && (!g.raw || versionFamily(ctx.doc.version) !== versionFamily(ctx.version))) w.raw(fieldTags(g.field, ctx.ver));
       // 테이블 스타일: 원본 태그의 배치(R2004 / R2007 / R2010+)가 대상 버전과 다르면 값으로 다시 만든다
       else if (o.type === 'TABLESTYLE' && g.raw && !tableStyleTagsFit(g.raw, ctx.ver) && parseTableStyleTags(g.raw)) w.raw(tableStyleTags(parseTableStyleTags(g.raw)!, ctx.ver));
+      // 주석 축척 레코드: 클래스 판(70)은 저장 버전에 맞춘다
+      else if (g.raw && CTX_TYPES.has(o.type)) w.raw(ctxRawForVersion(g.raw, ctx.ver, o.type) as RawTag[]);
       else if (g.raw) w.raw(g.raw);
       else if (o.type === 'DBCOLOR' && g.color) {
         w.t(100, 'AcDbColor');

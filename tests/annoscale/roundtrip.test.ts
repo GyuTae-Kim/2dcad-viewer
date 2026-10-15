@@ -1,4 +1,4 @@
-/** DXF 저장 → 다시 읽기: 축척 리스트·CANNOSCALE·TEXT/MTEXT/블록 참조 레코드·자체 기록·ANNOALLVISIBLE */
+/** DXF 저장 → 다시 읽기: 축척 리스트·CANNOSCALE·TEXT/MTEXT/블록 참조/치수/해치 레코드·ANNOALLVISIBLE */
 import { describe, expect, it } from 'vitest';
 import type { BlockDef, Entity } from '../../src/core/model';
 import { MODEL_SPACE } from '../../src/core/model';
@@ -18,7 +18,7 @@ function annotate(doc: Parameters<typeof envOf>[0], session: Parameters<typeof e
 }
 
 describe('DXF 왕복', () => {
-  it('레코드·자체 기록·변수가 다시 읽힌다', () => {
+  it('레코드·변수가 다시 읽힌다', () => {
     const { doc, session } = newDoc('metric');
     // 축척 하나 더(이름 바꾸기 포함)
     const list = readScaleList(doc);
@@ -45,7 +45,8 @@ describe('DXF 왕복', () => {
     expect(sc(m)?.scales).toEqual(['1:10', '1:20']);
     expect(sc(b)?.scales).toEqual(['1:10', '1:20']);
     expect(sc(d)?.scales).toEqual(['1:10', '1:20']);
-    expect(sc(d)?.own).toBe(true);
+    expect(sc(d)?.own).toBe(false);
+    expect(sc(h)?.own).toBe(false);
     expect(sc(h)?.scales).toEqual(['1:10', '1:20']);
     const te = back.entityIndex.get(t)!;
     const r = representation(back, te, sc(t)!, '사용자 1:25', idx).entity as { height: number };

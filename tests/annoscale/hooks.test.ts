@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BlockDef, DimensionEntity, Entity, TextEntity } from '../../src/core/model';
 import { MODEL_SPACE, tableKey } from '../../src/core/model';
 import { DocState } from '../../src/app/docstate';
-import { annotateTransaction, normalizeShown, setAnnoAutoscale, setCannoscale, shownScale } from '../../src/app/annoscale-core';
+import { annotateTransaction, normalizeShown, setAnnoAutoscale, setCannoscale, shownScale, upgradeOwnOnOpen } from '../../src/app/annoscale-core';
 import type { App } from '../../src/app/app';
-import { ScaleIndex, addScales, annoState, contextRecords, dictVarOps, readScaleList, regenerateDimension, representation, withAnnotativeFlag } from '../../src/edit/annoscale';
+import { ScaleIndex, addScales, annoState, contextRecords, dictVarOps, dimFields, readScaleList, regenerateDimension, representation, withAnnotativeFlag, withOwnRecord } from '../../src/edit/annoscale';
 import { EditSession, type EditOp, type Transaction } from '../../src/edit/session';
 import { createLinearDimension } from '../../src/edit/dim/create';
 import { envOf, insert, newDoc, text } from './helpers';
@@ -125,5 +125,55 @@ describe('편집 고리', () => {
     expect(s.st.session.depth).toBe(depth);
     expect(sent.length).toBeGreaterThan(0);
     expect(normalizeShown(s.app, s.st)).toBe(0);
+  });
+
+  it('연 도면 맞추기: 예전 빌드의 자체 기록(치수·해치)을 AutoCAD 레코드로(명령 취소 기록 없이, 워커에도)', () => {
+    const ops: EditOp[] = [];
+    const d0 = createLinearDimension(s.doc, { x: 0, y: 0, z: 0 }, { x: 100, y: 0, z: 0 }, { x: 50, y: 20, z: 0 });
+    const d1 = regenerateDimension(envOf(s.doc, s.st.session), d0, 10, ops);
+    s.st.session.commit({ label: 'DIM', ops });
+    const own = { current: '1:10', scales: ['1:10', '1:20'] };
+    const d = add(s.st, { ...d1, xdata: withOwnRecord(undefined, own) }) as DimensionEntity;
+    expect(annoState(s.doc, d)?.own).toBe(true);
+    const sent: unknown[] = [];
+    (s.app as unknown as { engine: { edit: (id: number, ops: unknown[]) => void } }).engine = { edit: (_id, o) => sent.push(...o) };
+    const depth = s.st.session.depth;
+    expect(upgradeOwnOnOpen(s.app, s.st)).toBe(1);
+    const now = s.doc.entityIndex.get(d.handle) as DimensionEntity;
+    const st = annoState(s.doc, now)!;
+    expect(st.own).toBe(false);
+    expect(st.scales).toEqual(['1:10', '1:20']);
+    expect(st.records).toHaveLength(2);
+    expect(dimFields(st.byScale.get('1:10')!)!.block).toBe(now.block);
+    expect(s.doc.blocks.get(tableKey(dimFields(st.byScale.get('1:20')!)!.block))?.entities.length).toBeGreaterThan(0);
+    expect(now.xdata?.some((x) => x.app === 'OPENCAD_ANNOSCALE')).toBeFalsy();
+    expect(s.st.session.depth).toBe(depth);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(upgradeOwnOnOpen(s.app, s.st)).toBe(0);
+  });
+
+  it('주석 치수를 옮기면(다른 편집) 편집 고리가 다른 축척의 그림과 레코드를 다시 만든다', () => {
+    s.doc.dimStyles.set('ANNO', { ...s.doc.dimStyles.get('STANDARD')!, name: 'Anno', handle: 'FFF2', xdata: withAnnotativeFlag(undefined, true) });
+    setCannoscale(s.app, s.st, '1:10', 1);
+    const ops: EditOp[] = [];
+    const d0 = createLinearDimension(s.doc, { x: 0, y: 0, z: 0 }, { x: 100, y: 0, z: 0 }, { x: 50, y: 20, z: 0 }, { style: 'Anno' });
+    const d1 = regenerateDimension(envOf(s.doc, s.st.session), d0, null, ops);
+    s.st.session.commit({ label: 'DIM', ops });
+    let d = add(s.st, d1) as DimensionEntity;
+    const a = addScales(envOf(s.doc, s.st.session), d, ['1:20']);
+    s.st.session.commit({ label: 'X', ops: [...a.ops, { kind: 'modify', block: MODEL_SPACE, before: d, after: a.entity }] });
+    d = s.doc.entityIndex.get(d.handle) as DimensionEntity;
+    const rec20 = () => contextRecords(s.doc, s.doc.entityIndex.get(d.handle)!).find((r) => !r.isDefault)!;
+    const before = dimFields(rec20())!;
+    const moved: DimensionEntity = { ...d, defPoint: { ...d.defPoint, y: d.defPoint.y + 30 }, textMid: { ...d.textMid, y: d.textMid.y + 30 } };
+    s.st.session.commit({ label: 'MOVE', ops: [{ kind: 'modify', block: MODEL_SPACE, before: d, after: moved }] });
+    const after = dimFields(rec20())!;
+    expect(after.block).not.toBe(before.block);
+    expect(after.points![0]!.y).toBeCloseTo(d.defPoint.y + 30);
+    expect(s.doc.blocks.has(tableKey(before.block))).toBe(false);
+    // 명령 취소하면 옛 레코드와 그림이 돌아온다
+    s.st.session.undo();
+    expect(dimFields(rec20())!.block).toBe(before.block);
+    expect(s.doc.blocks.has(tableKey(before.block))).toBe(true);
   });
 });

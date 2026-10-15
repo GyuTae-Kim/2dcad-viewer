@@ -12,7 +12,8 @@
 import type { AttribEntity, BlockDef, CadDocument, DimensionEntity, Entity, HatchEntity, HatchPatternLine, InsertEntity, MLeaderEntity, MTextEntity, TextEntity, Vec2, Vec3 } from '../../core/model';
 import { generateDimensionGeometry } from '../dim/generate';
 import { type AnnoScale, factorOf, scaleFromObject, scaleList, upper } from './scales';
-import { type ContextRecord, blkFields, contextRecords, dimFields, hasRecordEntries, hatchFields, mtextFields, textFields } from './context';
+import { type ContextRecord, blkFields, contextRecords, dimFields, hasRecordEntries, hatchFields, mleaderFields, mtextFields, textFields, withDimPoints } from './context';
+import { withContext } from './mlctx';
 import { annotativeFlag, blockAnnotative, ownRecord } from './xdata';
 
 export type AnnoKind = 'text' | 'mtext' | 'insert' | 'dim' | 'hatch' | 'mleader' | 'leader';
@@ -106,7 +107,7 @@ export class ScaleIndex {
 export function annoState(doc: CadDocument, e: Entity, index?: ScaleIndex): AnnoState | null {
   const kind = annoKindOf(e);
   if (!kind) return null;
-  const flag = kind === 'insert' ? blockAnnotative(doc, (e as InsertEntity).block) || annotativeFlag(e.xdata) === true : annotativeFlag(e.xdata);
+  const flag = kind === 'insert' ? blockAnnotative(doc, (e as InsertEntity).block) || annotativeFlag(e.xdata) === true : kind === 'mleader' ? mleaderFlag(e as MLeaderEntity) : annotativeFlag(e.xdata);
   const own = ownRecord(e.xdata);
   const recs = e.xdict ? contextRecords(doc, e) : [];
   // 표지가 "주석 아님"인 객체의 레코드는 쓰지 않는다(블록 참조는 블록을 따른다)
@@ -139,8 +140,37 @@ export function annoState(doc: CadDocument, e: Entity, index?: ScaleIndex): Anno
     if (!current && byScale.has(own.current.toUpperCase())) current = own.current.toUpperCase();
   }
   if (!scales.length) return { kind, records: [], byScale, scales: [], current: '', own: !!own, foreign: true };
+  // 해치 객체의 패턴 선은 AutoCAD가 마지막으로 그린 축척(기본 레코드가 아닐 수 있다)의 것이다: 같은 선을 가진 레코드를 보인다
+  if (kind === 'hatch' && records.length > 1) {
+    const shown = hatchShown(e as HatchEntity, records, idx);
+    if (shown) current = shown;
+  }
   if (!current) current = scales[0]!;
   return { kind, records, byScale, scales, current, own: !!own && !records.length, foreign: false };
+}
+
+/** 다중 지시선의 주석 표지: AcadAnnotative가 없으면 MULTILEADER 293(AutoCAD가 다중 지시선에 쓰는 자리) */
+function mleaderFlag(m: MLeaderEntity): boolean | undefined {
+  const x = annotativeFlag(m.xdata);
+  if (x !== undefined) return x;
+  const p = m.props?.[293];
+  return p === undefined ? undefined : Number(p) === 1;
+}
+
+/** 해치 객체의 선과 같은 선을 가진 레코드의 축척(대문자). 기본 레코드가 같으면 그것 */
+function hatchShown(h: HatchEntity, records: readonly ContextRecord[], idx: ScaleIndex): string | null {
+  const a = h.patternLines;
+  if (!a.length) return null;
+  const close = (x: number, y: number) => Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x), Math.abs(y));
+  const same = (r: ContextRecord) => {
+    const b = hatchFields(r)?.lines;
+    if (!b || b.length !== a.length) return false;
+    return a.every((l, i) => close(l.offset.x, b[i]!.offset.x) && close(l.offset.y, b[i]!.offset.y) && l.dashes.length === b[i]!.dashes.length && l.dashes.every((d, j) => close(d, b[i]!.dashes[j]!)));
+  };
+  const def = records.find((r) => r.isDefault);
+  if (def && same(def)) return null;
+  const r = records.find(same);
+  return r ? (idx.handle(r.scale)?.name.toUpperCase() ?? null) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +262,8 @@ export function scaleMLeader(m: MLeaderEntity, k: number, pivot: Vec3 = mleaderP
   };
   if (c.text) ctx.text = { ...c.text, location: P(c.text.location), width: c.text.width * k, height: c.text.height * k };
   if (c.block) ctx.block = { ...c.block, location: P(c.block.location), scale: { x: c.block.scale.x * k, y: c.block.scale.y * k, z: c.block.scale.z * k } };
-  return { ...m, context: ctx, arrowSize: m.arrowSize * k, doglegLength: m.doglegLength * k };
+  // 객체의 화살촉 크기(42)·연결선 길이(41)는 축척을 곱하지 않은 값으로 둔다(AutoCAD의 주석 다중 지시선과 같다 — 그려지는 값은 컨텍스트 자료)
+  return { ...m, context: ctx };
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +297,10 @@ export function representation(doc: CadDocument, e: Entity, st: AnnoState, k: st
       if (e.solid || !e.patternLines.length) return { entity: e };
       return { entity: { ...e, patternLines: scaleLines(e.patternLines, ratio) } };
     }
-    case 'MULTILEADER':
-      return { entity: scaleMLeader(e, ratio) };
+    case 'MULTILEADER': {
+      const c = rec ? mleaderFields(rec) : null;
+      return { entity: c ? withContext(e, c) : scaleMLeader(e, ratio) };
+    }
     default:
       return { entity: e };
   }
@@ -320,8 +353,13 @@ export function virtualDimBlock(handle: string, scale: string): string {
 
 function dimAt(doc: CadDocument, d: DimensionEntity, rec: ContextRecord | null, factor: number, name: string): View {
   const f = rec ? dimFields(rec) : null;
-  if (f && f.block && doc.blocks.get(f.block.toUpperCase())?.entities.length) {
-    const out: DimensionEntity = { ...d, block: f.block, textMid: { x: f.textPos.x, y: f.textPos.y, z: d.textMid.z } };
+  if (rec && f && f.block && doc.blocks.get(f.block.toUpperCase())?.entities.length) {
+    let out: DimensionEntity = { ...d, block: f.block, textMid: { x: f.textPos.x, y: f.textPos.y, z: d.textMid.z }, textRotation: f.textRotation };
+    // 문자가 기본 자리가 아니면 70의 0x80(사용자 문자 위치)
+    out.dimType = f.textDefault ? d.dimType & ~0x80 : d.dimType | 0x80;
+    if (f.points?.length) out = withDimPoints(out, rec.type, f.points);
+    // 이 앱이 다시 그릴 때의 크기(DIMSCALE = 그 축척의 배율)
+    out.overrides = { ...(d.overrides ?? {}), 40: factor };
     return { entity: out };
   }
   // 그 축척의 그림이 없으면 DIMSCALE = 배율로 다시 그린다

@@ -37,6 +37,7 @@ import { MODEL_SPACE, PAPER_SPACE, tableKey } from '../../core/model';
 import { defaultLayout } from '../../core/finalize';
 import { type DxfVersion, rawTagsValid, versionNum } from './tagwriter';
 import { convertEntity } from './wconvert';
+import { CTX_TYPES } from '../annoscale';
 
 export interface DxfWriteOptions {
   /** 기본 AC1032(R2018) */
@@ -104,7 +105,8 @@ const STD_TABLE_HANDLES: Record<TableName, string> = {
 /** 이 버전부터 있는 객체 종류(그 전 버전으로 쓸 때는 뺀다) */
 const OBJECT_MIN_VERSION: Record<string, number> = {
   MLEADERSTYLE: 1021,
-  SCALE: 1021,
+  // 축척 리스트와 주석 축척 레코드: AutoCAD도 R2000·R2004 DXF에 SCALE을 쓰고(표본), SAVEFIDELITY 0이면 레코드(클래스 판 3)를 쓴다
+  SCALE: 1015,
   VISUALSTYLE: 1021,
   MATERIAL: 1021,
   CELLSTYLEMAP: 1021,
@@ -123,7 +125,7 @@ const OBJECT_MIN_VERSION: Record<string, number> = {
   ACDBPERSSUBENTMANAGER: 1024,
   FIELD: 1018,
   FIELDLIST: 1018,
-  ACDB_TEXTOBJECTCONTEXTDATA_CLASS: 1021,
+  ...Object.fromEntries([...CTX_TYPES.keys()].map((k) => [k, 1015])),
 };
 
 /** 원본 태그가 없어도 내용을 만들 수 있는 객체 */
@@ -707,6 +709,9 @@ export class WriteContext {
     for (const o of objs.values()) {
       if (o.type === 'DICTIONARY' || o.type === 'ACDBDICTIONARYWDFLT') for (const h of (o as DictionaryObject).entries.values()) dictRefs.add(h.toUpperCase());
     }
+    // 이 버전에 맞게 다른 종류로 바꾸거나 나눈 도형(확장 사전을 잃은 것): 그 확장 사전과 그 아래(주석 축척 레코드 등)는 쓰지 않는다
+    const lostXdict = new Set<string>();
+    for (const [e, list] of this.converted) if (e.xdict && e.handle && !list.some((x) => x.handle === e.handle && x.type === e.type && x.xdict === e.xdict)) lostXdict.add(e.handle.toUpperCase());
     const state = new Map<string, boolean>();
     const decide = (o: CadObject): boolean => {
       const cached = state.get(o.handle);
@@ -717,7 +722,7 @@ export class WriteContext {
         const owner = objs.get(o.owner);
         if (owner && (owner.type === 'LAYOUT' || owner.type === 'IMAGEDEF_REACTOR')) ok = this.live.has(o.owner);
         else if (owner) ok = decide(owner);
-        else if (this.live.has(o.owner.toUpperCase())) ok = true;
+        else if (this.live.has(o.owner.toUpperCase())) ok = !lostXdict.has(o.owner.toUpperCase());
         // 쓰지 않는 객체(뺀 도형 등)나 없는 객체가 소유한 객체는 뺀다. 사전 항목이면 그 사전으로 소유자를 고친다.
         else ok = dictRefs.has(o.handle.toUpperCase());
       }

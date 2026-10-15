@@ -10,9 +10,8 @@
  *     BS 73 하위 객체 종류, BL 91 GS 표지, BL 교차 객체 경로 수 + H 332…(경로가 있으면 BS 74, BL 92 —
  *     표본에 교차 객체가 없어 DXF 순서로 짐작), BD 40 매개변수, 3BD 10 점, B 75 마지막 점 참조 있음.
  *     (DXF는 40·10 다음에 332·74·92가 온다)
- * - ACDB_TEXTOBJECTCONTEXTDATA_CLASS: 사양 20.4.89(AcDbObjectContextData: BS 70 판, B 290 기본)·20.4.71(H 340 축척)
- *   다음의 문자 자료는 표본(R2010~R2018)으로 정했다: BS 70 수평 정렬, BD 50 회전, RD2 10 삽입점, RD2 11 정렬점.
- *   표본에서는 사양의 "확장 사전 파일 있음" 비트가 없다(판 다음 비트 하나가 DXF 290이다).
+ * - 주석 축척 컨텍스트 데이터(ACDB_…OBJECTCONTEXTDATA_CLASS 14종): ../ctxcodec.ts. 치수 레코드의 블록(DXF 2)은
+ *   블록 레코드 핸들로 두고 build.ts가 블록을 다 읽은 뒤 이름으로 바꾼다.
  * - 동적 블록 객체(평가 그래프·매개변수·그립·동작·표현 자료 등): 사양에 없다. 배치는 ../dyncodec.ts.
  *
  * 풀다가 자료 비트가 남거나 모자라면(배치가 맞지 않는 파일) null을 돌려 원본 태그 없이 둔다.
@@ -20,6 +19,7 @@
 import type { FieldObject, RawTag } from '../../../core/model';
 import { fieldListTags, fieldTags } from '../../fields';
 import { BitReader } from '../bitstream';
+import { CTX_TYPES, decodeCtx } from '../ctxcodec';
 import { DYN_TYPES, decodeDyn } from '../dyncodec';
 import { stringStreamRange } from '../streams';
 import { R2007 } from '../version';
@@ -32,10 +32,8 @@ export interface DecodedRaw {
   field?: FieldObject;
 }
 
-const RAD2DEG = 180 / Math.PI;
-
 /** 풀 수 있는 종류 */
-export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS', ...DYN_TYPES]);
+export const RAW_TAG_TYPES = new Set(['FIELD', 'FIELDLIST', 'DIMASSOC', ...CTX_TYPES.keys(), ...DYN_TYPES]);
 
 /** 자료 흐름을 다 읽었는지(R2007+는 끝의 문자열 흐름 표지 비트 하나를 남길 수 있다) */
 function consumed(or: ObjectReader): boolean {
@@ -83,26 +81,6 @@ function dimAssoc(or: ObjectReader): RawTag[] {
   return out;
 }
 
-/** AcDbObjectContextData + AcDbAnnotScaleObjectContextData */
-function contextHead(or: ObjectReader, out: RawTag[]): void {
-  const r = or.dat;
-  out.push({ code: 100, value: 'AcDbObjectContextData' }, { code: 70, value: r.BS() }, { code: 290, value: r.B() });
-  out.push({ code: 100, value: 'AcDbAnnotScaleObjectContextData' }, { code: 340, value: hex(or.hdl.H(or.h.handle)) || '0' });
-}
-
-function textContext(or: ObjectReader): RawTag[] {
-  const r = or.dat;
-  const out: RawTag[] = [];
-  contextHead(or, out);
-  out.push({ code: 70, value: r.BS() });
-  out.push({ code: 50, value: r.BD() * RAD2DEG });
-  const p = r.RD2();
-  out.push({ code: 10, value: p.x }, { code: 20, value: p.y });
-  const a = r.RD2();
-  out.push({ code: 11, value: a.x }, { code: 21, value: a.y });
-  return out;
-}
-
 /** 공통 자료까지 읽은 객체의 원본 태그. 풀 수 없으면 null */
 export function decodeRawTags(or: ObjectReader, type: string): DecodedRaw | null {
   if (!RAW_TAG_TYPES.has(type)) return null;
@@ -122,10 +100,12 @@ export function decodeRawTags(or: ObjectReader, type: string): DecodedRaw | null
       case 'DIMASSOC':
         res = { raw: dimAssoc(or) };
         break;
-      case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
-        res = { raw: textContext(or) };
-        break;
       default:
+        if (CTX_TYPES.has(type)) {
+          res = { raw: decodeCtx(type, or.dat, or.hdl, or.h.handle, or.ver) };
+          if (!stringsConsumed(or)) return null;
+          break;
+        }
         if (!DYN_TYPES.has(type)) return null;
         res = { raw: decodeDyn(type, or.dat, or.hdl, or.h.handle) };
         if (!stringsConsumed(or)) return null;

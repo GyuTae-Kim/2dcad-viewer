@@ -308,7 +308,12 @@ export function registerAnnoScaleCommands(app: App): void {
       if (other) ctx.print(`${other}개는 주석 객체가 아닙니다.`);
       const env = envFor(st);
       const ops: EditOp[] = [];
-      for (const e of list) ops.push(...resetScales(env, e).ops);
+      for (const e of list) {
+        const r = resetScales(env, e);
+        ops.push(...r.ops);
+        // 치수·해치·다중 지시선은 레코드를 다시 만들며 객체의 표지(예전 자체 기록 → AutoCAD 표지)도 바뀔 수 있다
+        if (r.entity !== e) ops.push({ kind: 'modify', block: st.session.ownerOf(e.handle) ?? st.space, before: e, after: r.entity });
+      }
       commitOwn(st, 'ANNORESET', ops, ctx.group);
       ctx.print(`${list.length}개의 객체를 재설정했습니다.`);
     },

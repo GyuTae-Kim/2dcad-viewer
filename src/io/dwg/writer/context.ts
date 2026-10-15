@@ -39,6 +39,7 @@ import { R2004, R2007, R2018 } from '../version';
 import { ClassTable } from './classes';
 import { type TextEncoderCp, encoderFor } from './codepage';
 import { parseHandle, warnOnce } from './util';
+import { CTX_TYPES } from '../ctxcodec';
 import { DYN_TYPES } from '../dyncodec';
 import { rawObjectOk } from './rawobjects';
 
@@ -120,8 +121,8 @@ const NATIVE_OBJECTS = new Set([
   'FIELD',
   'FIELDLIST',
   'DIMASSOC',
-  'ACDB_TEXTOBJECTCONTEXTDATA_CLASS',
   'TABLESTYLE',
+  ...CTX_TYPES.keys(),
   ...DYN_TYPES,
 ]);
 
@@ -158,8 +159,9 @@ function chooseCodepage(doc: CadDocument, cur: number): number {
   for (const b of doc.blocks.values()) {
     add(b.name);
     for (const e of b.entities) {
-      const x = e as { text?: unknown; tag?: unknown; prompt?: unknown; attribs?: { text: string; tag: string }[] };
+      const x = e as { text?: unknown; tag?: unknown; prompt?: unknown; attribs?: { text: string; tag: string }[]; context?: { text?: { text?: unknown } } };
       add(x.text);
+      if (e.type === 'MULTILEADER') add(x.context?.text?.text);
       add(x.tag);
       add(x.prompt);
       if (x.attribs) for (const a of x.attribs) {
@@ -168,9 +170,9 @@ function chooseCodepage(doc: CadDocument, cur: number): number {
       }
     }
   }
-  // 동적 블록 객체의 이름·레이블·상태 이름(원본 태그)과 그 캐시(XRECORD)의 문자열
+  // 동적 블록 객체의 이름·레이블·상태 이름(원본 태그), 다중 지시선 축척 레코드의 문자(304)와 캐시(XRECORD)의 문자열
   for (const o of doc.objects.values()) {
-    const tags = DYN_TYPES.has(o.type) ? (o as GenericObject).raw : o.type === 'XRECORD' ? (o as XRecordObject).data : undefined;
+    const tags = DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type) ? (o as GenericObject).raw : o.type === 'XRECORD' ? (o as XRecordObject).data : undefined;
     if (tags) for (const t of tags) if ((t.code >= 1 && t.code <= 9) || (t.code >= 300 && t.code <= 309)) add(t.value);
   }
   if (!chars.size) return cur;
@@ -920,14 +922,13 @@ export class WCtx {
       case 'FIELD':
       case 'FIELDLIST':
       case 'DIMASSOC':
-      case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
         return rawObjectOk(o as GenericObject, this.ver);
       case 'TABLESTYLE':
         // 원본 태그(DXF·DWG 리더·편집)가 없으면 Standard 기본값으로 쓴다
         return true;
       default:
-        // 동적 블록 객체: 원본 태그(DXF·DWG 리더·편집)를 dyncodec 배치로 쓸 수 있을 때
-        if (DYN_TYPES.has(o.type)) return rawObjectOk(o as GenericObject, this.ver, this.doc);
+        // 동적 블록 객체·주석 축척 레코드: 원본 태그(DXF·DWG 리더·편집)를 dyncodec·ctxcodec 배치로 쓸 수 있을 때
+        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type)) return rawObjectOk(o as GenericObject, this.ver, this.doc);
         return true;
     }
   }

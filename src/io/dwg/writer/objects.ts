@@ -21,6 +21,7 @@ import type { PLayout, PObj, WCtx } from './context';
 import { eedOf, wcolor } from './common';
 import { HARD_OWNER, HARD_PTR, SOFT_OWNER, SOFT_PTR, type ObjWriter } from './objwriter';
 import { parseHandle } from './util';
+import { CTX_TYPES } from '../ctxcodec';
 import { DYN_TYPES } from '../dyncodec';
 import { writeRawObject } from './rawobjects';
 import { tableKey } from '../../../core/model';
@@ -276,12 +277,11 @@ export class ObjectWriter {
       case 'FIELD':
       case 'FIELDLIST':
       case 'DIMASSOC':
-      case 'ACDB_TEXTOBJECTCONTEXTDATA_CLASS':
         this.start(this.cls(o.type), po);
         writeRawObject(d, hd, ctx, o as GenericObject);
         break;
       default:
-        if (DYN_TYPES.has(o.type)) {
+        if (DYN_TYPES.has(o.type) || CTX_TYPES.has(o.type)) {
           // 동적 블록 객체(dyncodec.ts)
           this.start(this.cls(o.type), po);
           writeRawObject(d, hd, ctx, o as GenericObject);

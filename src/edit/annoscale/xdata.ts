@@ -4,9 +4,9 @@
  * - AutoCAD: `1001 AcadAnnotative`, `1000 AnnotativeData`, `1002 {`, `1070 1`(판), `1070 주석(1/0)`, `1002 }`.
  *   R14 DWG·R12 DXF는 앱 이름이 대문자다. 문자·치수 스타일, 주석 블록의 BLOCK_RECORD, TEXT·MTEXT·치수 등에 붙는다.
  * - 다중 지시선 스타일은 XDATA가 아니라 MLEADERSTYLE 296이다.
- * - 이 프로그램의 자체 기록 `1001 OPENCAD_ANNOSCALE`: AutoCAD 형식이 확인되지 않은 종류(치수·해치·다중 지시선)의
- *   축척 목록. `1070 1`(판), `1000 보이는 축척 이름`, `1002 {`, 축척마다 `1000 이름`, `1002 }`.
- *   이름을 쓴다(핸들은 저장할 때 바뀔 수 있다).
+ * - 예전 빌드의 자체 기록 `1001 OPENCAD_ANNOSCALE`: 치수·해치·다중 지시선의 축척 목록이었다(지금은 이 종류도 AutoCAD
+ *   레코드로 쓴다 — edit.ts). `1070 1`(판), `1000 보이는 축척 이름`, `1002 {`, 축척마다 `1000 이름`, `1002 }`.
+ *   읽기는 계속하고, 그 객체를 편집하거나 앱이 도면을 열 때(upgradeOwnRecords) AutoCAD 레코드로 바꾼다.
  */
 import type { CadDocument, MLeaderStyleObject, XData } from '../../core/model';
 import { tableKey } from '../../core/model';

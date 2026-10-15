@@ -2,15 +2,18 @@
  * 주석 객체 편집(순수 함수): 주석 켜기·끄기, 축척 추가·삭제, 보이는 축척 바꾸기(CANNOSCALE), 위치 재설정(ANNORESET),
  * 다른 편집을 따라가기(이동·회전·축척), 복사본의 레코드 복제, 새로 만든 객체를 주석 객체로.
  *
- * 쓰는 형식:
- * - TEXT·MTEXT·블록 참조·한 줄 속성: AutoCAD 컨텍스트 레코드(축척마다 하나, 보이는 축척이 290 = 1).
- *   TEXT·MTEXT는 `AcadAnnotative {1, 1}`, 속성은 `{1, 0}`(실물과 같다). 레코드의 340은 SCALE 핸들이므로
- *   축척 리스트가 도면에 있어야 한다(부르는 쪽이 먼저 만든다).
- * - 치수·해치·다중 지시선: AutoCAD 레코드 형식을 이 프로그램이 확인하지 못해 자체 기록(OPENCAD_ANNOSCALE)에
- *   축척 이름만 둔다. 다른 축척의 그림은 그릴 때 계산한다. AutoCAD는 이 객체들을 보이는 크기의 일반 객체로 본다.
+ * 쓰는 형식: 모든 종류가 AutoCAD 컨텍스트 레코드(축척마다 하나, 보이는 축척이 290 = 1)다. 레코드의 340은 SCALE 핸들이므로
+ * 축척 리스트가 도면에 있어야 한다(부르는 쪽이 먼저 만든다).
+ * - TEXT·MTEXT·블록 참조·한 줄 속성: 축척마다 위치·회전(닮음 변환). TEXT·MTEXT는 `AcadAnnotative {1, 1}`, 속성은 `{1, 0}`.
+ * - 치수·해치·다중 지시선: 객체의 정의(측정점·경계·지시선 꼭짓점)는 그대로이고 주석 부분만 축척을 따른다 — 치수는 축척마다
+ *   그 배율(DIMSCALE)로 다시 그린 익명 블록과 문자 위치, 해치는 축척마다 패턴 선, 다중 지시선은 축척마다 컨텍스트 자료.
+ *   치수·해치는 `AcadAnnotative {1, 1}`, 다중 지시선은 MULTILEADER 293 = 1. 해치의 뷰포트별 모음
+ *   (ACDB_ANNOTATIONSCALE_VIEW_COLLECTION)은 레코드를 다시 만들 때 지운다(AutoCAD가 다시 만든다).
+ * - 예전 빌드의 자체 기록(OPENCAD_ANNOSCALE, 치수·해치·다중 지시선의 축척 이름)은 계속 읽고, 그 객체를 편집하면
+ *   (또는 앱이 도면을 열 때 upgradeOwnRecords로) AutoCAD 레코드로 바꾼다.
  * 모든 함수는 바뀐 객체(같으면 그 객체)를 돌려주고, 사전·레코드 편집은 ops에 더한다.
  */
-import type { AttribEntity, BlockDef, BlockRecord, CadDocument, DimensionEntity, Entity, GenericObject, HatchEntity, InsertEntity, MLeaderEntity, MTextEntity, TextEntity, Vec2 } from '../../core/model';
+import type { AttribEntity, BlockDef, BlockRecord, CadDocument, DictionaryObject, DimensionEntity, Entity, GenericObject, HatchEntity, InsertEntity, MLeaderEntity, MTextEntity, RawTag, TextEntity, Vec2 } from '../../core/model';
 import { tableKey } from '../../core/model';
 import { generateDimensionGeometry } from '../dim/generate';
 import { measureText } from '../dim/textbox';
@@ -19,9 +22,12 @@ import {
   type BlkFields,
   CLASS_ATTRIB,
   CLASS_BLKREF,
+  CLASS_MLEADER,
+  CLASS_HATCH,
   CLASS_MTEXT,
   CLASS_TEXT,
   type ContextRecord,
+  DIM_CLASSES,
   type MTextFields,
   type TextFields,
   addRecordOps,
@@ -30,19 +36,29 @@ import {
   classVersion,
   contextChain,
   contextRecords,
+  dimClassOf,
+  dimFields,
+  dimPointsOf,
+  dimRecordRaw,
   ensureChain,
   hasRecordEntries,
   hatchFields,
-  hatchRecordWithLines,
+  hatchLoopKind,
+  hatchRecordRaw,
+  mleaderFields,
+  mleaderRecordRaw,
   mtextFields,
   parseRecord,
   mtextRecordRaw,
   removeRecordOps,
+  removeViewCollectionOps,
   retagRecord,
   rewriteRecordOps,
   textFields,
   textRecordRaw,
+  withDimPoints,
 } from './context';
+import { withContext } from './mlctx';
 import { type AnnoState, type ScaleIndex, type Similarity, annoKindOf, annoState, representation, scaleLines, scaleMLeader, simApply } from './represent';
 import { type AnnoScale, changed, dictOf, factorOf, newDict, pendingObject, upper } from './scales';
 import { annotativeFlag, blockAnnotative, dimStyleAnnotative, mleaderStyleAnnotative, ownRecord, textStyleAnnotative, withAnnotativeFlag, withOwnRecord } from './xdata';
@@ -53,6 +69,8 @@ export interface EditEnv {
   idx: ScaleIndex;
   /** 이 변경에서 이미 쓴 블록 이름(대문자, 새 *D 이름이 겹치지 않게) */
   taken?: Set<string>;
+  /** 치수 그림 익명 블록(대문자) → 그것을 가리키는 치수·치수 레코드 수(쓰이지 않게 된 블록을 지우려고, 처음 쓸 때 센다) */
+  dimRefs?: Map<string, number>;
 }
 
 export interface Edited {
@@ -60,12 +78,24 @@ export interface Edited {
   ops: EditOp[];
 }
 
-const RECORD_KINDS = new Set(['text', 'mtext', 'insert']);
+const RECORD_KINDS = new Set(['text', 'mtext', 'insert', 'dim', 'hatch', 'mleader']);
+const SIM_KINDS = new Set(['text', 'mtext', 'insert']);
 
-/** AutoCAD 레코드로 쓰는 종류인지(TEXT·MTEXT·블록 참조) */
+/** AutoCAD 레코드로 쓰는 종류인지(TEXT·MTEXT·블록 참조·치수·해치·다중 지시선) */
 export function usesRecords(e: Entity): boolean {
   const k = annoKindOf(e);
   return !!k && RECORD_KINDS.has(k);
+}
+
+/** 닮음 변환으로 축척 표현을 옮기는 종류(TEXT·MTEXT·블록 참조) */
+function simKind(e: Entity): boolean {
+  const k = annoKindOf(e);
+  return !!k && SIM_KINDS.has(k);
+}
+
+/** 정의는 그대로이고 주석 부분만 축척을 따르는 종류(치수·해치·다중 지시선) */
+export function isPartKind(e: Entity): boolean {
+  return e.type === 'DIMENSION' || e.type === 'HATCH' || e.type === 'MULTILEADER';
 }
 
 function scaleOf(env: EditEnv, name: string): AnnoScale {
@@ -121,10 +151,35 @@ function blkFieldsOf(e: InsertEntity): BlkFields {
   return { rotation: e.rotation, insert: { ...e.insert }, scale: { ...e.scale } };
 }
 
-/** 객체(지금 데이터)의 레코드 원시 태그 */
-function recordRawOf(env: EditEnv, e: Entity, scaleH: string, isDefault: boolean): { type: string; raw: ReturnType<typeof textRecordRaw> } | null {
+/** 객체(지금 데이터)의 레코드 원시 태그. prev: 바꿔 쓰는 레코드(모델에 없는 값 — 치수 화살표 뒤집기 — 을 이어받는다) */
+function recordRawOf(env: EditEnv, e: Entity, scaleH: string, isDefault: boolean, prev?: ContextRecord | null): { type: string; raw: RawTag[] } | null {
   const ver = classVersion(env.doc);
   switch (e.type) {
+    case 'DIMENSION': {
+      const cls = dimClassOf(e);
+      const old = prev && prev.kind === 'dim' ? dimFields(prev) : null;
+      return {
+        type: cls,
+        raw: dimRecordRaw(ver, isDefault, scaleH, cls, {
+          block: e.block,
+          textPos: { x: e.textMid.x, y: e.textMid.y },
+          textDefault: !(e.dimType & 0x80),
+          textRotation: e.textRotation || 0,
+          flip1: old?.flip1,
+          flip2: old?.flip2,
+          points: dimPointsOf(e, cls),
+        }),
+      };
+    }
+    case 'HATCH': {
+      const s = env.idx.handle(scaleH);
+      return {
+        type: CLASS_HATCH,
+        raw: hatchRecordRaw(ver, isDefault, scaleH, { lines: e.solid ? [] : e.patternLines, factor: s ? factorOf(s) : 1, angle: e.patternAngle || 0, loops: e.paths.map((p) => hatchLoopKind(p.flags)) }),
+      };
+    }
+    case 'MULTILEADER':
+      return { type: CLASS_MLEADER, raw: mleaderRecordRaw(ver, isDefault, scaleH, e.context) };
     case 'TEXT':
       return { type: CLASS_TEXT, raw: textRecordRaw(ver, isDefault, scaleH, textFieldsOf(e as TextEntity)) };
     case 'ATTRIB':
@@ -239,6 +294,167 @@ export function regenerateDimension(env: EditEnv, d: DimensionEntity, dimscale: 
 }
 
 // ---------------------------------------------------------------------------
+// 치수·해치·다중 지시선의 레코드(정의는 그대로, 주석 부분만 축척마다)
+// ---------------------------------------------------------------------------
+
+/** 보이는 축척 cur의 표현 e에서 축척 s의 표현. 치수는 그 배율(DIMSCALE)로 새 익명 블록에 다시 그린다 */
+function repForScale(env: EditEnv, e: Entity, cur: string, s: AnnoScale, ops: EditOp[]): Entity {
+  if (e.type === 'DIMENSION') return regenerateDimension(env, e, factorOf(s), ops);
+  return scaledInPlace(e, factorOf(s) / env.idx.factor(cur));
+}
+
+/** 치수 그림 블록의 참조 수(처음 쓸 때 문서 전체를 센다) */
+function dimRefs(env: EditEnv): Map<string, number> {
+  if (env.dimRefs) return env.dimRefs;
+  const m = new Map<string, number>();
+  const inc = (name: string | undefined) => {
+    if (!name) return;
+    const k = tableKey(name);
+    m.set(k, (m.get(k) ?? 0) + 1);
+  };
+  for (const b of env.doc.blocks.values()) for (const x of b.entities) if (x.type === 'DIMENSION') inc(x.block);
+  for (const o of env.doc.objects.values()) {
+    if (!DIM_CLASSES[o.type]) continue;
+    const t = (o as GenericObject).raw?.find((r) => r.code === 2);
+    if (t) inc(String(t.value).trim());
+  }
+  env.dimRefs = m;
+  return m;
+}
+
+/**
+ * 치수 레코드의 블록을 old에서 now로 바꾼 것을 센다. old를 가리키는 것이 없어지면(치수 객체가 쓰는 블록 keep은 빼고)
+ * 그 익명 블록을 지운다 — 이 앱이 축척마다 다시 그린 그림이 쌓이지 않게.
+ */
+function moveDimBlockRef(env: EditEnv, old: string, now: string, keep: readonly string[], ops: EditOp[]): void {
+  const refs = dimRefs(env);
+  const nk = now ? tableKey(now) : '';
+  if (nk) refs.set(nk, (refs.get(nk) ?? 0) + 1);
+  const ok = old ? tableKey(old) : '';
+  if (!ok || ok === nk) return;
+  const n = (refs.get(ok) ?? 1) - 1;
+  refs.set(ok, n);
+  if (n > 0 || !/^\*D\d*$/.test(ok) || keep.some((k) => tableKey(k) === ok)) return;
+  if (ops.some((o) => (o.kind === 'blockDef' || o.kind === 'blockRecord') && o.key === ok)) return;
+  const def = env.doc.blocks.get(ok);
+  const rec = env.doc.blockRecords.get(ok);
+  if (def) ops.push({ kind: 'blockDef', key: ok, before: def, after: null });
+  if (rec) ops.push({ kind: 'blockRecord', key: ok, before: rec, after: null });
+}
+
+/** 같은 변경에서 바꾼 레코드면 그 원시 태그 */
+function rawNow(env: EditEnv, ops: readonly EditOp[], r: ContextRecord): RawTag[] {
+  return (pendingObject<GenericObject>(env.doc, ops, r.handle)?.raw as RawTag[] | undefined) ?? r.raw;
+}
+
+/** 치수·해치·다중 지시선의 주석 표지(치수·해치 AcadAnnotative {1, 1}, 다중 지시선 293 = 1)를 켜고 자체 기록을 지운다 */
+function markPart<T extends Entity>(e: T): T {
+  const own = !!ownRecord(e.xdata);
+  if (e.type === 'MULTILEADER') {
+    if (!own && Number(e.props?.[293]) === 1) return e;
+    return { ...e, props: { ...(e.props ?? {}), 293: 1 }, xdata: withOwnRecord(e.xdata, null) } as T;
+  }
+  if (!own && annotativeFlag(e.xdata) === true) return e;
+  return { ...e, xdata: withOwnRecord(withAnnotativeFlag(e.xdata, true), null) } as T;
+}
+
+/**
+ * 치수·해치·다중 지시선의 레코드를 지금 객체 e(보이는 축척 st.current의 표현)에서 만든다.
+ * all이 거짓이면 레코드가 없는 축척(예전 빌드의 자체 기록)만, 참이면 모든 축척을 다시 만든다(다른 편집을 따라갈 때).
+ * 새 상태(레코드가 모두 있는 상태)를 돌려준다. 해치의 뷰포트별 모음은 지운다.
+ */
+function buildPartRecords(env: EditEnv, e: Entity, st: AnnoState, all: boolean, ops: EditOp[], release = true): { entity: Entity; st: AnnoState } {
+  const missing = st.scales.filter((k) => !st.byScale.get(k));
+  if (!all && !missing.length) return { entity: e, st };
+  let out = e;
+  const chain = ensureChain(env.doc, out, env.alloc, ops);
+  if (chain.newXdict) out = { ...out, xdict: chain.newXdict };
+  const hasDefault = st.records.some((r) => r.isDefault && st.byScale.get(env.idx.handle(r.scale)?.name.toUpperCase() ?? '') === r);
+  const byScale = new Map(st.byScale);
+  const records = [...st.records];
+  const keep = out.type === 'DIMENSION' ? [out.block, ...(e.type === 'DIMENSION' ? [e.block] : [])] : [];
+  for (const k of st.scales) {
+    const rec = st.byScale.get(k) ?? null;
+    if (rec && !all) continue;
+    const s = scaleOf(env, k);
+    const h = handleOf(env, s.name);
+    const isCur = k === st.current;
+    const rep = isCur ? out : repForScale(env, out, st.current, s, ops);
+    const isDefault = rec ? rec.isDefault : isCur && !hasDefault;
+    const rr = recordRawOf(env, rep, h, isDefault, rec);
+    if (!rr) continue;
+    if (rec && rec.type === rr.type) {
+      const oldBlock = rec.kind === 'dim' ? (dimFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) })?.block ?? '') : '';
+      rewriteRecordOps(env.doc, rec, rr.raw, ops);
+      // 복사본의 레코드(원본의 블록을 가리키던 것)는 원본 블록의 참조로 세지 않는다
+      if (rec.kind === 'dim') moveDimBlockRef(env, release ? oldBlock : '', (rep as DimensionEntity).block, keep, ops);
+      const nr = parseRecord({ ...rec.obj, raw: rr.raw }, rec.key);
+      if (nr) {
+        byScale.set(k, nr);
+        records[records.indexOf(rec)] = nr;
+      }
+      continue;
+    }
+    if (rec) {
+      removeRecordOps(env.doc, chain.scales, rec, ops);
+      if (rec.kind === 'dim' && release) moveDimBlockRef(env, dimFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) })?.block ?? '', '', keep, ops);
+      records.splice(records.indexOf(rec), 1);
+    }
+    const o = addRecordOps(env.doc, chain.scales, rr.type, rr.raw, env.alloc, ops);
+    if (rep.type === 'DIMENSION') moveDimBlockRef(env, '', rep.block, keep, ops);
+    const nr = parseRecord(o, '');
+    if (nr) {
+      byScale.set(k, nr);
+      records.push(nr);
+    }
+  }
+  if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
+  return { entity: markPart(out), st: { ...st, records, byScale, own: false } };
+}
+
+function bodyOf(raw: readonly RawTag[]): RawTag[] {
+  const i = raw.findIndex((t) => t.code === 340);
+  return raw.slice(i + 1);
+}
+
+/** 레코드가 없는 축척이 있는 치수·해치·다중 지시선이면 먼저 레코드를 만든다(아니면 그대로) */
+function ensurePartRecords(env: EditEnv, e: Entity, st: AnnoState, ops: EditOp[]): { entity: Entity; st: AnnoState } {
+  if (!isPartKind(e)) return { entity: e, st };
+  return buildPartRecords(env, e, st, false, ops);
+}
+
+/** 예전 빌드의 자체 기록(OPENCAD_ANNOSCALE)을 가진 치수·해치·다중 지시선을 AutoCAD 레코드로(도면을 열 때) */
+export function upgradeOwnRecords(env: EditEnv, e: Entity): Edited {
+  const ops: EditOp[] = [];
+  if (!isPartKind(e) || !ownRecord(e.xdata)) return { entity: e, ops };
+  const st = annoState(env.doc, e, env.idx);
+  if (!st || st.foreign) return { entity: e, ops };
+  const r = buildPartRecords(env, e, st, false, ops);
+  return { entity: r.entity, ops };
+}
+
+/** 축척 k 레코드의 치수 표현. 그 블록이 없으면 다시 그리고 레코드의 블록을 고친다 */
+function dimAtRecord(env: EditEnv, d: DimensionEntity, rec: ContextRecord, factor: number, ops: EditOp[]): DimensionEntity {
+  const f = dimFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) });
+  const key = f?.block ? tableKey(f.block) : '';
+  const has = !!key && (!!env.doc.blocks.get(key)?.entities.length || ops.some((o) => o.kind === 'blockDef' && o.key === key && !!o.after));
+  if (f && has) {
+    let out: DimensionEntity = { ...d, block: f.block, textMid: { x: f.textPos.x, y: f.textPos.y, z: d.textMid.z }, textRotation: f.textRotation };
+    out.dimType = f.textDefault ? d.dimType & ~0x80 : d.dimType | 0x80;
+    if (f.points?.length) out = withDimPoints(out, rec.type, f.points);
+    out.overrides = { ...(d.overrides ?? {}), 40: factor };
+    return out;
+  }
+  const g = regenerateDimension(env, d, factor, ops);
+  const rr = recordRawOf(env, g, upper(rec.scale), rec.isDefault, rec);
+  if (rr) {
+    rewriteRecordOps(env.doc, rec, rr.raw, ops);
+    moveDimBlockRef(env, f?.block ?? '', g.block, [d.block], ops);
+  }
+  return g;
+}
+
+// ---------------------------------------------------------------------------
 // 주석 켜기·끄기
 // ---------------------------------------------------------------------------
 
@@ -252,7 +468,9 @@ function writeFirstRecords(env: EditEnv, e: Entity, scaleName: string, ops: Edit
   if (chain.newXdict) out = { ...out, xdict: chain.newXdict };
   // 이미 있던 레코드(주석이 아니던 시절의 것)는 지운다
   for (const r of contextRecords(env.doc, e)) removeRecordOps(env.doc, chain.scales, r, ops);
+  if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
   addRecordOps(env.doc, chain.scales, rr.type, rr.raw, env.alloc, ops);
+  if (out.type === 'DIMENSION') moveDimBlockRef(env, '', out.block, [], ops);
   if (out.type === 'INSERT') {
     const ins = out as InsertEntity;
     out = {
@@ -308,14 +526,13 @@ export function makeAnnotative(env: EditEnv, e: Entity, scaleName: string, opt: 
       return { entity: out, ops };
     }
     case 'DIMENSION': {
-      let out = regenerateDimension(env, e, f, ops);
-      out = { ...out, xdata: withOwnRecord(out.xdata, { current: name, scales: [name] }) };
-      return { entity: out, ops };
+      const out = markPart(regenerateDimension(env, e, f, ops));
+      return { entity: writeFirstRecords(env, out, name, ops), ops };
     }
     case 'HATCH':
     case 'MULTILEADER': {
-      const out = scaledInPlace(e, f);
-      return { entity: { ...out, xdata: withOwnRecord(out.xdata, { current: name, scales: [name] }) } as Entity, ops };
+      const out = markPart(scaledInPlace(e, f));
+      return { entity: writeFirstRecords(env, out, name, ops), ops };
     }
     default:
       return { entity: e, ops };
@@ -329,7 +546,13 @@ export function makeNonAnnotative(env: EditEnv, e: Entity): Edited {
   if (!st || st.foreign) return { entity: e, ops };
   const k = 1 / env.idx.factor(st.current);
   const chain = contextChain(env.doc, e);
-  if (chain.scales) for (const r of st.records) removeRecordOps(env.doc, chain.scales, r, ops);
+  if (chain.scales) {
+    for (const r of st.records) {
+      removeRecordOps(env.doc, chain.scales, r, ops);
+      if (r.kind === 'dim') moveDimBlockRef(env, dimFields(r)?.block ?? '', '', e.type === 'DIMENSION' ? [e.block] : [], ops);
+    }
+  }
+  if (e.type === 'HATCH') removeViewCollectionOps(env.doc, e, ops);
   let out: Entity = e;
   switch (e.type) {
     case 'TEXT':
@@ -349,10 +572,14 @@ export function makeNonAnnotative(env: EditEnv, e: Entity): Edited {
       out = { ...d, xdata: withOwnRecord(annotativeFlag(e.xdata) === undefined ? d.xdata : withAnnotativeFlag(d.xdata, false), null) };
       break;
     }
-    case 'HATCH':
+    case 'HATCH': {
+      const sc = scaledInPlace(e, k);
+      out = { ...sc, xdata: withOwnRecord(annotativeFlag(e.xdata) === undefined ? sc.xdata : withAnnotativeFlag(sc.xdata, false), null) };
+      break;
+    }
     case 'MULTILEADER': {
       const sc = scaledInPlace(e, k);
-      out = { ...sc, xdata: withOwnRecord(annotativeFlag(e.xdata) === undefined ? sc.xdata : withAnnotativeFlag(sc.xdata, false), null) } as Entity;
+      out = { ...sc, props: { ...(sc.props ?? {}), 293: 0 }, xdata: withOwnRecord(annotativeFlag(e.xdata) === undefined ? sc.xdata : withAnnotativeFlag(sc.xdata, false), null) };
       break;
     }
   }
@@ -366,10 +593,25 @@ export function makeNonAnnotative(env: EditEnv, e: Entity): Edited {
 /** 객체에 축척들을 더한다(새 표현은 지금 보이는 표현의 자리에서 시작) */
 export function addScales(env: EditEnv, e: Entity, names: readonly string[]): Edited {
   const ops: EditOp[] = [];
-  const st = annoState(env.doc, e, env.idx);
-  if (!st || st.foreign) return { entity: e, ops };
-  const todo = names.map((n) => scaleOf(env, n)).filter((s) => !st.byScale.has(s.name.toUpperCase()));
+  const st0 = annoState(env.doc, e, env.idx);
+  if (!st0 || st0.foreign) return { entity: e, ops };
+  const todo = names.map((n) => scaleOf(env, n)).filter((s) => !st0.byScale.has(s.name.toUpperCase()));
   if (!todo.length) return { entity: e, ops };
+  if (isPartKind(e)) {
+    const { entity, st } = ensurePartRecords(env, e, st0, ops);
+    let out = entity;
+    const chain = ensureChain(env.doc, out, env.alloc, ops);
+    if (chain.newXdict) out = { ...out, xdict: chain.newXdict };
+    for (const s of todo) {
+      const rep = repForScale(env, out, st.current, s, ops);
+      const rr = recordRawOf(env, rep, handleOf(env, s.name), false)!;
+      addRecordOps(env.doc, chain.scales, rr.type, rr.raw, env.alloc, ops);
+      if (rep.type === 'DIMENSION') moveDimBlockRef(env, '', rep.block, [], ops);
+    }
+    if (out.type === 'HATCH') removeViewCollectionOps(env.doc, out, ops);
+    return { entity: markPart(out), ops };
+  }
+  const st = st0;
   if (usesRecords(e) && st.records.length) {
     let out = e;
     const chain = ensureChain(env.doc, e, env.alloc, ops);
@@ -396,7 +638,7 @@ export function addScales(env: EditEnv, e: Entity, names: readonly string[]): Ed
     }
     return { entity: out, ops };
   }
-  // 자체 기록(레코드가 있는 치수·다중 지시선이면 새 축척만 자체 기록에)
+  // 자체 기록(예전 빌드)
   const existing = ownRecord(e.xdata);
   const curName = env.idx.name(st.current)?.name ?? st.current;
   const eq = (a: string) => (b: string) => a.toUpperCase() === b.toUpperCase();
@@ -406,15 +648,46 @@ export function addScales(env: EditEnv, e: Entity, names: readonly string[]): Ed
   return { entity: { ...e, xdata: withOwnRecord(e.xdata, { current: curName, scales }) }, ops };
 }
 
+/** 보이는 축척을 바꾼다(상태 st, 레코드가 모두 있는 치수·해치·다중 지시선): 객체 데이터 = 그 레코드의 표현 */
+function switchPart(env: EditEnv, e: Entity, st: AnnoState, k: string, ops: EditOp[]): Entity {
+  const rec = st.byScale.get(k);
+  if (!rec) return e;
+  let out: Entity = e;
+  switch (e.type) {
+    case 'DIMENSION':
+      out = dimAtRecord(env, e, rec, env.idx.factor(k), ops);
+      break;
+    case 'HATCH': {
+      const f = hatchFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) });
+      if (f && !e.solid) out = { ...e, patternLines: f.lines };
+      else if (!e.solid && e.patternLines.length) out = { ...e, patternLines: scaleLines(e.patternLines, env.idx.factor(k) / env.idx.factor(st.current)) };
+      break;
+    }
+    case 'MULTILEADER': {
+      const c = mleaderFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) });
+      out = c ? withContext(e, c) : scaleMLeader(e, env.idx.factor(k) / env.idx.factor(st.current));
+      break;
+    }
+  }
+  for (const r of st.records) {
+    const want = env.idx.handle(r.scale)?.name.toUpperCase() === k;
+    if (r.isDefault !== want) rewriteRecordOps(env.doc, r, retagRecord(rawNow(env, ops, r), want), ops);
+  }
+  return out;
+}
+
 /** 보이는 축척을 바꾼다: 객체 데이터 = 그 축척의 표현, 그 레코드가 기본 */
 export function switchScale(env: EditEnv, e: Entity, name: string): Edited {
   const ops: EditOp[] = [];
-  const st = annoState(env.doc, e, env.idx);
+  const st0 = annoState(env.doc, e, env.idx);
   const k = name.toUpperCase();
-  if (!st || st.foreign || !st.byScale.has(k) || st.current === k) return { entity: e, ops };
+  if (!st0 || st0.foreign || !st0.byScale.has(k) || st0.current === k) return { entity: e, ops };
+  if (isPartKind(e)) {
+    const { entity, st } = ensurePartRecords(env, e, st0, ops);
+    return { entity: switchPart(env, entity, st, k, ops), ops };
+  }
+  const st = st0;
   let out = representation(env.doc, e, st, k, env.idx).entity;
-  // 그릴 때 쓰는 가상 블록은 진짜 블록으로 만든다(자체 기록의 치수: DIMSCALE 재지정 = 그 배율)
-  if (out.type === 'DIMENSION' && (!st.byScale.get(k) || /^\*OPENCAD_ANNO_/i.test(out.block))) out = regenerateDimension(env, e as DimensionEntity, env.idx.factor(k), ops);
   for (const r of st.records) {
     const nm = env.idx.handle(r.scale)?.name.toUpperCase();
     const want = nm === k;
@@ -436,21 +709,38 @@ export function switchScale(env: EditEnv, e: Entity, name: string): Edited {
 
 /** 객체에서 축척들을 지운다. 축척은 하나 이상 남는다. 보이는 축척을 지우면 남은 첫 축척을 보인다 */
 export function removeScales(env: EditEnv, e: Entity, names: readonly string[]): Edited & { kept: boolean } {
-  const st = annoState(env.doc, e, env.idx);
-  if (!st || st.foreign) return { entity: e, ops: [], kept: false };
-  const drop = new Set(names.map((n) => n.toUpperCase()).filter((k) => st.byScale.has(k)));
+  const st0 = annoState(env.doc, e, env.idx);
+  if (!st0 || st0.foreign) return { entity: e, ops: [], kept: false };
+  const drop = new Set(names.map((n) => n.toUpperCase()).filter((k) => st0.byScale.has(k)));
   if (!drop.size) return { entity: e, ops: [], kept: false };
-  const remain = st.scales.filter((k) => !drop.has(k));
+  const remain = st0.scales.filter((k) => !drop.has(k));
   let kept = false;
   if (!remain.length) {
     // 마지막 하나는 남긴다(보이는 축척)
-    drop.delete(st.current);
-    remain.push(st.current);
+    drop.delete(st0.current);
+    remain.push(st0.current);
     kept = true;
     if (!drop.size) return { entity: e, ops: [], kept };
   }
-  let entity = e;
   const ops: EditOp[] = [];
+  if (isPartKind(e)) {
+    const r = ensurePartRecords(env, e, st0, ops);
+    let entity = r.entity;
+    const st = r.st;
+    if (drop.has(st.current)) entity = switchPart(env, entity, st, remain[0]!, ops);
+    const chain = contextChain(env.doc, entity);
+    const scalesDict = chain.scales ?? (entity.xdict ? pendingScales(env, entity, ops) : null);
+    for (const rec of st.records) {
+      const nm = env.idx.handle(rec.scale)?.name.toUpperCase();
+      if (!nm || !drop.has(nm) || !scalesDict) continue;
+      removeRecordOps(env.doc, scalesDict, rec, ops);
+      if (rec.kind === 'dim') moveDimBlockRef(env, dimFields({ ...rec, body: bodyOf(rawNow(env, ops, rec)) })?.block ?? '', '', entity.type === 'DIMENSION' ? [entity.block] : [], ops);
+    }
+    if (entity.type === 'HATCH') removeViewCollectionOps(env.doc, entity, ops);
+    return { entity, ops, kept };
+  }
+  const st = st0;
+  let entity = e;
   if (drop.has(st.current)) {
     const sw = switchScale(env, e, remain[0]!);
     entity = sw.entity;
@@ -480,15 +770,28 @@ export function removeScales(env: EditEnv, e: Entity, names: readonly string[]):
   return { entity, ops, kept };
 }
 
+/** 같은 변경에서 만든 축척 사전(확장 사전 → 관리자 → 축척 사전) */
+function pendingScales(env: EditEnv, e: Entity, ops: EditOp[]): DictionaryObject | null {
+  const xd = pendingObject<DictionaryObject>(env.doc, ops, e.xdict!);
+  const mh = xd ? [...xd.entries].find(([k]) => k.toUpperCase() === 'ACDBCONTEXTDATAMANAGER')?.[1] : undefined;
+  const mg = mh ? pendingObject<DictionaryObject>(env.doc, ops, mh) : null;
+  const sh = mg ? [...mg.entries].find(([k]) => k.toUpperCase() === 'ACDB_ANNOTATIONSCALES')?.[1] : undefined;
+  return sh ? pendingObject<DictionaryObject>(env.doc, ops, sh) : null;
+}
+
 // ---------------------------------------------------------------------------
 // 위치 재설정(ANNORESET)·다른 편집 따라가기·복사본
 // ---------------------------------------------------------------------------
 
-/** 모든 축척 표현의 위치를 지금 보이는 표현의 위치로(크기는 축척마다) */
+/** 모든 축척 표현의 위치를 지금 보이는 표현의 위치로(크기는 축척마다). 치수·해치·다중 지시선은 모든 레코드를 지금 객체에서 다시 만든다 */
 export function resetScales(env: EditEnv, e: Entity): Edited {
   const ops: EditOp[] = [];
   const st = annoState(env.doc, e, env.idx);
   if (!st || st.foreign || !usesRecords(e)) return { entity: e, ops };
+  if (isPartKind(e)) {
+    const r = buildPartRecords(env, e, st, true, ops);
+    return { entity: r.entity, ops };
+  }
   const fCur = env.idx.factor(st.current);
   for (const r of st.records) {
     const s = env.idx.handle(r.scale);
@@ -543,11 +846,25 @@ function moveTextRecord(f: TextFields, s: Similarity): TextFields {
   return { ...f, insert: simApply(s, f.insert), align: f.align.x || f.align.y ? simApply(s, f.align) : f.align, rotation: f.rotation + s.rot };
 }
 
+/** 모양과 무관한 공통 특성(도면층·색·선종류 …) */
+const COMMON_KEYS = new Set(['handle', 'owner', 'layer', 'color', 'linetype', 'lineweight', 'ltscale', 'transparency', 'invisible', 'xdata', 'xdict', 'reactors', 'plotStyle', 'material', 'hyperlink', 'dwgRaw', 'graphics', 'paperSpace']);
+
+/** 공통 특성만 다른지(그러면 축척 표현은 그대로다) */
+function sameShape(a: Entity, b: Entity): boolean {
+  if (a === b) return true;
+  const key = (e: Entity) =>
+    JSON.stringify(e, function (this: unknown, k: string, v: unknown) {
+      return this === e && COMMON_KEYS.has(k) ? undefined : v;
+    });
+  return key(a) === key(b);
+}
+
 /**
  * 다른 편집(이동·회전·축척·특성)이 객체를 before → after로 바꾸었을 때 레코드를 따라가게 한다.
- * 보이는 축척의 레코드는 after의 데이터로, 다른 축척은 before → after의 닮음 변환으로 옮긴다.
- * 치수·다중 지시선의 AutoCAD 레코드는 그 축척의 그림이 낡으므로 지우고 자체 기록으로 옮긴다(그릴 때 다시 계산).
- * 돌려주는 객체는 after(자체 기록이 바뀌면 그 XDATA를 고친 것).
+ * TEXT·MTEXT·블록 참조: 보이는 축척의 레코드는 after의 데이터로, 다른 축척은 before → after의 닮음 변환으로 옮긴다.
+ * 치수·해치·다중 지시선: 모양이 바뀌었으면 모든 축척의 레코드를 after에서 다시 만든다(치수는 축척마다 다시 그린 그림,
+ * 해치는 패턴 선 × 배율 비, 다중 지시선은 컨텍스트 자료 × 배율 비). 도면층·색처럼 모양과 무관한 특성만 바뀌면 그대로 둔다.
+ * 돌려주는 객체는 after(주석 표지·확장 사전이 바뀌면 그것을 고친 것).
  */
 export function followEdit(env: EditEnv, before: Entity, after: Entity): Edited {
   const ops: EditOp[] = [];
@@ -555,7 +872,12 @@ export function followEdit(env: EditEnv, before: Entity, after: Entity): Edited 
   if (!st || st.foreign || before.type !== after.type) return { entity: after, ops };
   // 이미 이 모듈이 레코드를 다룬 객체(사전이 바뀌었으면)는 건드리지 않는다
   if (upper(before.xdict) !== upper(after.xdict)) return { entity: after, ops };
-  if (usesRecords(after)) {
+  if (isPartKind(after)) {
+    if (sameShape(before, after)) return { entity: after, ops };
+    const r = buildPartRecords(env, after, st, true, ops);
+    return { entity: r.entity, ops };
+  }
+  if (simKind(after)) {
     const sim = similarityBetween(before, after);
     for (const r of st.records) {
       const nm = env.idx.handle(r.scale)?.name.toUpperCase();
@@ -620,28 +942,6 @@ export function followEdit(env: EditEnv, before: Entity, after: Entity): Edited 
     }
     return { entity: after, ops };
   }
-  // 해치: 다른 축척 레코드의 패턴 선을 지금 선의 배율 비로
-  if (after.type === 'HATCH') {
-    const fCur = env.idx.factor(st.current);
-    for (const r of st.records) {
-      const s = env.idx.handle(r.scale);
-      if (!s || s.name.toUpperCase() === st.current) continue;
-      const f = hatchFields(r);
-      if (!f) continue;
-      rewriteRecordOps(env.doc, r, hatchRecordWithLines(r.raw, scaleLines(after.patternLines, factorOf(s) / fCur)), ops);
-    }
-    return { entity: after, ops };
-  }
-  // 치수·다중 지시선: 다른 축척의 AutoCAD 레코드를 자체 기록으로
-  if ((after.type === 'DIMENSION' || after.type === 'MULTILEADER') && st.records.length) {
-    const others = st.records.filter((r) => env.idx.handle(r.scale)?.name.toUpperCase() !== st.current);
-    if (!others.length) return { entity: after, ops };
-    const chain = contextChain(env.doc, before);
-    if (chain.scales) for (const r of others) removeRecordOps(env.doc, chain.scales, r, ops);
-    const curName = env.idx.name(st.current)?.name ?? st.current;
-    const names = st.scales.map((k) => env.idx.name(k)?.name ?? k);
-    return { entity: { ...after, xdata: withOwnRecord(after.xdata, { current: curName, scales: names }) }, ops };
-  }
   return { entity: after, ops };
 }
 
@@ -654,6 +954,18 @@ export function cloneRecordsForCopy(env: EditEnv, copy: Entity, original: Entity
   const xd = dictOf(env.doc, copy.xdict);
   if (!xd || upper(xd.owner) === upper(copy.handle)) return { entity: copy, ops };
   const src = original ?? (env.doc.entityIndex.get(upper(xd.owner)) as Entity | undefined);
+  if (isPartKind(copy)) {
+    // 치수·해치·다중 지시선: 원본의 축척 목록·보이는 축척으로 복사본의 레코드를 복사본에서 다시 만든다(치수는 축척마다 새 그림)
+    const st = annoState(env.doc, copy, env.idx);
+    const made: GenericObject[] = [];
+    const out = cloneChain(env, copy, xd, null, ops, made);
+    if (!st || st.foreign) return { entity: out, ops };
+    const records = made.map((o) => parseRecord(o, '')).filter((r): r is ContextRecord => !!r);
+    const byScale = new Map<string, ContextRecord | null>();
+    for (const k of st.scales) byScale.set(k, records.find((r) => env.idx.handle(r.scale)?.name.toUpperCase() === k) ?? null);
+    const r = buildPartRecords(env, out, { ...st, records, byScale }, true, ops, false);
+    return { entity: r.entity, ops };
+  }
   const sim = src ? similarityBetween(src, copy) : null;
   const out = cloneChain(env, copy, xd, sim, ops);
   if (out.type === 'INSERT') {
@@ -668,7 +980,7 @@ export function cloneRecordsForCopy(env: EditEnv, copy: Entity, original: Entity
   return { entity: out, ops };
 }
 
-function cloneChain<T extends Entity>(env: EditEnv, e: T, xd: NonNullable<ReturnType<typeof dictOf>>, sim: Similarity | null, ops: EditOp[]): T {
+function cloneChain<T extends Entity>(env: EditEnv, e: T, xd: NonNullable<ReturnType<typeof dictOf>>, sim: Similarity | null, ops: EditOp[], made?: GenericObject[]): T {
   const doc = env.doc;
   const xh = env.alloc();
   const entries: [string, string][] = [];
@@ -693,7 +1005,9 @@ function cloneChain<T extends Entity>(env: EditEnv, e: T, xd: NonNullable<Return
         let raw = (o as { raw?: ContextRecord['raw'] }).raw;
         const rec = raw ? parseRecord(o as GenericObject) : null;
         if (rec && sim) raw = movedRaw(env, rec, sim) ?? raw;
-        ops.push({ kind: 'object', key: rh, before: null, after: changed(o, { handle: rh, owner: sh, reactors: [sh], raw } as never) });
+        const copyObj = changed(o, { handle: rh, owner: sh, reactors: [sh], raw } as never);
+        ops.push({ kind: 'object', key: rh, before: null, after: copyObj });
+        made?.push(copyObj as GenericObject);
         sEntries.push([k3, rh]);
       }
       ops.push({ kind: 'object', key: sh, before: null, after: newDict(sh, mh, sEntries) });

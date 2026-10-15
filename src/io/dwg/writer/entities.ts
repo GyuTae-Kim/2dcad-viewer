@@ -23,6 +23,7 @@ import type {
   ViewportEntity,
 } from '../../../core/model';
 import { R2000, R2004, R2007, R2010, R2013, R2018 } from '../version';
+import { annoDimWriteXData, ctxRecordsOf } from '../../annoscale';
 import type { PBlock, PEnt, WCtx } from './context';
 import { HARD_OWNER, HARD_PTR, SOFT_PTR, type EntCommonOut, type ObjWriter } from './objwriter';
 import { eedOf, wcolor } from './common';
@@ -406,7 +407,7 @@ export class EntityWriter {
       case 'MTEXT':
         this.begin(T.MTEXT, h, e);
         this.common(e, l);
-        this.mtextBody(e, h);
+        this.mtextBody(e, h, this.annoMText(e));
         break;
       case 'INSERT':
         this.insert(e, pe, l);
@@ -677,8 +678,17 @@ export class EntityWriter {
     if (ps) hd.H(HARD_PTR, ps);
   }
 
-  /** MTEXT 본문(삽입점부터) */
-  private mtextBody(e: MTextEntity, h: number): void {
+  /** AutoCAD 컨텍스트 레코드(이 파일에 쓰는 것)를 가진 주석 MTEXT인지 */
+  private annoMText(e: MTextEntity): boolean {
+    if (this.ver < R2018 || !e.xdict) return false;
+    return ctxRecordsOf(this.ctx.doc, e).some((o) => o.type === 'ACDB_MTEXTOBJECTCONTEXTDATA_CLASS' && !!this.ctx.ref(o.handle));
+  }
+
+  /**
+   * MTEXT 본문(삽입점부터). annotative: R2018 주석 MTEXT는 "주석 아님" 비트가 0이고 인라인 기록이 없다
+   * (기본 축척의 값은 컨텍스트 레코드에 있다 — 인라인 기록으로 쓰면 AutoCAD가 기본 축척을 잃는다).
+   */
+  private mtextBody(e: MTextEntity, h: number, annotative = false): void {
     const ver = this.ver;
     const d = this.ow.dat;
     const dir = e.direction ?? ocsDirection(e.rotation || 0, e.extrusion);
@@ -712,7 +722,8 @@ export class EntityWriter {
         d.BL(0);
       }
     }
-    if (ver >= R2018) {
+    if (ver >= R2018 && annotative) d.B(0);
+    else if (ver >= R2018) {
       d.B(1); // 주석 축척 아님
       d.BS(0);
       d.B(1);
@@ -1030,7 +1041,8 @@ export class EntityWriter {
           break;
       }
     }
-    this.begin(type, h, e);
+    // 주석 치수의 DIMSCALE 재지정은 AutoCAD 값으로(io/annoscale.ts)
+    this.begin(type, h, { xdata: annoDimWriteXData(this.ctx.doc, e) });
     this.common(e, l);
     const d = this.ow.dat;
     if (ver >= R2010) d.RC(0);

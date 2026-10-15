@@ -78,7 +78,8 @@ import {
 } from './objects/nonentities';
 import { type Names, type ParsedEntity, readEntity, xdataFromEed } from './objects/entities';
 import { R2004, R2007, R2010 } from './version';
-import { captureRaw } from './rawbody';
+import { captureRaw, fingerprint } from './rawbody';
+import { DIM_CTX } from './ctxcodec';
 import { RAW_TAG_TYPES, decodeRawTags } from './objects/rawtags';
 import { decodeTableStyleBody } from './objects/tableraw';
 import { parseDimOverrides } from './xdata';
@@ -790,6 +791,15 @@ export function buildDocument(sec: DwgSections, opts: BuildOptions = {}): CadDoc
     }
   }
   doc.objects = objects;
+  // 주석 축척 치수 레코드의 블록(DXF 2): 푼 핸들을 블록 이름으로(ctxcodec.ts). 원본 본문 지문도 다시 잰다
+  for (const o of objects.values()) {
+    if (!DIM_CTX[o.type]) continue;
+    const g = o as GenericObject;
+    const t = g.raw?.find((x) => x.code === 2);
+    if (!t) continue;
+    t.value = blockName.get(parseInt(String(t.value), 16) || 0) ?? '';
+    if (g.dwgRaw) g.dwgRaw.fingerprint = fingerprint(g);
+  }
   // 표 머리(제어 객체): DWG로 다시 쓸 때 핸들·확장 사전을 잇는다
   {
     const heads = new Map<string, { handle: string; xdict?: string; reactors?: string[]; xdata?: ReturnType<typeof xdataFromEed> }>();
