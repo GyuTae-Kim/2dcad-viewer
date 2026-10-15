@@ -131,3 +131,10 @@ AutoCAD는 Autodesk의 상표이며, 이 프로젝트는 Autodesk와 관계가 �
 상단 ‘← 포트폴리오’는 작업 중에도 표시되며, 시작 화면에는 OpenCAD 도구 목록과 포트폴리오 링크가 있습니다.
 
 검색 제목과 설명은 무료 2D 캐드 뷰어와 실제 지원 기능을 중심으로 작성합니다. `index.html`의 `#viewer-guide`는 지원 형식·무료 사용 범위·도면 처리 방식·제작자를 안내하며, 앱 시작 화면에서도 같은 요소를 사용합니다. 검색어를 반복하거나 지원하지 않는 형식·인증·호환성을 홍보하지 않습니다.
+
+
+## 웹 사용 안내와 초기 로딩
+
+시작 화면의 사용 안내에서 [DWG·DXF 열기](https://gyutae-kim.github.io/opencad/guides/open-dwg-dxf)와 [측정·PDF 출력](https://gyutae-kim.github.io/opencad/guides/measure-export)으로 이동할 수 있습니다. 안내 링크는 JavaScript 실행 전 HTML과 실행 후 시작 화면에 함께 제공됩니다.
+
+2D 해석 워커는 첫 엔진 요청에서 시작합니다. 저장해 둔 SHX 글꼴을 복원하는 경우에도 엔진 요청이 발생할 수 있습니다. 워커 초기화 메시지가 파일 요청보다 먼저 전달되며, 이후 요청은 같은 워커를 재사용합니다. 메인 UI 번들은 별도로 로드되므로 이 변경을 모바일 Core Web Vitals 개선 수치로 해석하지 않습니다.
