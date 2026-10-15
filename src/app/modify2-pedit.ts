@@ -744,3 +744,15 @@ async function cvEdit(app: App, ctx: CommandContext, t: Tools, h: string): Promi
   }
 }
 
+/** MPEDIT(Express Tools): 고른 객체를 PEDIT 다중(M) 흐름으로 바로 편집한다(한 객체여도 다중 옵션) */
+export async function peditMultiple(app: App, ctx: CommandContext, hs: string[], label = 'MPEDIT'): Promise<void> {
+  const st = app.active!;
+  const t = makeTools(app, ctx, label);
+  try {
+    await peditMulti(app, ctx, t, unlockedOnly(app, hs), hnum(st.doc, '$PEDITACCEPT', 0) === 1);
+  } finally {
+    app.view.overlay.marks = [];
+    st.selection.clear();
+    app.refreshSelectionOverlay();
+  }
+}

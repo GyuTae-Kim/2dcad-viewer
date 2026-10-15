@@ -701,6 +701,84 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
       },
     ],
   },
+  {
+    tab: 'Express Tools',
+    panels: [
+      {
+        title: '문자',
+        large: [{ cmd: 'TCASE', label: '대소문자', icon: 'text', tip: '문자의 대소문자 바꾸기 (TCASE)' }],
+        cols: [
+          [
+            { cmd: 'TCOUNT', label: '번호 매기기', icon: 'list', tip: '고른 문자에 차례 번호 (TCOUNT)' },
+            { cmd: 'TORIENT', label: '방향 맞추기', icon: 'rotate', tip: '문자를 읽기 쉬운 방향으로 (TORIENT)' },
+            { cmd: 'TEXTFIT', label: '폭 맞춤', icon: 'scale', tip: '문자 폭을 끝점에 맞춤 (TEXTFIT)' },
+          ],
+          [
+            { cmd: 'TEXTMASK', label: '문자 가리기', icon: 'background', tip: '문자 뒤에 가리개 (TEXTMASK)' },
+            { cmd: 'TEXTUNMASK', label: '가리기 해제', icon: 'eyeOff', tip: '문자 가리개 지우기 (TEXTUNMASK)' },
+            { cmd: 'TCIRCLE', label: '문자 둘레', icon: 'circle', tip: '문자 둘레에 원·슬롯·사각형 (TCIRCLE)' },
+          ],
+          [
+            { cmd: 'TXTEXP', label: '문자 분해', icon: 'explode', tip: '문자를 폴리선 형상으로 (TXTEXP)' },
+            { cmd: 'ARCTEXT', label: '원호 정렬 문자', icon: 'arc', tip: '호를 따라 놓인 문자 (ARCTEXT)' },
+            { cmd: 'TXT2MTXT', label: '여러 줄로', icon: 'mtext', tip: '단일 행 문자를 여러 줄 문자로 (TXT2MTXT)' },
+          ],
+        ],
+      },
+      {
+        title: '블록',
+        cols: [
+          [
+            { cmd: 'GATTE', label: '전체 속성 편집', icon: 'insert', tip: '모든 블록 참조의 속성 값을 한 번에 (GATTE)' },
+            { cmd: 'NCOPY', label: '중첩 복사', icon: 'copy', tip: '블록·외부 참조 안의 객체 복사 (NCOPY)' },
+            { cmd: 'XLIST', label: '중첩 객체 정보', icon: 'info', tip: '블록·외부 참조 안 객체의 특성 (XLIST)' },
+          ],
+          [
+            { cmd: 'BURST', label: '분해(속성 유지)', icon: 'explode', tip: '속성을 문자로 남기고 분해 (BURST)' },
+            { cmd: 'BLOCKREPLACE', label: '블록 대체', icon: 'block', tip: '블록 참조를 다른 블록으로 (BLOCKREPLACE)' },
+          ],
+        ],
+      },
+      {
+        title: '수정',
+        cols: [
+          [
+            { cmd: 'MPEDIT', label: '다중 폴리선 편집', icon: 'pline', tip: '여러 객체를 한 번에 PEDIT (MPEDIT)' },
+            { cmd: 'EXOFFSET', label: '확장 간격띄우기', icon: 'offset', tip: '도면층·간격 유형·결합 옵션 (EXOFFSET)' },
+            { cmd: 'BREAKLINE', label: '끊기선', icon: 'break', tip: '끊기선 기호 그리기 (BREAKLINE)' },
+          ],
+          [
+            { cmd: 'FLATTEN', label: '평면화', icon: 'model', tip: 'Z·고도·두께를 0으로 (FLATTEN)' },
+            { cmd: 'EXTRIM', label: '경계로 자르기', icon: 'trim', tip: '닫힌 경계 안·밖을 자름 (EXTRIM)' },
+            { cmd: 'OVERKILL', label: '중복 삭제', icon: 'erase', tip: '겹친 객체 지우기 (OVERKILL)' },
+          ],
+        ],
+      },
+      {
+        title: '선택',
+        cols: [
+          [
+            { cmd: 'SSX', label: '특성으로 선택', icon: 'selectAll', tip: '기준 객체와 같은 특성으로 선택 (SSX)' },
+            { cmd: 'GETSEL', label: '도면층·유형 선택', icon: 'layers', tip: '도면층과 객체 유형으로 선택 (GETSEL)' },
+          ],
+        ],
+      },
+      {
+        title: '도구',
+        cols: [
+          [
+            { cmd: 'CDORDER', label: '색상 순서', icon: 'drawOrder', tip: '색상 순서로 그리기 순서 (CDORDER)' },
+            { cmd: 'MKLTYPE', label: '선종류 만들기', icon: 'line', tip: '고른 형상으로 선종류 정의 (MKLTYPE)' },
+            { cmd: 'SHOWURLS', label: 'URL 목록', icon: 'find', tip: '하이퍼링크 목록·편집 (SHOWURLS)' },
+          ],
+          [
+            { cmd: 'REDIR', label: '경로 바꾸기', icon: 'folder', tip: '외부 참조·이미지·글꼴 경로 (REDIR)' },
+            { cmd: 'XDLIST', label: '확장 데이터', icon: 'id', tip: '객체의 확장 데이터 보기 (XDLIST)' },
+          ],
+        ],
+      },
+    ],
+  },
 ];
 
 export class Shell implements UiHooks {
