@@ -56,8 +56,8 @@ export interface PlotSettings {
   window?: [number, number, number, number];
 }
 
-/** 문서별 마지막 출력 설정 */
-const lastSettings = new WeakMap<DocState, PlotSettings>();
+/** 문서별 마지막 출력 설정(PLOT·-PLOT이 함께 쓴다) */
+export const lastSettings = new WeakMap<DocState, PlotSettings>();
 
 /** 모형 출력 페이지 */
 function modelPlotPage(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Page | null {

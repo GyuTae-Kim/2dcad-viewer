@@ -16,7 +16,7 @@ import { currentProps } from './draw';
 import { form } from './ui/dom';
 import type { OverlayGeom } from './view';
 
-interface HatchSettings {
+export interface HatchSettings {
   pattern: string;
   scale: number;
   angle: number;
@@ -34,7 +34,8 @@ function hnum(doc: CadDocument, k: string, d: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : d;
 }
 
-function settingsOf(st: DocState): HatchSettings {
+/** 문서별 해치 설정(HATCH·-HATCH가 함께 쓴다) */
+export function settingsOf(st: DocState): HatchSettings {
   let s = settings.get(st);
   if (!s) {
     const d = st.doc;
@@ -55,7 +56,7 @@ function settingsOf(st: DocState): HatchSettings {
 }
 
 /** 지금 공간에서 보이는 경계 후보 */
-function candidates(st: DocState): Entity[] {
+export function candidates(st: DocState): Entity[] {
   const block = st.doc.blocks.get(st.space);
   if (!block) return [];
   return block.entities.filter((e) => {

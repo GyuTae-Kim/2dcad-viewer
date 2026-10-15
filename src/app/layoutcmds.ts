@@ -10,6 +10,7 @@ import type { DocState } from './docstate';
 import { PAPERS } from './plot';
 import { paperInfo } from './scene';
 import { ask, form } from './ui/dom';
+import { inScript } from './script';
 
 const STYLE_SHEETS = ['', 'monochrome.ctb', 'Grayscale.ctb', 'acad.ctb', 'Screening 50%.ctb', 'Fill Patterns.ctb'];
 
@@ -285,11 +286,14 @@ export function registerLayoutCommands(app: App): void {
             ctx.print('배치가 하나뿐이라 삭제할 수 없습니다.', 'err');
             return;
           }
-          const a = await ask('배치 삭제', `배치 "${l.name}"이(가) 영구적으로 삭제됩니다(명령 취소로 되돌릴 수 있습니다).`, [
-            { label: '삭제', value: 'ok', primary: true },
-            { label: '취소', value: 'cancel' },
-          ]);
-          if (a !== 'ok') return;
+          // 스크립트에서는 AutoCAD 명령행처럼 확인 없이 지운다
+          if (!inScript(app)) {
+            const a = await ask('배치 삭제', `배치 "${l.name}"이(가) 영구적으로 삭제됩니다(명령 취소로 되돌릴 수 있습니다).`, [
+              { label: '삭제', value: 'ok', primary: true },
+              { label: '취소', value: 'cancel' },
+            ]);
+            if (a !== 'ok') return;
+          }
           const key = tableKey(l.blockName);
           if (st.displaySpace === key) await app.setSpace('*Model_Space');
           const ops: EditOp[] = [{ kind: 'layout', key, before: l, after: null }];

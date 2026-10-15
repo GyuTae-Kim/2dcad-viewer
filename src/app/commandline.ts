@@ -64,7 +64,11 @@ export class CommandLine {
     this.hist.scrollTop = this.hist.scrollHeight;
   }
 
+  /** 출력을 지켜보는 고리(스크립트 실행기가 오류 출력을 알아챈다) */
+  onPrint: ((text: string, cls?: 'err' | 'res') => void) | null = null;
+
   print(text: string, cls?: 'err' | 'res'): void {
+    this.onPrint?.(text, cls);
     const div = document.createElement('div');
     if (cls) div.className = cls;
     div.textContent = text;

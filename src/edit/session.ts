@@ -368,6 +368,20 @@ export class EditSession {
     return tx;
   }
 
+  /** depth(앞서 읽은 깊이) 뒤에 쌓인 명령 취소 항목을 하나로 합친다(스크립트 한 번 = 명령 취소 한 번). 합친 항목 수 */
+  squashUndo(depth: number, label: string): number {
+    const from = Math.max(0, Math.min(depth, this.undoStack.length));
+    const n = this.undoStack.length - from;
+    if (n < 2) return n;
+    const items = this.undoStack.splice(from, n);
+    const tx: Transaction = { label, ops: items.flatMap((t) => t.ops) };
+    if (items.some((t) => t.rebuildNow)) tx.rebuildNow = true;
+    this.undoStack.push(tx);
+    if (this.savedDepth === from + n) this.savedDepth = from + 1;
+    else if (this.savedDepth > from) this.savedDepth = -1;
+    return n;
+  }
+
   /** 명령 취소 기록 깊이(블록 편집기에서 변경을 버릴 때 쓴다) */
   get depth(): number {
     return this.undoStack.length;

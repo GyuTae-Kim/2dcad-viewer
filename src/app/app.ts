@@ -320,6 +320,11 @@ export class App {
     return this.running?.name ?? null;
   }
 
+  /** 명령이 기다리는 입력(스크립트 실행기가 다음 입력을 넣을 때를 안다). 없으면 null */
+  get pendingInput(): { readonly kind: 'point' | 'entity' | 'select'; readonly prompt: string; readonly remove?: boolean } | null {
+    return this.request;
+  }
+
   cancel(silent = false): void {
     if (this.request) {
       const r = this.request;

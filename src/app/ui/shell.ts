@@ -10,6 +10,7 @@ import { colorText } from '../inquiry';
 import { type Field, GENERAL_FIELDS, applyField, commonValue } from '../propedit';
 import { currentLayer, setCurrentLayer } from '../layers';
 import { layerStateNames, newLayerState, restoreLayerStateNamed } from '../layerstate';
+import { runScriptFile } from '../dashcmds';
 import { isoState, setIso } from '../viewtools-iso';
 import { maximized, maximizedLabel } from '../viewtools-vpmax';
 import { pickColor } from './colorpick';
@@ -647,6 +648,16 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         ],
       },
       {
+        title: '스크립트',
+        large: [{ cmd: 'SCRIPT', label: '스크립트 실행', icon: 'open', noDoc: true, tip: '.scr 파일을 명령행에 차례로 넣기 (SCR, 파일을 끌어 놓아도 됨)' }],
+        cols: [
+          [
+            { cmd: 'RESUME', label: '이어서', icon: 'redo', noDoc: true, tip: '멈춘 스크립트를 이어서 실행 (RESUME)' },
+            { cmd: 'RSCRIPT', label: '처음부터', icon: 'undo', noDoc: true, tip: '스크립트를 처음부터 다시 (RSCRIPT)' },
+          ],
+        ],
+      },
+      {
         title: 'CAD 표준',
         cols: [
           [
@@ -682,6 +693,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
           { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
+        cols: [[{ cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' }]],
       },
       {
         title: '내보내기',
@@ -821,7 +833,7 @@ export class Shell implements UiHooks {
   private readonly workspace: HTMLDivElement;
 
   constructor(root: HTMLElement) {
-    this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.DXF,.DWG', multiple: true, hidden: true });
+    this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.DXF,.DWG,.SCR', multiple: true, hidden: true });
     this.title = h('div', { class: 'titlebar' });
     this.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist' });
     this.ribbon = h('div', { class: 'ribbon' });
@@ -881,6 +893,11 @@ export class Shell implements UiHooks {
 
   async openFiles(files: File[]): Promise<void> {
     for (const f of files) {
+      // 스크립트 파일은 도면으로 열지 않고 명령행에 차례로 넣는다
+      if (/\.scr$/i.test(f.name)) {
+        await runScriptFile(this.app, f);
+        continue;
+      }
       if (f.size > 512 * 1024 * 1024) {
         toast(`${f.name}: 512MB보다 큰 파일은 열 수 없습니다.`, 'error');
         continue;
