@@ -67,6 +67,7 @@ import { registerFileCommands } from './app/filecmds';
 import { registerBlkCommands } from './app/blkcmds';
 import { registerLispCommands } from './app/lisp';
 import { Shell } from './app/ui/shell';
+import { View3dManager } from './app/view3d/manager';
 import { dialog, h, toast } from './app/ui/dom';
 import { baseName, download, exportRaster, exportSvg } from './app/export';
 
@@ -93,6 +94,9 @@ try {
 }
 app.ui = shell;
 shell.attach(app);
+// 3D 문서(NC·STEP·SKP): 파일 탭에 2D 도면과 나란히 연다
+const view3d = new View3dManager(app, shell);
+shell.mode3d = view3d;
 registerCommands(app);
 registerDrawCommands(app);
 registerBlockCommands(app);
@@ -177,8 +181,11 @@ app.register({ name: 'OPEN', title: '열기', noDoc: true, run: () => shell.pick
 app.register({
   name: 'CLOSE',
   title: '닫기',
-  run: () => {
-    if (app.active) app.close(app.active);
+  noDoc: true,
+  run: (ctx) => {
+    if (app.active) void app.close(app.active);
+    else if (view3d.active) view3d.closeActive();
+    else ctx.print('열린 도면이 없습니다.', 'err');
   },
 });
 app.register({ name: 'DWGINFO', aliases: ['DWGPROPS'], title: '도면 정보', run: () => shell.showInfo() });
@@ -248,6 +255,8 @@ app.register({
       ['Ctrl+1 · Ctrl+A · Ctrl+P · Ctrl+9', '특성 · 모두 선택 · 플롯 · 명령행 숨기기'],
       ['Ctrl+Tab · Ctrl+PgUp/PgDn', '다음 도면 · 배치 전환'],
       ['터치', '한 손가락 = 이동, 두 손가락 = 확대·축소, 탭 = 선택'],
+      ['3D 문서(NC·STEP·SKP)', '왼쪽 끌기 = 회전, 가운데·오른쪽 끌기 = 이동, 휠 = 확대·축소, 누르기 = 고르기'],
+      ['3D 문서의 키', 'F = 전체 보기, 1 앞 · 2 뒤 · 3 왼쪽 · 4 오른쪽 · 5 위 · 6 아래 · 7 등각, Esc = 측정·선택 지우기, F7 = 격자, Space = NC 재생/멈춤'],
     ];
     const cmds = [...app.commands.values()]
       .filter((c) => !['MEASURERADIUS', 'ZOOMIN', 'ZOOMOUT', 'GRIPEDIT'].includes(c.name))
@@ -289,7 +298,8 @@ app.activate(null);
 
 // 주소에 ?sample 이 있으면 예제를, ?open=주소 가 있으면 그 파일을 연다
 const params = new URLSearchParams(location.search);
-if (params.has('sample')) void shell.openSample();
+if (params.get('sample') === 'nc') void view3d.openSample();
+else if (params.has('sample')) void shell.openSample();
 const openUrl = params.get('open');
 if (openUrl) {
   void (async () => {
@@ -299,7 +309,7 @@ if (openUrl) {
       const r = await fetch(u);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const name = decodeURIComponent(u.pathname.split('/').pop() || 'drawing.dxf');
-      await app.openFile(name, await r.arrayBuffer());
+      await shell.openData(name, await r.arrayBuffer());
     } catch (e) {
       toast(`파일을 받지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
     }
@@ -308,3 +318,4 @@ if (openUrl) {
 
 // 개발용 접근
 (window as unknown as { opencad: App }).opencad = app;
+(window as unknown as { opencad3d: View3dManager }).opencad3d = view3d;

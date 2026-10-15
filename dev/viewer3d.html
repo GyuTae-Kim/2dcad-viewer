@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>3D 뷰어 개발 확인</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1b1f25;
+        color: #e8ebf0;
+        font: 13px/1.4 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+      }
+      body[data-theme='light'] {
+        background: #e2e5ea;
+        color: #1d2530;
+      }
+      #bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 6px;
+        box-sizing: border-box;
+      }
+      #bar button,
+      #bar label {
+        font: inherit;
+        padding: 3px 8px;
+        border: 1px solid #46505d;
+        border-radius: 4px;
+        background: #303743;
+        color: inherit;
+        cursor: pointer;
+      }
+      body[data-theme='light'] #bar button,
+      body[data-theme='light'] #bar label {
+        background: #f7f8fa;
+        border-color: #c3c9d2;
+      }
+      #bar button[aria-pressed='true'],
+      body[data-theme='light'] #bar button[aria-pressed='true'] {
+        background: #1d5fae;
+        border-color: #1d5fae;
+        color: #fff;
+      }
+      #bar .sep {
+        width: 8px;
+      }
+      #view {
+        position: absolute;
+        top: 74px;
+        left: 0;
+        right: 0;
+        bottom: 26px;
+      }
+      #status {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 26px;
+        padding: 4px 8px;
+        box-sizing: border-box;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12px;
+      }
+      #play {
+        width: 220px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bar"></div>
+    <div id="view"></div>
+    <div id="status">준비 중…</div>
+    <script type="module" src="/src/viewer3d/dev.ts"></script>
+  </body>
+</html>

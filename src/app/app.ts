@@ -293,7 +293,7 @@ export class App {
       return;
     }
     if (!c.noDoc && !this.active) {
-      this.cmd.print('열린 도면이 없습니다. 먼저 파일을 여십시오.', 'err');
+      this.cmd.print(this.noDocMessage?.() ?? '열린 도면이 없습니다. 먼저 파일을 여십시오.', 'err');
       return;
     }
     const prev = this.running && !c.transparent ? this.running : null;
@@ -736,7 +736,13 @@ export class App {
     this.view.zoomExtents(false);
   }
 
+  /** 탭 바꾸기 직전(3D 문서가 자기 보기를 접는다 — src/app/view3d/manager.ts) */
+  onActivate: ((st: DocState | null) => void) | null = null;
+  /** 도면이 필요한 명령을 도면 없이 부를 때의 안내(3D 문서가 활성이면 그 안내) */
+  noDocMessage: (() => string | null) | null = null;
+
   activate(st: DocState | null): void {
+    this.onActivate?.(st);
     this.cancel(true);
     this.active = st;
     this.view.setState(st);
