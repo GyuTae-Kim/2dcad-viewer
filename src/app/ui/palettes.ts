@@ -14,6 +14,7 @@ import { icon } from './icons';
 import { dynPaletteGroup } from '../dynblock';
 import { arrayPaletteGroup } from '../assocarray-ui';
 import { annoCurrentRow, annoPaletteGroup } from '../annoscale-palette';
+import { layerFilterPanel } from '../layerfilter-ui';
 
 type Tab = 'props' | 'layers' | 'dims' | 'find';
 
@@ -323,7 +324,9 @@ export class Palette {
     });
     const used = layerUsage(app);
     const q = this.layerFilter.trim().toUpperCase();
-    const rows = [...st.doc.layers.entries()].filter(([k]) => !q || k.includes(q)).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ko'));
+    // 도면층 필터(필터 트리에서 고른 필터와 필터 반전) 안에서 이름 찾기
+    const lf = layerFilterPanel(app, () => this.refresh());
+    const rows = [...st.doc.layers.entries()].filter(([k]) => lf.visible.has(k) && (!q || k.includes(q))).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ko'));
     const clayer = tableKey(currentLayer(app));
     if (this.layerSel && !st.doc.layers.has(this.layerSel)) this.layerSel = null;
     const sel = this.layerSel;
@@ -340,6 +343,7 @@ export class Palette {
         onclick: () => sel && deleteLayer(app, sel),
       }),
       h('button', { class: 'icon-btn', title: '현재 도면층으로', 'aria-label': '현재 도면층으로', html: icon('layerCurrent'), disabled: !sel, onclick: () => sel && setCurrentLayer(app, sel) }),
+      ...lf.barButtons,
       h('span', { class: 'status-sep' }),
       h('button', { class: 'btn', onclick: () => patchLayers(app, 'LAYON', rows.map(([, l]) => [l.name, { off: false }])) }, '모두 켜기'),
       h('button', { class: 'btn', onclick: () => patchLayers(app, 'LAYTHW', rows.map(([, l]) => [l.name, { frozen: false }])) }, '동결 해제'),
@@ -395,6 +399,7 @@ export class Palette {
         this.refresh();
       });
       tr.addEventListener('dblclick', () => setCurrentLayer(app, lay.name));
+      lf.draggable(tr, lay.name);
       tr.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         this.layerSel = k;
@@ -414,6 +419,7 @@ export class Palette {
           { label: '고른 객체를 이 도면층으로', disabled: !st.selection.size, run: () => applyField(app, [...st.selection], GENERAL_FIELDS[0]!, lay.name) },
           { separator: true },
           { label: '도면층 지우기', icon: 'layerDelete', disabled: !!cannotDeleteLayer(app, k), run: () => deleteLayer(app, k) },
+          ...lf.rowMenu(lay.name),
         ]);
       });
       tbody.append(tr);
@@ -421,7 +427,7 @@ export class Palette {
     this.body.append(
       search,
       bar,
-      h(
+      lf.wrap(h(
         'div',
         { class: 'layer-table' },
         h(
@@ -434,7 +440,8 @@ export class Palette {
           ),
           tbody,
         ),
-      ),
+      )),
+      lf.footer(rows.length),
       h('div', { style: 'margin-top:8px;color:var(--text-faint)' }, '행을 두 번 누르면 현재 도면층이 되고, 이름을 두 번 누르면 이름을 바꿉니다. 오른쪽 클릭으로 더 많은 기능을 씁니다.'),
     );
   }

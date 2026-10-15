@@ -5,6 +5,7 @@
 import type { Entity, Layer } from '../core/model';
 import { tableKey } from '../core/model';
 import type { EditOp } from '../edit/session';
+import { dropLayerFromFiltersOps } from '../edit/layerfilter/store';
 import { cloneEntity } from '../edit/session';
 import type { App } from './app';
 
@@ -135,7 +136,9 @@ export function deleteLayer(app: App, key: string): boolean {
   }
   const k = tableKey(key);
   const before = st.doc.layers.get(k)!;
-  st.session.commit({ label: 'LAYER', ops: [{ kind: 'layer', key: k, before, after: null }] });
+  // 그룹 필터(도면층 필터)에서도 뺀다
+  const filterOps = dropLayerFromFiltersOps(st.doc, before.handle, () => st.session.newHandle());
+  st.session.commit({ label: 'LAYER', ops: [...filterOps, { kind: 'layer', key: k, before, after: null }] });
   return true;
 }
 
