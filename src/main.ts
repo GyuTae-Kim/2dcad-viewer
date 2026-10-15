@@ -81,6 +81,9 @@ try {
       h('h2', {}, '이 브라우저에서는 뷰어를 실행할 수 없습니다'),
       h('p', {}, e instanceof Error ? e.message : String(e)),
       h('p', {}, '최신 Chrome, Edge, Firefox, Safari에서 열어 주십시오. 하드웨어 가속(WebGL2)이 꺼져 있으면 켜 주십시오.'),
+      h('a', { href: 'https://gyutae-kim.github.io/' }, '김규태 포트폴리오로 돌아가기'),
+      ' · ',
+      h('a', { href: 'https://gyutae-kim.github.io/opencad' }, 'OpenCAD 도구 목록'),
     ),
   );
   throw e;

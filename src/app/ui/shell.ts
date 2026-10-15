@@ -854,7 +854,7 @@ export class Shell implements UiHooks {
     this.layoutTabs = h('div', { class: 'layouttabs' });
     this.coords = h('span', { class: 'coords' });
     this.status = h('div', { class: 'statusbar' });
-    root.append(this.title, this.ribbonTabs, this.ribbon, this.fileTabs, this.workspace, this.layoutTabs, this.status, this.fileInput);
+    root.replaceChildren(this.title, this.ribbonTabs, this.ribbon, this.fileTabs, this.workspace, this.layoutTabs, this.status, this.fileInput);
     this.fileInput.addEventListener('change', () => {
       const files = [...(this.fileInput.files ?? [])];
       this.fileInput.value = '';
@@ -962,6 +962,7 @@ export class Shell implements UiHooks {
     const right = h(
       'div',
       { class: 'title-right' },
+      h('a', { class: 'portfolio-link', href: 'https://gyutae-kim.github.io/', title: '김규태 포트폴리오로 돌아가기' }, '← 포트폴리오'),
       this.iconBtn('help', '도움말 (F1)', () => void app.run('HELP')),
       this.iconBtn('fullscreen', '전체 화면', () => void app.run('FULLSCREEN')),
     );
@@ -1512,7 +1513,7 @@ export class Shell implements UiHooks {
         ),
         h(
           'div',
-          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
+          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
         ),
       ),
     );

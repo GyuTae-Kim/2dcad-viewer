@@ -112,3 +112,11 @@ DXF·DWG 리더와 DXF 쓰기, 치수 생성기 테스트는 로컬 도면을 ez
 
 MIT. 함께 배포하는 글꼴 등은 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 보십시오.
 AutoCAD는 Autodesk의 상표이며, 이 프로젝트는 Autodesk와 관계가 없습니다.
+
+## 검색 및 링크 공유
+
+대표 주소는 `https://gyutae-kim.github.io/2dcad-viewer/`입니다. `index.html`에 검색 설명, canonical, Open Graph·Twitter, WebApplication·탐색경로 구조화 데이터를 둡니다. 앱 실행 전에도 기능 안내와 포트폴리오 링크를 읽을 수 있고, 실행 후에는 같은 안내를 시작 화면에서 제공합니다. 공유 이미지는 `public/og-opencad.jpg`(1200×630)입니다.
+
+`public/sitemap.xml`은 이 뷰어 주소를 포함합니다. 호스트 전체의 `robots.txt`와 통합 사이트맵은 포트폴리오 저장소에서 관리합니다. 하위 프로젝트의 `robots.txt`로 호스트 수집 규칙을 바꿀 수는 없습니다. 새 공개 도구를 추가하면 포트폴리오의 `OPENCAD_TOOLS`에도 실제 주소를 등록합니다.
+
+상단 ‘← 포트폴리오’는 작업 중에도 표시되며, 시작 화면에는 OpenCAD 도구 목록과 포트폴리오 링크가 있습니다.
