@@ -1770,7 +1770,7 @@ button.aci.on {
   color: #e8ebf0;
 }
 /* Lightweight welcome page; CAD is loaded after an open/create action. */
-.site-intro.boot-start { width: min(928px, 100%); max-height: 100%; }
+.site-intro.boot-start { width: min(928px, 100%); max-height: 100%; margin: 0 auto; }
 .site-intro.boot-start a { color: #8cc5ff; }
 [data-theme="light"] .site-intro.boot-start a { color: #165da8; }
 .boot-start nav a { display: inline-flex; align-items: center; min-height: 32px; }
@@ -1781,6 +1781,6 @@ button.aci.on {
 .boot-status:empty { display: none; }
 .boot-recent { margin: 20px 0; }
 .boot-recent h2 { font-size: 18px; margin: 0 0 8px; }
-.boot-recent-list { display: grid; gap: 8px; min-height: 44px; color: var(--text-dim); }
+.boot-recent-list { display: grid; gap: 8px; min-height: 3.4em; color: var(--text-dim); }
 .boot-recent button { text-align: left; overflow-wrap: anywhere; }
 .boot-start button:disabled { opacity: .65; cursor: wait; }

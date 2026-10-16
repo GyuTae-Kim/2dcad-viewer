@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mountWelcome, type EditorActions } from '../src/app/startup';
 const recent = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn() }));
@@ -17,7 +18,7 @@ beforeEach(() => {
   recent.get.mockResolvedValue(null);
   history.replaceState(null, '', '/');
   localStorage.clear();
-  document.body.innerHTML = '<div id="app"><main class="site-intro"><h1>OpenCAD</h1><p>DWG·DXF</p><section id="viewer-guide">안내</section></main></div>';
+  document.body.innerHTML = readFileSync('index.html', 'utf8').match(/<body>([\s\S]*)<\/body>/)![1];
   root = document.getElementById('app')!;
   ready = { openFiles: vi.fn().mockResolvedValue(undefined), openSample: vi.fn().mockResolvedValue(undefined), newDrawing: vi.fn().mockResolvedValue(undefined), openRecent: vi.fn().mockResolvedValue(undefined) };
 });
@@ -32,7 +33,7 @@ describe('intent-driven CAD startup', () => {
     root.querySelector('input')!.dispatchEvent(new Event('change'));
     await flush();
     expect(load).not.toHaveBeenCalled();
-    expect(root.querySelector('#viewer-guide')!.textContent).toBe('안내');
+    expect(root.querySelector('#viewer-guide')!.textContent).toContain('DWG·DXF');
     picker.mockRestore();
   });
   it('loads once and opens all selected files through the existing editor actions', async () => {

@@ -16,17 +16,10 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
   if (!intro) throw new Error('Missing welcome page');
   intro.classList.add('boot-start');
   const events = new AbortController();
-  const actions = document.createElement('div');
-  actions.className = 'boot-actions';
-  const status = document.createElement('p');
-  status.className = 'boot-status';
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.dxf,.dwg,.scr,.lsp,.mnl';
-  input.multiple = true;
-  input.hidden = true;
+  const actions = intro.querySelector<HTMLElement>('.boot-actions')!;
+  const status = intro.querySelector<HTMLElement>('.boot-status')!;
+  const input = intro.querySelector<HTMLInputElement>('[data-startup-files]')!;
+  const list = intro.querySelector<HTMLElement>('.boot-recent-list')!;
   let editor: Promise<EditorActions> | null = null;
   const busy = (value: boolean) => {
     intro.setAttribute('aria-busy', String(value));
@@ -68,13 +61,14 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
     element.addEventListener('click', action, { signal: events.signal });
     return element;
   };
-  actions.append(
-    button('파일 열기', () => input.click(), true),
-    button('예제 도면 열기', () => run((ready) => ready.openSample())),
-    button('새 도면', () => run((ready) => ready.newDrawing())),
-  );
-  intro.querySelector('h1 + p')?.after(actions, status);
-  intro.append(input);
+  const bind = (name: string, action: () => void) => {
+    const element = actions.querySelector<HTMLButtonElement>(`[data-startup-action="${name}"]`)!;
+    element.disabled = false;
+    element.addEventListener('click', action, { signal: events.signal });
+  };
+  bind('open', () => input.click());
+  bind('sample', () => run((ready) => ready.openSample()));
+  bind('new', () => run((ready) => ready.newDrawing()));
   input.addEventListener('change', () => {
     const files = Array.from(input.files ?? []);
     input.value = '';
@@ -98,16 +92,6 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
   }, { signal: events.signal });
 
   const recent = new RecentStore();
-  const section = document.createElement('section');
-  section.className = 'boot-recent';
-  section.setAttribute('aria-label', '최근 문서');
-  const heading = document.createElement('h2');
-  heading.textContent = '최근 문서';
-  const list = document.createElement('div');
-  list.className = 'boot-recent-list';
-  list.textContent = '최근 문서를 확인하고 있습니다…';
-  section.append(heading, list);
-  status.after(section);
   void recent.list().then((entries) => {
     if (!root.contains(intro)) return;
     list.replaceChildren();
