@@ -1,6 +1,6 @@
 {
   "title": "OpenCAD | 무료 캐드 뷰어 · DWG·DXF 열기",
-  "description": "무료 캐드 뷰어 OpenCAD에서 DWG·DXF 도면을 열고 측정·편집·저장하세요. PDF 출력과 NC·STEP·SKP 3D 보기를 지원합니다. 설치·회원가입 없이 도면 파일을 이 컴퓨터의 브라우저에서 처리합니다.",
+  "description": "무료 캐드 뷰어 OpenCAD에서 DWG·DXF 도면을 열고 측정·편집·저장하세요. PDF·PNG·SVG 출력을 지원합니다. 설치·회원가입 없이 도면 파일을 이 컴퓨터의 브라우저에서 처리합니다.",
   "url": "https://gyutae-kim.github.io/2dcad-viewer/",
   "siteName": "OpenCAD 2D 캐드 뷰어",
   "language": "ko",
@@ -33,11 +33,10 @@
       "DWG R13~R2018·DXF R12~R2018 열기",
       "거리·각도·면적 측정, 도면층·치수 확인",
       "그리기·편집, DWG·DXF 저장",
-      "PDF·PNG·SVG 출력",
-      "NC 공구 경로·STEP·SketchUp 2021 이후 SKP 3D 보기"
+      "PDF·PNG·SVG 출력"
     ],
     "alternateName": "OpenCAD 무료 캐드 뷰어",
-    "applicationSubCategory": "2D 캐드·3D 모델·NC 뷰어",
+    "applicationSubCategory": "2D 캐드 뷰어",
     "sameAs": "https://github.com/GyuTae-Kim/2dcad-viewer"
   },
   "breadcrumbs": [
