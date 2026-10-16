@@ -18,7 +18,7 @@ jobs:
       - run: npm test
       - run: npm run test:seo
       - name: Bootstrap content date for review
-        run: npm run update:content-dates -- --at 2026-10-16T11:05:00Z
+        run: npm run update:content-dates -- --at 2026-10-16T11:03:47Z
       - uses: actions/upload-artifact@v4
         with:
           name: content-history
