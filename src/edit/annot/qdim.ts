@@ -6,6 +6,7 @@
 import type { CadDocument, DimensionEntity, Entity, Vec3 } from '../../core/model';
 import { createDiameterDimension, createLinearDimension, createOrdinateDimension, createRadialDimension } from '../dim/create';
 import { dimVars } from '../dim/vars';
+import { lwVertices } from '../../core/lwpoly';
 
 export interface P {
   x: number;
@@ -34,12 +35,13 @@ export function qdimGeometry(ents: readonly Entity[]): QdimGeometry {
         add(e.start);
         add(e.end);
         break;
-      case 'LWPOLYLINE':
-        for (const v of e.vertices) add(v);
-        for (let i = 0; i < e.vertices.length; i++) {
-          const a = e.vertices[i]!;
-          const b = e.vertices[(i + 1) % e.vertices.length]!;
-          if (!a.bulge || (!e.closed && i === e.vertices.length - 1)) continue;
+      case 'LWPOLYLINE': {
+        const vs = lwVertices(e);
+        for (const v of vs) add(v);
+        for (let i = 0; i < vs.length; i++) {
+          const a = vs[i]!;
+          const b = vs[(i + 1) % vs.length]!;
+          if (!a.bulge || (!e.closed && i === vs.length - 1)) continue;
           // 호 세그먼트: 중심·반지름
           const d = Math.hypot(b.x - a.x, b.y - a.y);
           if (!(d > 0)) continue;
@@ -53,6 +55,7 @@ export function qdimGeometry(ents: readonly Entity[]): QdimGeometry {
           circles.push({ c: { x: mx + nx * h, y: my + ny * h }, r });
         }
         break;
+      }
       case 'POLYLINE':
         for (const v of e.vertices) add(v.location);
         break;

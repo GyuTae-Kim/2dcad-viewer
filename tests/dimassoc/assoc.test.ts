@@ -32,6 +32,7 @@ import {
 import { transformEntity } from '../../src/edit/geom';
 import { affApply, affMirror, affRotate, affScale, affTranslate } from '../../src/edit/geom/math';
 import { P, arc, bench, circle, line } from './helpers';
+import { packLw } from '../../src/core/lwpoly';
 
 const close = (a: { x: number; y: number }, b: { x: number; y: number }, d = 9) => {
   expect(a.x).toBeCloseTo(b.x, d);
@@ -132,12 +133,12 @@ describe('점 참조', () => {
       plinegen: false,
       constantWidth: 0,
       elevation: 0,
-      vertices: [
+      ...packLw([
         { x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
         { x: 100, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
         { x: 100, y: 50, bulge: 0, startWidth: 0, endWidth: 0 },
         { x: 0, y: 50, bulge: 0, startWidth: 0, endWidth: 0 },
-      ],
+      ]),
     } as LwPolylineEntity);
     const r = snapRef(b.doc, pl, OSNAP.END, { x: 100, y: 50 }, 1e-6)!;
     expect(r.subent).toBe(2);

@@ -4,12 +4,12 @@
  */
 import earcut from 'earcut';
 import type { HatchEntity, HatchPath, HatchPatternLine } from '../core/model';
-import { arcPoints, bulgePolylinePoints, ccwSweep, ellipsePoints, interpolateFitPoints, nurbsPoints } from '../geom/curves';
+import { arcPoints, bulgeFlatPoints, ccwSweep, ellipsePoints, interpolateFitPoints, nurbsPoints } from '../geom/curves';
 import { dashInterval } from './linetype';
 
 /** 경로 하나 → 닫힌 고리 [x, y, …] */
 export function pathLoop(p: HatchPath, tol: number): number[] {
-  if (p.polyline) return bulgePolylinePoints(p.polyline.vertices, true, tol);
+  if (p.polyline) return bulgeFlatPoints(p.polyline.verts, true, tol);
   const out: number[] = [];
   const push = (x: number, y: number) => {
     const n = out.length;

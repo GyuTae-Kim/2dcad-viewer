@@ -25,6 +25,7 @@ import { transformEntity } from '../../src/edit/geom/transform';
 import { copyEntity } from '../../src/edit/geom/query';
 import { type Affine, affApply, affInv, affMirror, affMul, affRotate, affScale, affTranslate } from '../../src/edit/geom/math';
 import { NEG_Z, P, V, circle, deg, line, mtext, near, newDoc, renders, text } from './helpers';
+import { bulgeVertices, packBulge } from '../../src/core/lwpoly';
 
 const base = (h: string) => ({ ...entityDefaults(), handle: h });
 const one = (r: { replace?: Entity[]; add?: Entity[] }) => [...(r.replace ?? []), ...(r.add ?? [])][0]!;
@@ -121,7 +122,7 @@ function hatch(): HatchEntity {
     patternDouble: false,
     elevation: 0,
     paths: [
-      { flags: 3, polyline: { closed: true, vertices: [{ x: 0, y: 0, bulge: 0 }, { x: 10, y: 0, bulge: 0.4 }, { x: 10, y: 10, bulge: 0 }, { x: 0, y: 10, bulge: 0 }] } },
+      { flags: 3, polyline: { closed: true, verts: packBulge([{ x: 0, y: 0, bulge: 0 }, { x: 10, y: 0, bulge: 0.4 }, { x: 10, y: 10, bulge: 0 }, { x: 0, y: 10, bulge: 0 }]) } },
       {
         flags: 0,
         edges: [
@@ -200,8 +201,8 @@ describe('transformEntity — 주석·기타 객체', () => {
     const h = one(transformEntity(hatch(), mir, doc)) as HatchEntity;
     expect(h.patternLines[0]!.angle).toBeCloseTo(deg(45));
     near(h.seedPoints[0]!, V(-5, 5));
-    near(h.paths[0]!.polyline!.vertices[1]!, V(-10, 0));
-    expect(h.paths[0]!.polyline!.vertices[1]!.bulge).toBeCloseTo(-0.4);
+    near(bulgeVertices(h.paths[0]!.polyline!.verts)[1]!, V(-10, 0));
+    expect(bulgeVertices(h.paths[0]!.polyline!.verts)[1]!.bulge).toBeCloseTo(-0.4);
     const h2 = one(transformEntity(hatch(), mir, doc, { mirrorHatch: true })) as HatchEntity;
     expect(h2.patternLines[0]!.angle).toBeCloseTo(deg(135));
     const rot = one(transformEntity(hatch(), affRotate(deg(30)), doc)) as HatchEntity;
@@ -262,9 +263,9 @@ describe('transformEntity — 주석·기타 객체', () => {
       l0.vertices.forEach((v, i) => near(l1.vertices[i]!, v, 1e-9));
       const h0 = hatch();
       const h1 = one(transformEntity(one(transformEntity(h0, m, doc)), inv, doc)) as HatchEntity;
-      h0.paths[0]!.polyline!.vertices.forEach((v, i) => {
-        near(h1.paths[0]!.polyline!.vertices[i]!, v, 1e-9);
-        expect(h1.paths[0]!.polyline!.vertices[i]!.bulge).toBeCloseTo(v.bulge, 9);
+      bulgeVertices(h0.paths[0]!.polyline!.verts).forEach((v, i) => {
+        near(bulgeVertices(h1.paths[0]!.polyline!.verts)[i]!, v, 1e-9);
+        expect(bulgeVertices(h1.paths[0]!.polyline!.verts)[i]!.bulge).toBeCloseTo(v.bulge, 9);
       });
       expect(h1.patternLines[0]!.angle).toBeCloseTo(h0.patternLines[0]!.angle, 9);
     }

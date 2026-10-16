@@ -107,13 +107,14 @@ export function explodeTextGeometry(e: Entity, doc: CadDocument, engine: Engine)
       ...props,
       handle: '',
       type: 'LWPOLYLINE',
-      vertices: [],
+      verts: [],
+      widths: undefined,
       closed,
       plinegen: false,
       constantWidth: 0,
       elevation: z,
     };
-    for (let i = 0; i + 1 < q.length; i += 2) lw.vertices.push({ x: q[i]!, y: q[i + 1]!, bulge: 0, startWidth: 0, endWidth: 0 });
+    for (let i = 0; i + 1 < q.length; i += 2) lw.verts.push(q[i]!, q[i + 1]!, 0);
     out.push(lw);
   };
   for (const g of lay.glyphs) {

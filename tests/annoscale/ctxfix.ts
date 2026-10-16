@@ -17,6 +17,7 @@ import {
 } from '../../src/edit/dim/create';
 import type { EditOp, EditSession } from '../../src/edit/session';
 import { addModel, commit, envOf, hatch, insert, mtext, newDoc, text } from './helpers';
+import { packBulge } from '../../src/core/lwpoly';
 
 export const SCALES = ['1:10', '1:20'];
 
@@ -91,8 +92,8 @@ export function hatch2(): HatchEntity {
     { angle: Math.PI / 4, base: { x: 0.4490128061, y: 0 }, offset: { x: -2.2450640303, y: 2.2450640303 }, dashes: [2, -1] },
   ];
   h.paths = [
-    { flags: 1 | 2 | 16, polyline: { closed: true, vertices: [{ x: 0, y: 0, bulge: 0 }, { x: 100, y: 0, bulge: 0 }, { x: 100, y: 100, bulge: 0 }, { x: 0, y: 100, bulge: 0 }] } },
-    { flags: 2, polyline: { closed: true, vertices: [{ x: 40, y: 40, bulge: 0 }, { x: 60, y: 40, bulge: 0 }, { x: 60, y: 60, bulge: 0 }, { x: 40, y: 60, bulge: 0 }] } },
+    { flags: 1 | 2 | 16, polyline: { closed: true, verts: packBulge([{ x: 0, y: 0, bulge: 0 }, { x: 100, y: 0, bulge: 0 }, { x: 100, y: 100, bulge: 0 }, { x: 0, y: 100, bulge: 0 }]) } },
+    { flags: 2, polyline: { closed: true, verts: packBulge([{ x: 40, y: 40, bulge: 0 }, { x: 60, y: 40, bulge: 0 }, { x: 60, y: 60, bulge: 0 }, { x: 40, y: 60, bulge: 0 }]) } },
   ];
   return h;
 }

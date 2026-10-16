@@ -23,6 +23,7 @@ import type { DocState } from './docstate';
 import { OverlayScene, SpaceScene } from './scene';
 import { isDark } from './view';
 import { compareSettings } from './compare-vars';
+import { packLw } from '../core/lwpoly';
 
 /** 비교할 도면 */
 export interface CompareSource {
@@ -327,7 +328,7 @@ export class CompareSession {
       layer: '0',
       color: { aci: c.set === this.current ? CLOUD_CURRENT_ACI : CLOUD_ACI },
       lineweight: 0,
-      vertices: c.verts,
+      ...packLw(c.verts),
       closed: true,
       plinegen: false,
       constantWidth: 0,

@@ -20,6 +20,7 @@ import { gripMove, gripPoints } from '../../src/edit/geom/grips';
 import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, fitSpline, line, lw, mtext, near, newDoc, poly2d, renders, spline, text, xline } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 const one = (r: { replace?: Entity[]; add?: Entity[] }) => (r.replace ?? r.add ?? [])[0]!;
@@ -102,14 +103,14 @@ describe('gripMove — 곡선', () => {
       [10, 0, 0.5],
       [10, 10],
     ]) as LwPolylineEntity;
-    near((one(gripMove(p, 'v1', V(12, 1), doc)) as LwPolylineEntity).vertices[1]!, V(12, 1));
+    near(lwVertices((one(gripMove(p, 'v1', V(12, 1), doc)) as LwPolylineEntity))[1]!, V(12, 1));
     const m0 = one(gripMove(p, 'm0', V(5, 2), doc)) as LwPolylineEntity;
-    near(m0.vertices[0]!, V(0, 2));
-    near(m0.vertices[1]!, V(10, 2));
+    near(lwVertices(m0)[0]!, V(0, 2));
+    near(lwVertices(m0)[1]!, V(10, 2));
     const m1 = one(gripMove(p, 'm1', V(13, 5), doc)) as LwPolylineEntity;
     expect(pathNearest(entityPath(m1)!, V(13, 5)).d).toBeLessThan(1e-9);
-    near(m1.vertices[1]!, V(10, 0));
-    near(m1.vertices[2]!, V(10, 10));
+    near(lwVertices(m1)[1]!, V(10, 0));
+    near(lwVertices(m1)[2]!, V(10, 10));
     const n = lw([[0, 0], [10, 0]], false, NEG_Z);
     const nv = one(gripMove(n, 'v1', V(-10, 5), doc)) as LwPolylineEntity;
     expect(pathNearest(entityPath(nv)!, V(-10, 5)).d).toBeLessThan(1e-9);

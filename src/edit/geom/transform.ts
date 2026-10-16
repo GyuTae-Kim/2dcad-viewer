@@ -18,6 +18,7 @@ import type {
   Vec3,
   ViewportEntity,
 } from '../../core/model';
+import { lwCount, tidyWidths } from '../../core/lwpoly';
 import { interpolateFitPoints } from '../../geom/curves';
 import { ellipseFromConjugate, ellipseFromConjugate3 } from './conic';
 import { type ArcPiece, type EllPiece } from './curve';
@@ -290,7 +291,10 @@ function ellipseOfPiece(src: Entity, pc: EllPiece | ArcPiece, z: number, ext: Ve
 function xformLw(e: LwPolylineEntity, m: Affine, opt: TransformOptions): EditResult {
   const pm = planeMap(e.extrusion, e.elevation, m, opt.dz ?? 0);
   const sim = affSimilarity(pm.A);
-  const curved = e.vertices.some((v) => Math.abs(v.bulge) > 1e-12);
+  const vs = e.verts;
+  const nv = lwCount(e);
+  let curved = false;
+  for (let i = 0; i < nv && !curved; i++) curved = Math.abs(vs[i * 3 + 2]!) > 1e-12;
   if (!sim && curved) {
     const pieces = bulgePieces(lwVerts(e), e.closed, pm.A);
     const n = piecesNurbs(pieces, pm.z);
@@ -299,11 +303,17 @@ function xformLw(e: LwPolylineEntity, m: Affine, opt: TransformOptions): EditRes
   }
   const s = sim ? sim.s : affScaleOf(pm.A);
   const flip = affDet(pm.A) < 0 ? -1 : 1;
-  const r = cloneEntity(e);
-  r.vertices = e.vertices.map((v) => {
-    const q = affApply(pm.A, v);
-    return { x: q.x, y: q.y, bulge: v.bulge * flip, startWidth: v.startWidth * s, endWidth: v.endWidth * s };
-  });
+  // 정점은 아래에서 새로 만들므로 복제하지 않는다
+  const r = cloneEntity<LwPolylineEntity>({ ...e, verts: [] });
+  const A = pm.A;
+  const out: number[] = [];
+  for (let i = 0; i < nv; i++) {
+    const x = vs[i * 3]!;
+    const y = vs[i * 3 + 1]!;
+    out.push(A[0] * x + A[2] * y + A[4], A[1] * x + A[3] * y + A[5], vs[i * 3 + 2]! * flip);
+  }
+  r.verts = out;
+  r.widths = e.widths ? tidyWidths(e.widths.map((w) => w * s)) : undefined;
   r.constantWidth = e.constantWidth * s;
   r.elevation = pm.z;
   r.extrusion = pm.ext;

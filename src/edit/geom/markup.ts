@@ -2,6 +2,7 @@
  * 표시 객체 만들기: REVCLOUD(구름형 리비전 — 볼록도가 있는 LWPOLYLINE)와 WIPEOUT(가리기).
  */
 import type { Entity, EntityBase, ImageEntity, LwPolylineEntity, LwVertex, Vec2 } from '../../core/model';
+import { packLw } from '../../core/lwpoly';
 import { type Path, flattenPiece, pieceAt, pieceSize } from './curve';
 import { dist } from './math';
 import { entityPath } from './path';
@@ -92,7 +93,7 @@ export function cloudVertices(outline: readonly Vec2[], closed: boolean, opt: Cl
 export function cloudPolyline(base: Omit<EntityBase, 'type'>, outline: readonly Vec2[], closed: boolean, opt: CloudOptions): LwPolylineEntity | null {
   const vertices = cloudVertices(outline, closed, opt);
   if (vertices.length < 2) return null;
-  return { type: 'LWPOLYLINE', ...base, vertices, closed, plinegen: false, constantWidth: 0, elevation: 0 };
+  return { type: 'LWPOLYLINE', ...base, ...packLw(vertices), closed, plinegen: false, constantWidth: 0, elevation: 0 };
 }
 
 /**

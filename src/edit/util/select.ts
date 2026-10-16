@@ -5,6 +5,7 @@ import type { CadColor, CadDocument, Entity } from '../../core/model';
 import { tableKey } from '../../core/model';
 import { plainText, TYPE_NAMES } from '../../app/inquiry';
 import { hasWildcard, wcmatch } from './wildcard';
+import { lwCount, lwPoint } from '../../core/lwpoly';
 
 export type PropKind = 'name' | 'text' | 'number' | 'color' | 'lineweight' | 'transparency';
 
@@ -61,7 +62,7 @@ function anchor(e: Entity): { x: number; y: number } | null {
     case 'ELLIPSE':
       return e.center;
     case 'LWPOLYLINE':
-      return e.vertices[0] ?? null;
+      return lwCount(e) ? lwPoint(e, 0) : null;
     case 'POLYLINE':
       return e.vertices[0]?.location ?? null;
     case 'TEXT':

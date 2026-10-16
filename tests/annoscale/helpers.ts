@@ -5,6 +5,7 @@ import { createNewDocument } from '../../src/core/newdoc';
 import { EditSession, type EditOp } from '../../src/edit/session';
 import { ScaleIndex } from '../../src/edit/annoscale/represent';
 import type { EditEnv } from '../../src/edit/annoscale/edit';
+import { packBulge } from '../../src/core/lwpoly';
 
 export function newDoc(units: 'metric' | 'imperial' = 'metric'): { doc: CadDocument; session: EditSession } {
   const doc = createNewDocument(units);
@@ -78,7 +79,7 @@ export function hatch(): HatchEntity {
     paths: [
       {
         flags: 3,
-        polyline: { closed: true, vertices: [{ x: 0, y: 0, bulge: 0 }, { x: 100, y: 0, bulge: 0 }, { x: 100, y: 100, bulge: 0 }, { x: 0, y: 100, bulge: 0 }] },
+        polyline: { closed: true, verts: packBulge([{ x: 0, y: 0, bulge: 0 }, { x: 100, y: 0, bulge: 0 }, { x: 100, y: 100, bulge: 0 }, { x: 0, y: 100, bulge: 0 }]) },
       },
     ],
     patternLines: [{ angle: Math.PI / 4, base: { x: 0, y: 0 }, offset: { x: -2.2450640303, y: 2.2450640303 }, dashes: [] }],

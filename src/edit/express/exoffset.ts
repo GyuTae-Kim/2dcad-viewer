@@ -12,6 +12,7 @@ import { type EditResult, explodeEntity, joinEntities, offsetEntity } from '../g
 import { pathNearest } from '../geom/curve';
 import { isNaturalExt } from '../geom/ocs';
 import { entityPath } from '../geom/path';
+import { lwVertices, packLw } from '../../core/lwpoly';
 
 export type GapType = 'N' | 'F' | 'C';
 
@@ -71,7 +72,7 @@ export function applyGap(e: LwPolylineEntity, original: Entity, d: number, gap: 
   if (gap === 'N' || !isNaturalExt(e.extrusion)) return e;
   const path = entityPath(original);
   if (!path) return e;
-  const vs = e.vertices;
+  const vs = lwVertices(e);
   const n = vs.length;
   if (n < 3 && !(e.closed && n >= 2)) return e;
   const out: LwVertex[] = [];
@@ -136,7 +137,7 @@ export function applyGap(e: LwPolylineEntity, original: Entity, d: number, gap: 
     out.push({ ...v, x: C1.x, y: C1.y, bulge: 0 });
     out.push({ ...v, x: C2.x, y: C2.y, bulge: 0 });
   }
-  return { ...e, vertices: out };
+  return { ...e, ...packLw(out) };
 }
 
 /** 줄 하나를 side 쪽으로 d만큼 간격띄운다(간격 유형·결합 적용). 결과 객체는 핸들 '' */

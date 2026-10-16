@@ -10,6 +10,7 @@ import { MODEL_SPACE, entityDefaults, normalizeHandle, tableKey } from '../../co
 import { nearestAci } from '../../core/color';
 import { finalizeDocument } from '../../core/finalize';
 import { parseCompareColor } from './settings';
+import { packLw } from '../../core/lwpoly';
 
 export interface ImportPlan {
   layers: Layer[];
@@ -281,7 +282,7 @@ export function buildSnapshot(inp: SnapshotInput): { doc: CadDocument; counts: {
       handle: alloc.next(),
       owner: ms.recordHandle,
       layer: SNAPSHOT_LAYERS.cloud,
-      vertices: vs.map((v) => ({ ...v })),
+      ...packLw(vs),
       closed: true,
       plinegen: false,
       constantWidth: 0,

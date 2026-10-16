@@ -28,6 +28,7 @@ import type {
   Vec3,
 } from '../core/model';
 import { BYBLOCK, BYLAYER, normalizeHandle, tableKey } from '../core/model';
+import { lwCount } from '../core/lwpoly';
 import { DIM_VAR_CODES, DIM_VAR_DEFAULTS } from '../core/dimvars';
 import { ACI_RGB } from '../core/color';
 import { type FrameKind, frameSetting } from '../core/framevars';
@@ -1226,57 +1227,56 @@ export class SceneBuilder {
   private lwpolyline(e: Extract<Entity, { type: 'LWPOLYLINE' }>, ctx: Ctx): void {
     const r = this.resolve(e, ctx);
     const m = this.ocsM(ctx, e.extrusion);
-    const vs = e.vertices;
-    if (!vs.length) return;
-    const wide = e.constantWidth > 0 || vs.some((v) => v.startWidth > 0 || v.endWidth > 0);
-    this.polyCommon(
-      vs.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge, sw: v.startWidth || e.constantWidth, ew: v.endWidth || e.constantWidth })),
-      e.closed,
-      e.plinegen,
-      wide,
-      m,
-      e.elevation,
-      r,
-      ctx,
-    );
+    const vs = e.verts;
+    const n = lwCount(e);
+    if (!n) return;
+    const ew = e.widths;
+    const cw = e.constantWidth;
+    let wide = cw > 0;
+    if (!wide && ew) for (let i = 0; i < ew.length && !wide; i++) wide = ew[i]! > 0;
+    // 폭(정점 폭이 0이면 일정 폭)은 폭 있게 그릴 때만 만든다
+    let ws: number[] | null = null;
+    if (wide) {
+      ws = [];
+      for (let i = 0; i < n; i++) ws.push((ew ? ew[i * 2]! : 0) || cw, (ew ? ew[i * 2 + 1]! : 0) || cw);
+    }
+    this.polyCommon(vs, n, ws, e.closed, e.plinegen, m, e.elevation, r, ctx);
   }
 
-  private polyCommon(
-    vs: { x: number; y: number; bulge: number; sw: number; ew: number }[],
-    closed: boolean,
-    plinegen: boolean,
-    wide: boolean,
-    m: Mat,
-    z: number,
-    r: Resolved,
-    ctx: Ctx,
-  ): void {
+  /**
+   * 2D 폴리선 공통(경량 폴리선·POLYLINE 2D): xyb = 정점 평탄 좌표 [x, y, 볼록, …](앞 n개),
+   * ws = 정점별 [시작 폭, 끝 폭, …](폭 있게 그릴 때만, 아니면 null).
+   */
+  private polyCommon(xyb: readonly number[], n: number, ws: readonly number[] | null, closed: boolean, plinegen: boolean, m: Mat, z: number, r: Resolved, ctx: Ctx): void {
     const tol = this.localTol(m);
-    const n = vs.length;
     if (n === 1) {
-      const p = applyXY(m, vs[0]!.x, vs[0]!.y, z);
+      const p = applyXY(m, xyb[0]!, xyb[1]!, z);
       this.out.segment(p.x, p.y, p.x, p.y, r.style);
       return;
     }
     const segCount = closed ? n : n - 1;
-    if (wide) {
+    if (ws) {
       for (let i = 0; i < segCount; i++) {
-        const a = vs[i]!;
-        const b = vs[(i + 1) % n]!;
-        const pts: number[] = [a.x, a.y];
-        bulgePoints(a.x, a.y, b.x, b.y, a.bulge, tol, pts);
+        const a = i * 3;
+        const b = ((i + 1) % n) * 3;
+        const ax = xyb[a]!;
+        const ay = xyb[a + 1]!;
+        const pts: number[] = [ax, ay];
+        bulgePoints(ax, ay, xyb[b]!, xyb[b + 1]!, xyb[a + 2]!, tol, pts);
         // 폭이 0인 세그먼트는 보통 선으로. 채우기를 끄면(FILLMODE 0) 폭의 윤곽만
-        if (a.sw > 0 || a.ew > 0) this.wideStrip(pts, a.sw, a.ew, m, z, r, !this.fill);
+        const sw = ws[i * 2]!;
+        const ew = ws[i * 2 + 1]!;
+        if (sw > 0 || ew > 0) this.wideStrip(pts, sw, ew, m, z, r, !this.fill);
         else this.stroke(this.xf(m, pts, z), false, r, ctx);
       }
       return;
     }
     if (plinegen || !this.pattern(r.linetype, 1)) {
-      const pts: number[] = [vs[0]!.x, vs[0]!.y];
+      const pts: number[] = [xyb[0]!, xyb[1]!];
       for (let i = 0; i < segCount; i++) {
-        const a = vs[i]!;
-        const b = vs[(i + 1) % n]!;
-        bulgePoints(a.x, a.y, b.x, b.y, a.bulge, tol, pts);
+        const a = i * 3;
+        const b = ((i + 1) % n) * 3;
+        bulgePoints(xyb[a]!, xyb[a + 1]!, xyb[b]!, xyb[b + 1]!, xyb[a + 2]!, tol, pts);
       }
       if (closed) pts.length -= 2;
       this.stroke(this.xf(m, pts, z), closed, r, ctx);
@@ -1284,10 +1284,12 @@ export class SceneBuilder {
     }
     // PLINEGEN이 없으면 무늬가 정점마다 다시 시작한다.
     for (let i = 0; i < segCount; i++) {
-      const a = vs[i]!;
-      const b = vs[(i + 1) % n]!;
-      const pts: number[] = [a.x, a.y];
-      bulgePoints(a.x, a.y, b.x, b.y, a.bulge, tol, pts);
+      const a = i * 3;
+      const b = ((i + 1) % n) * 3;
+      const ax = xyb[a]!;
+      const ay = xyb[a + 1]!;
+      const pts: number[] = [ax, ay];
+      bulgePoints(ax, ay, xyb[b]!, xyb[b + 1]!, xyb[a + 2]!, tol, pts);
       this.stroke(this.xf(m, pts, z), false, r, ctx);
     }
   }
@@ -1338,17 +1340,15 @@ export class SceneBuilder {
       const m = this.ocsM(ctx, e.extrusion);
       const vs = e.vertices.filter((v) => !(v.flags & 16));
       const wide = e.defaultStartWidth > 0 || e.defaultEndWidth > 0 || vs.some((v) => v.startWidth > 0 || v.endWidth > 0);
+      const xyb: number[] = [];
+      for (const v of vs) xyb.push(v.location.x, v.location.y, v.bulge);
+      let ws: number[] | null = null;
+      if (wide) {
+        ws = [];
+        for (const v of vs) ws.push(v.startWidth, v.endWidth);
+      }
       // 맞춤(curve-fit) 폴리선도 정점의 볼록도가 실제 호다
-      this.polyCommon(
-        vs.map((v) => ({ x: v.location.x, y: v.location.y, bulge: v.bulge, sw: v.startWidth, ew: v.endWidth })),
-        (e.flags & 1) !== 0,
-        (e.flags & 128) !== 0,
-        wide,
-        m,
-        e.elevation,
-        r,
-        ctx,
-      );
+      this.polyCommon(xyb, vs.length, ws, (e.flags & 1) !== 0, (e.flags & 128) !== 0, m, e.elevation, r, ctx);
       return;
     }
     if (e.kind === '3d') {

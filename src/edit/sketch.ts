@@ -4,6 +4,7 @@
  */
 import type { Entity, EntityBase, Vec3 } from '../core/model';
 import { interpolateFitPoints } from '../geom/curves';
+import { packLwPoints } from '../core/lwpoly';
 
 export type SketchType = 'line' | 'polyline' | 'spline';
 
@@ -70,7 +71,7 @@ export function sketchEntities(strokes: readonly P2[][], type: SketchType, props
         plinegen: false,
         constantWidth: 0,
         elevation: 0,
-        vertices: s.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+        ...packLwPoints(s),
       } as Entity);
     } else {
       const fit = simplify(s, tolerance).map(v3);

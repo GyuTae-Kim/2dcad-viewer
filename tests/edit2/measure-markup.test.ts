@@ -5,6 +5,7 @@ import { divideStations, measureStations, nearerToEnd } from '../../src/edit/geo
 import { CLOUD_BULGE, cloudPolyline, cloudVertices, makeWipeout, outlineOf, signedArea, wipeoutPolygon } from '../../src/edit/geom/markup';
 import { entityPath } from '../../src/edit/geom/path';
 import { V, arc, circle, line, lw, near, newDoc, renders } from '../edit/helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 describe('DIVIDE·MEASURE', () => {
   it('선을 4등분: 안쪽 점 3개', () => {
@@ -78,7 +79,7 @@ describe('REVCLOUD', () => {
     expect(o.pts.length).toBe(36);
     const c = cloudPolyline({ ...entityDefaults(), handle: '' }, o.pts, true, { minArc: 5, maxArc: 8 }) as LwPolylineEntity;
     expect(c.closed).toBe(true);
-    expect(signedArea(c.vertices)).toBeGreaterThan(0);
+    expect(signedArea(lwVertices(c))).toBeGreaterThan(0);
     renders(newDoc(), [c]);
   });
 });

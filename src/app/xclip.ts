@@ -9,6 +9,7 @@ import { enableXclipOps, removeXclipOps, setXclipOps, xclipBoundaryWorld, xclipP
 import type { App, CommandContext } from './app';
 import { currentProps } from './draw';
 import { unlockedOnly } from './layers';
+import { lwCount, lwPoints, lwVertices, packLwPoints } from '../core/lwpoly';
 
 async function boundary(ctx: CommandContext, app: App): Promise<Vec2[] | null> {
   ctx.print('외부 모드 - 경계 외부의 객체가 숨겨집니다.');
@@ -57,12 +58,12 @@ async function boundary(ctx: CommandContext, app: App): Promise<Vec2[] | null> {
       const q = await ctx.getEntity('자르기 경계로 사용할 폴리선 선택:');
       if (!('handle' in q)) return null;
       const e = app.active!.doc.entityIndex.get(q.handle);
-      if (e?.type !== 'LWPOLYLINE' || !e.closed || e.vertices.length < 3) {
+      if (e?.type !== 'LWPOLYLINE' || !e.closed || lwCount(e) < 3) {
         ctx.print('닫힌 폴리선을 선택하십시오.', 'err');
         continue;
       }
-      if (e.vertices.some((v) => Math.abs(v.bulge) > 1e-12)) ctx.print('호 세그먼트는 직선으로 이어 자릅니다.');
-      return e.vertices.map((v) => ({ x: v.x, y: v.y }));
+      if (lwVertices(e).some((v) => Math.abs(v.bulge) > 1e-12)) ctx.print('호 세그먼트는 직선으로 이어 자릅니다.');
+      return lwPoints(e);
     }
   }
 }
@@ -110,7 +111,7 @@ export function registerXclipCommands(app: App): void {
             ...props,
             handle: st.session.newHandle(),
             owner: doc.blocks.get(b)?.recordHandle,
-            vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+            ...packLwPoints(pts),
             closed: true,
             plinegen: false,
             constantWidth: 0,

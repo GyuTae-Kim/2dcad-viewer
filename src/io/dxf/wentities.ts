@@ -31,6 +31,7 @@ import type {
   XData,
 } from '../../core/model';
 import { tableKey } from '../../core/model';
+import { lwCount, lwHasWidths, vertCount } from '../../core/lwpoly';
 import { clampedKnots } from '../../geom/curves';
 import { CollectSink, kindOf, rawTagValid, rawTagsValid, type TagSink } from './tagwriter';
 import type { WriteContext } from './wcontext';
@@ -512,20 +513,24 @@ function writeMText(w: TagOut, e: MTextEntity): void {
 
 function writeLwPolyline(w: TagOut, e: Extract<Entity, { type: 'LWPOLYLINE' }>): void {
   w.sub('AcDbPolyline');
-  w.t(90, e.vertices.length);
+  const n = lwCount(e);
+  const vs = e.verts;
+  const ws = e.widths;
+  w.t(90, n);
   w.t(70, (e.closed ? 1 : 0) | (e.plinegen ? 128 : 0));
-  const widths = e.vertices.some((v) => v.startWidth || v.endWidth);
+  const widths = lwHasWidths(e);
   if (e.constantWidth || !widths) w.t(43, fin(e.constantWidth));
   if (e.elevation) w.t(38, e.elevation);
   thickness(w, e);
-  for (const v of e.vertices) {
-    w.t(10, fin(v.x));
-    w.t(20, fin(v.y));
+  for (let i = 0; i < n; i++) {
+    w.t(10, fin(vs[i * 3]!));
+    w.t(20, fin(vs[i * 3 + 1]!));
     if (widths) {
-      w.t(40, fin(v.startWidth));
-      w.t(41, fin(v.endWidth));
+      w.t(40, fin(ws![i * 2]!));
+      w.t(41, fin(ws![i * 2 + 1]!));
     }
-    if (v.bulge) w.t(42, v.bulge);
+    const b = vs[i * 3 + 2]!;
+    if (b) w.t(42, b);
   }
   extrusion(w, e);
 }
@@ -992,7 +997,10 @@ function writePath(w: TagOut, p: HatchPath, mpolygon: boolean): void {
   const ctx = w.ctx;
   if (p.polyline) {
     w.t(92, p.flags | 2);
-    const bulge = p.polyline.vertices.some((v) => v.bulge);
+    const vs = p.polyline.verts;
+    const nv = vertCount(vs);
+    let bulge = false;
+    for (let i = 0; i < nv && !bulge; i++) bulge = !!vs[i * 3 + 2];
     if (mpolygon) {
       w.t(73, p.polyline.closed ? 1 : 0);
       w.t(72, bulge ? 1 : 0);
@@ -1000,10 +1008,10 @@ function writePath(w: TagOut, p: HatchPath, mpolygon: boolean): void {
       w.t(72, bulge ? 1 : 0);
       w.t(73, p.polyline.closed ? 1 : 0);
     }
-    w.t(93, p.polyline.vertices.length);
-    for (const v of p.polyline.vertices) {
-      w.p2(10, v);
-      if (bulge) w.t(42, v.bulge);
+    w.t(93, nv);
+    for (let i = 0; i < nv; i++) {
+      w.p2(10, { x: vs[i * 3]!, y: vs[i * 3 + 1]! });
+      if (bulge) w.t(42, vs[i * 3 + 2]!);
     }
   } else {
     w.t(92, p.flags & ~2);

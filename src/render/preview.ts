@@ -44,8 +44,8 @@ export function anchorOf(e: Entity): [number, number] | null {
     case 'MTEXT':
       return [e.insert.x, e.insert.y];
     case 'LWPOLYLINE': {
-      const v = e.vertices[0];
-      return v && flat(e) ? [v.x, v.y] : null;
+      const v = e.verts;
+      return v.length >= 3 && flat(e) ? [v[0]!, v[1]!] : null;
     }
     case 'POLYLINE': {
       const v = e.vertices[0];
@@ -54,8 +54,8 @@ export function anchorOf(e: Entity): [number, number] | null {
     case 'HATCH': {
       if (!flat(e)) return null;
       const p = e.paths[0];
-      const v = p?.polyline?.vertices[0];
-      if (v) return [v.x, v.y];
+      const v = p?.polyline?.verts;
+      if (v && v.length >= 3) return [v[0]!, v[1]!];
       const ed = p?.edges?.[0];
       if (ed?.type === 'line') return [ed.start.x, ed.start.y];
       if (ed?.type === 'arc') return [ed.center.x, ed.center.y];

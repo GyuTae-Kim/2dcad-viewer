@@ -12,6 +12,7 @@ import { buildSpace } from '../../src/render/build';
 import { STYLE_FLAG_NO_PLOT, StyleTable, resolveStyles } from '../../src/render/styles';
 import { TextEngine } from '../../src/text/layout';
 import { P, add, newDoc } from '../hatch/helpers';
+import { packLw } from '../../src/core/lwpoly';
 
 let serial = 0x900;
 const H = () => (serial++).toString(16).toUpperCase();
@@ -118,12 +119,12 @@ describe('폴리선 그리기', () => {
       type: 'LWPOLYLINE',
       ...entityDefaults(),
       handle: H(),
-      vertices: [
+      ...packLw([
         { x: 0, y: 0, bulge: 0, startWidth: 2, endWidth: 2 },
         { x: 20, y: 0, bulge: 0, startWidth: 0, endWidth: 0 },
         { x: 20, y: 20, bulge: 0, startWidth: 2, endWidth: 2 },
         { x: 40, y: 20, bulge: 0, startWidth: 0, endWidth: 0 },
-      ],
+      ]),
       closed: false,
       plinegen: false,
       constantWidth: 0,

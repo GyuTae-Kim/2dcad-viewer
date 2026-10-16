@@ -11,6 +11,7 @@ import { tableFromEntity } from '../../src/edit/table/entity';
 import { entityDefaults, MODEL_SPACE, type TableEntity } from '../../src/core/model';
 import { circle, line } from '../edit/make';
 import { makeHarness, modelEntities } from '../cmds2/harness';
+import { packBulge } from '../../src/core/lwpoly';
 
 function harness() {
   const h = makeHarness((doc) => {
@@ -53,7 +54,7 @@ describe('editcmds2 명령 흐름', () => {
 
   it('HATCHSETORIGIN: 고른 해치의 원점을 옮기고 명령 취소로 되돌린다', async () => {
     const h = harness();
-    const sq = { flags: 3, polyline: { closed: true, vertices: [0, 1, 2, 3].map((i) => ({ x: i === 1 || i === 2 ? 10 : 0, y: i >= 2 ? 10 : 0, bulge: 0 })) } };
+    const sq = { flags: 3, polyline: { closed: true, verts: packBulge([0, 1, 2, 3].map((i) => ({ x: i === 1 || i === 2 ? 10 : 0, y: i >= 2 ? 10 : 0, bulge: 0 }))) } };
     const hat = h.add(createHatch(h.doc, [sq], { pattern: 'ANSI37', scale: 1, origin: { x: 1, y: 1 } })) as HatchEntity;
     await h.run('HATCHSETORIGIN', [{ sel: [hat.handle] }, '5,6']);
     expect(h.prompts).toEqual(['해치 객체 선택:', '새 해치 원점 지정:']);
@@ -66,7 +67,7 @@ describe('editcmds2 명령 흐름', () => {
 
   it('HATCHGENERATEBOUNDARY: 해치 둘레에 닫힌 폴리선', async () => {
     const h = harness();
-    const sq = { flags: 3, polyline: { closed: true, vertices: [0, 1, 2, 3].map((i) => ({ x: i === 1 || i === 2 ? 10 : 0, y: i >= 2 ? 10 : 0, bulge: 0 })) } };
+    const sq = { flags: 3, polyline: { closed: true, verts: packBulge([0, 1, 2, 3].map((i) => ({ x: i === 1 || i === 2 ? 10 : 0, y: i >= 2 ? 10 : 0, bulge: 0 }))) } };
     const hat = h.add(createHatch(h.doc, [sq], { pattern: 'SOLID' }));
     await h.run('HATCHGENERATEBOUNDARY', [{ sel: [hat.handle] }]);
     const pl = modelEntities(h.doc, 'LWPOLYLINE');

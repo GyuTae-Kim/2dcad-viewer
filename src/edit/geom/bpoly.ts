@@ -7,6 +7,7 @@ import { type Piece, pieceAt, pieceLength, reversePiece } from './curve';
 import { ccwSweep, dist, rot90 } from './math';
 import { domain, normalizeNurbs } from './nurbs';
 import { bulgePieces, makePolyline } from './path';
+import { bulgeVertices } from '../../core/lwpoly';
 
 /** 해치 모서리 → 조각 */
 export function hatchEdgePiece(ed: HatchEdge): Piece | null {
@@ -44,7 +45,7 @@ export function hatchEdgePiece(ed: HatchEdge): Piece | null {
 /** 경로의 조각들(끝과 끝이 이어지게 방향을 맞춘다) */
 export function hatchPathPieces(path: HatchPath): Piece[] {
   if (path.polyline) {
-    const vs = path.polyline.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge, sw: 0, ew: 0 }));
+    const vs = bulgeVertices(path.polyline.verts).map((v) => ({ x: v.x, y: v.y, bulge: v.bulge, sw: 0, ew: 0 }));
     return bulgePieces(vs, true, [1, 0, 0, 1, 0, 0]);
   }
   const raw = (path.edges ?? []).map(hatchEdgePiece).filter((p): p is Piece => !!p && pieceLength(p) > 0);

@@ -25,6 +25,7 @@ import { flattenEntity } from '../../src/edit/express/flatten';
 import { cdorderList, colorKey, colorsOf, displayColorKey, reorderOps } from '../../src/edit/express/cdorder';
 import { linFileText, linetypeFromObjects, linetypeNameProblem } from '../../src/edit/express/mkltype';
 import { redirOps, redirPath } from '../../src/edit/express/redir';
+import { lwVertices, packLw } from '../../src/core/lwpoly';
 
 const doc: CadDocument = createNewDocument('metric');
 let hn = 0x400;
@@ -189,17 +190,17 @@ describe('EXOFFSET', () => {
     const pl = r.add[0] as LwPolylineEntity;
     expect(pl.type).toBe('LWPOLYLINE');
     // 바깥 모서리는 늘려서 (11, −1)에서 만난다
-    expect(pl.vertices.some((v) => Math.abs(v.x - 11) < 1e-9 && Math.abs(v.y + 1) < 1e-9)).toBe(true);
+    expect(lwVertices(pl).some((v) => Math.abs(v.x - 11) < 1e-9 && Math.abs(v.y + 1) < 1e-9)).toBe(true);
   });
   it('모깎기: 바깥 모서리를 반지름 d 호로, 결합하지 않으면 선·호로 나눈다', () => {
     const c = chainsOf([a, b])[0]!;
     const r = offsetChain(c, 1, { x: 20, y: -5 }, { gap: 'F', join: true }, doc);
     const pl = r.add[0] as LwPolylineEntity;
-    const k = pl.vertices.findIndex((v) => Math.abs(v.bulge) > 1e-9);
+    const k = lwVertices(pl).findIndex((v) => Math.abs(v.bulge) > 1e-9);
     expect(k).toBeGreaterThanOrEqual(0);
-    expect(Math.abs(pl.vertices[k]!.bulge)).toBeCloseTo(Math.tan(Math.PI / 8), 9);
-    expect(pl.vertices[k]!.x).toBeCloseTo(10, 9);
-    expect(pl.vertices[k]!.y).toBeCloseTo(-1, 9);
+    expect(Math.abs(lwVertices(pl)[k]!.bulge)).toBeCloseTo(Math.tan(Math.PI / 8), 9);
+    expect(lwVertices(pl)[k]!.x).toBeCloseTo(10, 9);
+    expect(lwVertices(pl)[k]!.y).toBeCloseTo(-1, 9);
     const parts = offsetChain(c, 1, { x: 20, y: -5 }, { gap: 'F', join: false }, doc).add;
     expect(parts.map((e) => e.type).sort()).toEqual(['ARC', 'LINE', 'LINE']);
     const arc = parts.find((e) => e.type === 'ARC') as ArcEntity;
@@ -209,7 +210,7 @@ describe('EXOFFSET', () => {
     const c = chainsOf([a, b])[0]!;
     const pl = offsetChain(c, 1, { x: 20, y: -5 }, { gap: 'C', join: true }, doc).add[0] as LwPolylineEntity;
     // 바깥 모서리 (11,−1) 대신 두 점: 직선이 (10,0)에서 1 떨어진다
-    const extra = pl.vertices.filter((v) => v.x > 10 + 1e-9 && v.y < -1e-9);
+    const extra = lwVertices(pl).filter((v) => v.x > 10 + 1e-9 && v.y < -1e-9);
     expect(extra).toHaveLength(2);
     const p = extra[0]!;
     const q = extra[1]!;
@@ -220,11 +221,11 @@ describe('EXOFFSET', () => {
   it('안쪽 모서리와 낱개 객체는 그대로', () => {
     const c = chainsOf([a, b])[0]!;
     const pl = offsetChain(c, 1, { x: 5, y: 5 }, { gap: 'F', join: true }, doc).add[0] as LwPolylineEntity;
-    expect(pl.vertices.every((v) => Math.abs(v.bulge) < 1e-12)).toBe(true);
+    expect(lwVertices(pl).every((v) => Math.abs(v.bulge) < 1e-12)).toBe(true);
     const single = chainsOf([line(0, 50, 10, 50)]);
     expect(single[0]!.joined).toBe(false);
-    const lw = applyGap({ ...base(), type: 'LWPOLYLINE', vertices: [], closed: false, plinegen: false, constantWidth: 0, elevation: 0 }, a, 1, 'F');
-    expect(lw.vertices).toEqual([]);
+    const lw = applyGap({ ...base(), type: 'LWPOLYLINE', ...packLw([]), closed: false, plinegen: false, constantWidth: 0, elevation: 0 }, a, 1, 'F');
+    expect(lwVertices(lw)).toEqual([]);
   });
 });
 
@@ -236,7 +237,7 @@ describe('FLATTEN', () => {
     expect(r.entity.end.z).toBe(0);
     expect(r.entity.thickness).toBeUndefined();
     expect(flattenEntity(line(0, 0, 1, 1), doc)).toBeNull();
-    const pl: LwPolylineEntity = { ...base(), type: 'LWPOLYLINE', vertices: [{ x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 }], closed: false, plinegen: false, constantWidth: 0, elevation: 7 };
+    const pl: LwPolylineEntity = { ...base(), type: 'LWPOLYLINE', ...packLw([{ x: 0, y: 0, bulge: 0, startWidth: 0, endWidth: 0 }]), closed: false, plinegen: false, constantWidth: 0, elevation: 7 };
     expect((flattenEntity(pl, doc) as { entity: LwPolylineEntity }).entity.elevation).toBe(0);
   });
   it('기울어진 원은 건너뛰고, −Z 원은 같은 평면도 모양의 +Z 원으로', () => {

@@ -4,6 +4,7 @@ import { offsetEntity } from '../../src/edit/geom/offset';
 import { entityPath } from '../../src/edit/geom/path';
 import { flattenPath, pathNearest, pathSize } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, fitSpline, line, lw, near, newDoc, poly2d, renders, spline, xline } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -100,13 +101,13 @@ describe('offsetEntity — 폴리선', () => {
       [10, 10],
     ]);
     const a = offsetEntity(p, 1, V(5, 5)).add![0] as LwPolylineEntity;
-    expect(a.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(a).map((v) => [v.x, v.y])).toEqual([
       [0, 1],
       [9, 1],
       [9, 10],
     ].map(([x, y]) => [expect.closeTo(x!, 9), expect.closeTo(y!, 9)]));
     const b = offsetEntity(p, 1, V(5, -5)).add![0] as LwPolylineEntity;
-    expect(b.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(b).map((v) => [v.x, v.y])).toEqual([
       [0, -1],
       [11, -1],
       [11, 10],
@@ -125,10 +126,10 @@ describe('offsetEntity — 폴리선', () => {
     );
     const inn = offsetEntity(sq, 1, V(5, 5)).add![0] as LwPolylineEntity;
     expect(inn.closed).toBe(true);
-    expect(inn.vertices.length).toBe(4);
-    for (const v of inn.vertices) expect(Math.max(Math.abs(v.x - 5), Math.abs(v.y - 5))).toBeCloseTo(4);
+    expect(lwVertices(inn).length).toBe(4);
+    for (const v of lwVertices(inn)) expect(Math.max(Math.abs(v.x - 5), Math.abs(v.y - 5))).toBeCloseTo(4);
     const out = offsetEntity(sq, 1, V(20, 5)).add![0] as LwPolylineEntity;
-    for (const v of out.vertices) expect(Math.max(Math.abs(v.x - 5), Math.abs(v.y - 5))).toBeCloseTo(6);
+    for (const v of lwVertices(out)) expect(Math.max(Math.abs(v.x - 5), Math.abs(v.y - 5))).toBeCloseTo(6);
     // 너무 큰 안쪽 거리
     expect(offsetEntity(sq, 6, V(5, 5)).message).toBeTruthy();
   });
@@ -143,8 +144,8 @@ describe('offsetEntity — 폴리선', () => {
       true,
     );
     const o = offsetEntity(st, 2, V(30, 5)).add![0] as LwPolylineEntity;
-    expect(o.vertices.length).toBe(4);
-    expect(o.vertices.filter((v) => Math.abs(Math.abs(v.bulge) - 1) < 1e-9).length).toBe(2);
+    expect(lwVertices(o).length).toBe(4);
+    expect(lwVertices(o).filter((v) => Math.abs(Math.abs(v.bulge) - 1) < 1e-9).length).toBe(2);
     offsetOk(st, o, 2, V(30, 5));
     const i = offsetEntity(st, 2, V(5, 5)).add![0] as LwPolylineEntity;
     offsetOk(st, i, 2, V(5, 5));
@@ -167,7 +168,7 @@ describe('offsetEntity — 폴리선', () => {
       true,
     );
     const o = offsetEntity(p, 1, V(5, 5)).add![0] as LwPolylineEntity;
-    expect(o.vertices.every((v) => Math.abs(v.bulge) < 1e-9)).toBe(true);
+    expect(lwVertices(o).every((v) => Math.abs(v.bulge) < 1e-9)).toBe(true);
     offsetOk(p, o, 1, V(5, 5));
   });
   it('2D POLYLINE은 POLYLINE으로, −Z 폴리선은 자연스러운 결과', () => {

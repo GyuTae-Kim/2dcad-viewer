@@ -29,6 +29,7 @@ import { finishNewDimension, inheritedRef, newDimensionAssocOps, objectRef, poin
 import type { DocState } from './docstate';
 import { textDialog } from './draw';
 import type { OverlayGeom, Pt } from './view';
+import { lwCount, lwVertices } from '../core/lwpoly';
 
 const v3 = (p: Pt): Vec3 => ({ x: p.x, y: p.y, z: 0 });
 
@@ -180,8 +181,8 @@ export function originsFromEntity(e: Entity | undefined, pick: Pt): [Pt, Pt] | n
     const b = { x: e.center.x + e.radius * Math.cos(e.endAngle), y: e.center.y + e.radius * Math.sin(e.endAngle) };
     return [a, b];
   }
-  if (e.type === 'LWPOLYLINE' && e.vertices.length >= 2) {
-    const vs = e.vertices;
+  if (e.type === 'LWPOLYLINE' && lwCount(e) >= 2) {
+    const vs = lwVertices(e);
     const n = e.closed ? vs.length : vs.length - 1;
     let best = 0;
     let bd = Infinity;

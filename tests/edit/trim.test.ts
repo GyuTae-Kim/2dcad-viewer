@@ -6,6 +6,7 @@ import { pathLength, pathNearest, pathSize, flattenPath } from '../../src/edit/g
 import { edgePieces } from '../../src/edit/geom/edges';
 import { pieceNearest } from '../../src/edit/geom/curve';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, line, lw, near, newDoc, poly2d, renders, samePath, spline, xline } from './helpers';
+import { lwVertices, setLwVertex } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -148,7 +149,7 @@ describe('trimEntity', () => {
     const r = trimEntity(sq, [cut], V(0, 5));
     const o = r.replace![0] as LwPolylineEntity;
     expect(o.closed).toBe(false);
-    expect(o.vertices.map((v) => [v.x, v.y])).toEqual(
+    expect(lwVertices(o).map((v) => [v.x, v.y])).toEqual(
       [
         [5, 0],
         [10, 0],
@@ -182,7 +183,7 @@ describe('trimEntity', () => {
     ]);
     const r = trimEntity(p, [p], V(1, 1));
     const o = r.replace![0] as LwPolylineEntity;
-    near(o.vertices[0]!, V(5, 5));
+    near(lwVertices(o)[0]!, V(5, 5));
   });
   it('속성 시험: 결과 끝점은 절단 모서리 위', () => {
     const cutters = [circle(4, 2, 3), line(-5, 6, 15, -2), arc(8, 0, 4, 90, 270), ellipse(2, -1, 4, 1, 0.4)];
@@ -236,12 +237,11 @@ describe('extendEntity', () => {
       [0, 0],
       [5, 0],
     ]) as LwPolylineEntity;
-    p.vertices[0]!.startWidth = 1;
-    p.vertices[0]!.endWidth = 0.5;
+    setLwVertex(p, 0, { startWidth: 1, endWidth: 0.5 });
     const r = extendEntity(p, [wall], V(4, 0));
     const o = r.replace![0] as LwPolylineEntity;
-    near(o.vertices[1]!, V(10, 0));
-    expect(o.vertices[0]!.endWidth).toBeCloseTo(0);
+    near(lwVertices(o)[1]!, V(10, 0));
+    expect(lwVertices(o)[0]!.endWidth).toBeCloseTo(0);
   });
   it('타원형 호·스플라인(끝 접선 방향 직선 부분)', () => {
     const ea = ellipse(0, 0, 6, 0, 0.5, 0, Math.PI / 4);
@@ -322,8 +322,8 @@ describe('breakEntity', () => {
     const r = breakEntity(sq, V(5, 0), V(5, 0));
     const o = r.replace![0] as LwPolylineEntity;
     expect(o.closed).toBe(false);
-    near(o.vertices[0]!, V(5, 0));
-    near(o.vertices.at(-1)!, V(5, 0));
+    near(lwVertices(o)[0]!, V(5, 0));
+    near(lwVertices(o).at(-1)!, V(5, 0));
     samePath(sq, o);
     const r2 = breakEntity(sq, V(5, 0), V(10, 5));
     const o2 = r2.replace![0] as LwPolylineEntity;
@@ -367,10 +367,10 @@ describe('lengthenEntity', () => {
       [5, 5],
     ]);
     const o = lengthenEntity(p, { delta: 2 }, V(5, 4)).replace![0] as LwPolylineEntity;
-    near(o.vertices[2]!, V(5, 7));
+    near(lwVertices(o)[2]!, V(5, 7));
     const os = lengthenEntity(p, { delta: -7 }, V(5, 4)).replace![0] as LwPolylineEntity;
-    expect(os.vertices.length).toBe(2);
-    near(os.vertices[1]!, V(3, 0));
+    expect(lwVertices(os).length).toBe(2);
+    near(lwVertices(os)[1]!, V(3, 0));
     const ea = ellipse(0, 0, 6, 0, 0.5, 0, Math.PI / 2);
     const L0 = pathLength(entityPath(ea)!);
     const oe = lengthenEntity(ea, { delta: 1 }, V(0, 3)).replace![0] as EllipseEntity;

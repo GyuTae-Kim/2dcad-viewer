@@ -18,6 +18,7 @@ import type {
   Vec3,
   XLineEntity,
 } from '../../core/model';
+import { lwCount, packLw, unboxLw } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
 import { ellipseFromConjugate } from './conic';
 import { type ArcPiece, type EllPiece, type LinePiece, type NurbsPiece, type Path, type Piece, pieceAt, pieceLength, pieceSize, reversePiece } from './curve';
@@ -62,7 +63,10 @@ export function freshEntity<T extends Entity>(x: T, keepOwner = true): T {
 
 /** 객체 깊은 복사 */
 export function cloneEntity<T extends Entity>(e: T): T {
-  return structuredClone(e);
+  const c = structuredClone(e);
+  // 구조화 복제는 수 배열의 수를 하나씩 상자에 담는다 — 평탄 좌표는 빈칸 없는 실수 배열로 다시 담는다
+  if (c.type === 'LWPOLYLINE') unboxLw(c, e as LwPolylineEntity);
+  return c;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +131,14 @@ export function segOf(p: Piece): number | undefined {
 // ---------------------------------------------------------------------------
 
 export function lwVerts(e: LwPolylineEntity): BV[] {
-  return e.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge, sw: v.startWidth || e.constantWidth || 0, ew: v.endWidth || e.constantWidth || 0 }));
+  const n = lwCount(e);
+  const v = e.verts;
+  const w = e.widths;
+  const cw = e.constantWidth;
+  const out = new Array<BV>(n);
+  for (let i = 0; i < n; i++)
+    out[i] = { x: v[i * 3]!, y: v[i * 3 + 1]!, bulge: v[i * 3 + 2]!, sw: (w ? w[i * 2]! : 0) || cw || 0, ew: (w ? w[i * 2 + 1]! : 0) || cw || 0 };
+  return out;
 }
 
 /** 2D·3D POLYLINE의 그려지는 정점(스플라인 틀 정점 제외) */
@@ -176,7 +187,7 @@ export function entityPath(e: Entity): Path | null {
       return { pieces: [pc], closed: full, z: e.center.z };
     }
     case 'LWPOLYLINE': {
-      if (!e.vertices.length) return null;
+      if (!lwCount(e)) return null;
       const P = planProj(e.extrusion, e.elevation);
       const pieces = bulgePieces(lwVerts(e), e.closed, P);
       if (!pieces.length) return null;
@@ -383,7 +394,7 @@ export function makePolyline(src: Entity, pieces: readonly Piece[], closed: bool
   return {
     type: 'LWPOLYLINE',
     ...inherit(src),
-    vertices: verts,
+    ...packLw(verts),
     closed,
     plinegen: src.type === 'LWPOLYLINE' ? src.plinegen : false,
     constantWidth,

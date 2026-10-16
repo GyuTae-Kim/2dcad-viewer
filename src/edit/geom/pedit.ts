@@ -11,6 +11,7 @@
  */
 import type { ArcEntity, Entity, LineEntity, LwPolylineEntity, LwVertex, PolyVertex, PolylineEntity, SplineEntity, Vec2, Vec3 } from '../../core/model';
 import { clampedKnots } from '../../geom/curves';
+import { lwPoints, lwVertices, packLw, packLwPoints } from '../../core/lwpoly';
 import { type Affine, ccwSweep, cross, dist, dot, norm, rot90, sub, sweepToBulge } from './math';
 import { domain, nurbsPoint } from './nurbs';
 import { inherit, splineNurbs } from './path';
@@ -52,7 +53,7 @@ export function fitKind(e: PolyEntity): FitKind {
 
 /** 편집할 정점(맞춤·스플라인 폴리선은 틀 정점) */
 export function frameVerts(e: PolyEntity): PV[] {
-  if (e.type === 'LWPOLYLINE') return e.vertices.map((v) => ({ x: v.x, y: v.y, z: e.elevation, bulge: v.bulge, sw: v.startWidth, ew: v.endWidth }));
+  if (e.type === 'LWPOLYLINE') return lwVertices(e).map((v) => ({ x: v.x, y: v.y, z: e.elevation, bulge: v.bulge, sw: v.startWidth, ew: v.endWidth }));
   const fk = fitKind(e);
   let vs: PolyVertex[];
   if (fk === 'spline') vs = e.vertices.filter((v) => v.flags & 16);
@@ -67,7 +68,7 @@ export function withVerts(e: PolyEntity, verts: readonly PV[], closed: boolean):
   if (e.type === 'LWPOLYLINE') {
     return {
       ...e,
-      vertices: verts.map((v): LwVertex => ({ x: v.x, y: v.y, bulge: v.bulge, startWidth: v.sw, endWidth: v.ew })),
+      ...packLw(verts.map((v): LwVertex => ({ x: v.x, y: v.y, bulge: v.bulge, startWidth: v.sw, endWidth: v.ew }))),
       closed,
     };
   }
@@ -270,7 +271,7 @@ function toPolyline2d(e: PolyEntity): PolylineEntity {
     ...(e.extrusion ? { extrusion: { ...e.extrusion } } : {}),
     kind: '2d',
     flags: (e.closed ? 1 : 0) | (e.plinegen ? 128 : 0),
-    vertices: e.vertices.map((v) => ({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: v.bulge, startWidth: v.startWidth || cw, endWidth: v.endWidth || cw, flags: 0 })),
+    vertices: lwVertices(e).map((v) => ({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: v.bulge, startWidth: v.startWidth || cw, endWidth: v.endWidth || cw, flags: 0 })),
     elevation: e.elevation,
     defaultStartWidth: cw,
     defaultEndWidth: cw,
@@ -374,10 +375,10 @@ function lineToPoly(e: LineEntity): LwPolylineEntity {
   return {
     type: 'LWPOLYLINE',
     ...inherit(e),
-    vertices: [
+    ...packLw([
       { x: e.start.x, y: e.start.y, bulge: 0, startWidth: 0, endWidth: 0 },
       { x: e.end.x, y: e.end.y, bulge: 0, startWidth: 0, endWidth: 0 },
-    ],
+    ]),
     closed: false,
     plinegen: false,
     constantWidth: 0,
@@ -402,7 +403,7 @@ function arcToPoly(e: ArcEntity): LwPolylineEntity {
           { x: a.x, y: a.y, bulge: sweepToBulge(sw), startWidth: 0, endWidth: 0 },
           { x: b.x, y: b.y, bulge: 0, startWidth: 0, endWidth: 0 },
         ];
-  const out: LwPolylineEntity = { type: 'LWPOLYLINE', ...inherit(e), vertices: verts, closed: false, plinegen: false, constantWidth: 0, elevation: c.z };
+  const out: LwPolylineEntity = { type: 'LWPOLYLINE', ...inherit(e), ...packLw(verts), closed: false, plinegen: false, constantWidth: 0, elevation: c.z };
   if (e.extrusion) out.extrusion = { ...e.extrusion };
   return out;
 }
@@ -429,7 +430,7 @@ export function splineToPolyline(e: SplineEntity, precision = 10): PolyEntity | 
     return {
       type: 'LWPOLYLINE',
       ...inherit(e),
-      vertices: pts.map((q) => ({ x: q.x, y: q.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+      ...packLwPoints(pts),
       closed,
       plinegen: false,
       constantWidth: 0,
@@ -455,7 +456,7 @@ export function splineToPolyline(e: SplineEntity, precision = 10): PolyEntity | 
 
 /** 폴리선 끝점(평면도, WCS) — 결합 후보를 고를 때 */
 export function polyEnds(e: PolyEntity): [Vec2, Vec2] | null {
-  const vs = e.type === 'LWPOLYLINE' ? e.vertices.map((v) => ({ x: v.x, y: v.y })) : e.vertices.filter((v) => !(v.flags & 16)).map((v) => ({ x: v.location.x, y: v.location.y }));
+  const vs = e.type === 'LWPOLYLINE' ? lwPoints(e) : e.vertices.filter((v) => !(v.flags & 16)).map((v) => ({ x: v.location.x, y: v.location.y }));
   if (vs.length < 2) return null;
   if (is3d(e)) return [vs[0]!, vs[vs.length - 1]!];
   const P: Affine = planProj(e.extrusion, e.elevation);

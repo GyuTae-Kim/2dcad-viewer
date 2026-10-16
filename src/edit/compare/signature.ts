@@ -8,6 +8,7 @@
  * - 핸들·소유자·반응자·확장 사전·원본 바이트처럼 파일마다 다른 값은 넣지 않는다.
  */
 import type { CadDocument, Entity, HatchEdge, HatchPath, Vec2, Vec3 } from '../../core/model';
+import { bulgeVertices, lwVertices } from '../../core/lwpoly';
 
 /** COMPAREPROPS 비트 */
 export const PROP_COLOR = 1;
@@ -156,8 +157,9 @@ function ordered(a: Vec3, b: Vec3, tol: number): [Vec3, Vec3] {
 function hatchPath(s: Builder, p: HatchPath): void {
   s.k('P', p.flags & ~0x100);
   if (p.polyline) {
-    s.k(p.polyline.closed, p.polyline.vertices.length);
-    for (const v of p.polyline.vertices) s.n(v.x, v.y, v.bulge ?? 0);
+    const vs = bulgeVertices(p.polyline.verts);
+    s.k(p.polyline.closed, vs.length);
+    for (const v of vs) s.n(v.x, v.y, v.bulge ?? 0);
   }
   for (const e of p.edges ?? []) hatchEdge(s, e);
 }
@@ -329,10 +331,11 @@ export function entitySignature(e: Entity, opt: CompareOptions, doc?: CadDocumen
       s.a(e.startParam, e.endParam);
       break;
     case 'LWPOLYLINE': {
-      const v0 = e.vertices[0];
+      const vs = lwVertices(e);
+      const v0 = vs[0];
       if (v0) s.anchor(v0.x, v0.y);
-      s.k(e.closed, e.plinegen, e.vertices.length);
-      for (const v of e.vertices) s.n(v.x, v.y, v.bulge ?? 0, v.startWidth ?? 0, v.endWidth ?? 0);
+      s.k(e.closed, e.plinegen, vs.length);
+      for (const v of vs) s.n(v.x, v.y, v.bulge ?? 0, v.startWidth ?? 0, v.endWidth ?? 0);
       s.n(e.constantWidth ?? 0, e.elevation ?? 0);
       break;
     }
@@ -457,7 +460,8 @@ export function entitySignature(e: Entity, opt: CompareOptions, doc?: CadDocumen
     case 'HATCH':
     case 'MPOLYGON': {
       const p0 = e.paths[0];
-      const q = p0?.polyline?.vertices[0] ?? (p0?.edges?.[0] ? edgeStart(p0.edges[0]) : undefined);
+      const pv = p0?.polyline?.verts;
+      const q = (pv && pv.length >= 3 ? { x: pv[0]!, y: pv[1]! } : undefined) ?? (p0?.edges?.[0] ? edgeStart(p0.edges[0]) : undefined);
       if (q) s.anchor(q.x, q.y);
       s.k(up(e.patternName), e.solid, e.hatchStyle, e.patternType, e.patternDouble, e.paths.length);
       if (e.gradient?.enabled) {

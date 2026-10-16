@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { entityDefaults } from '../../src/core/model';
 import { type P2, recordPoint, simplify, sketchEntities } from '../../src/edit/sketch';
+import { lwVertices } from '../../src/core/lwpoly';
 
 describe('스케치', () => {
   it('증분보다 가까운 점은 기록하지 않는다', () => {
@@ -34,7 +35,7 @@ describe('스케치', () => {
     expect(sketchEntities(strokes, 'line', props, 0.5).map((e) => e.type)).toEqual(['LINE', 'LINE']);
     const pl = sketchEntities(strokes, 'polyline', props, 0.5);
     expect(pl).toHaveLength(1);
-    expect(pl[0]!.type === 'LWPOLYLINE' && pl[0]!.vertices).toHaveLength(3);
+    expect(pl[0]!.type === 'LWPOLYLINE' && lwVertices(pl[0]!)).toHaveLength(3);
     const sp = sketchEntities(strokes, 'spline', props, 0);
     expect(sp[0]!.type === 'SPLINE' && sp[0]!.fitPoints).toHaveLength(3);
   });

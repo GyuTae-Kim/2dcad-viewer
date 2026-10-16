@@ -9,6 +9,7 @@ import { cloneEntity } from './path';
 import { type Affine, TAU, affAngle, affApply, affDet, affInv, affLin, affMul, affScaleOf, affSimilarity, ccwSweep, len, normAngle, rot90 } from './math';
 import { planProj, planeMap } from './ocs';
 import type { TransformOptions } from './types';
+import { bulgeVertices, packBulge } from '../../core/lwpoly';
 
 export function xformHatch(e: HatchEntity, m: Affine, opt: TransformOptions): HatchEntity {
   const pm = planeMap(e.extrusion, e.elevation, m, opt.dz ?? 0);
@@ -42,7 +43,7 @@ export function xformHatch(e: HatchEntity, m: Affine, opt: TransformOptions): Ha
 
 function firstVertex(e: HatchEntity): Vec2 {
   for (const p of e.paths) {
-    if (p.polyline && p.polyline.vertices.length) return { x: p.polyline.vertices[0]!.x, y: p.polyline.vertices[0]!.y };
+    if (p.polyline && p.polyline.verts.length >= 3) return { x: p.polyline.verts[0]!, y: p.polyline.verts[1]! };
     const ed = p.edges?.[0];
     if (ed) {
       if (ed.type === 'line') return { ...ed.start };
@@ -72,19 +73,21 @@ export function xformPath(p: HatchPath, A: Affine): HatchPath {
   const out: HatchPath = { flags: p.flags };
   if (p.sources) out.sources = [...p.sources];
   if (p.polyline) {
-    const curved = p.polyline.vertices.some((v) => Math.abs(v.bulge) > 1e-12);
+    const vs = bulgeVertices(p.polyline.verts);
+    const curved = vs.some((v) => Math.abs(v.bulge) > 1e-12);
     if (sim || !curved) {
       out.polyline = {
         closed: p.polyline.closed,
-        vertices: p.polyline.vertices.map((v) => {
-          const q = affApply(A, v);
-          return { x: q.x, y: q.y, bulge: flip ? -v.bulge : v.bulge };
-        }),
+        verts: packBulge(
+          vs.map((v) => {
+            const q = affApply(A, v);
+            return { x: q.x, y: q.y, bulge: flip ? -v.bulge : v.bulge };
+          }),
+        ),
       };
       return out;
     }
     // 비균등 축척: 호 → 타원 경계
-    const vs = p.polyline.vertices;
     const edges: HatchEdge[] = [];
     for (let i = 0; i < vs.length; i++) {
       const a = vs[i]!;

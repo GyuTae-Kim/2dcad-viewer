@@ -5,6 +5,7 @@ import { entityPath } from '../../src/edit/geom/path';
 import { flattenPath, pathNearest } from '../../src/edit/geom/curve';
 import { affRotate, affTranslate } from '../../src/edit/geom/math';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, fitSpline, line, lw, mtext, near, newDoc, poly2d, samePath, spline, text, xline } from './helpers';
+import { lwVertices, setLwVertex } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -249,15 +250,14 @@ describe('reverseEntity', () => {
       [10, 0, -0.3],
       [10, 10],
     ]) as LwPolylineEntity;
-    p.vertices[0]!.startWidth = 1;
-    p.vertices[0]!.endWidth = 2;
+    setLwVertex(p, 0, { startWidth: 1, endWidth: 2 });
     const rp = reverseEntity(p).replace![0] as LwPolylineEntity;
-    near(rp.vertices[0]!, V(10, 10));
-    expect(rp.vertices[0]!.bulge).toBeCloseTo(0.3);
-    expect(rp.vertices[1]!.bulge).toBeCloseTo(-0.5);
-    expect(rp.vertices[2]!.bulge).toBeCloseTo(0);
-    expect(rp.vertices[1]!.startWidth).toBeCloseTo(2);
-    expect(rp.vertices[1]!.endWidth).toBeCloseTo(1);
+    near(lwVertices(rp)[0]!, V(10, 10));
+    expect(lwVertices(rp)[0]!.bulge).toBeCloseTo(0.3);
+    expect(lwVertices(rp)[1]!.bulge).toBeCloseTo(-0.5);
+    expect(lwVertices(rp)[2]!.bulge).toBeCloseTo(0);
+    expect(lwVertices(rp)[1]!.startWidth).toBeCloseTo(2);
+    expect(lwVertices(rp)[1]!.endWidth).toBeCloseTo(1);
     samePath(p, rp);
     const closed = lw([[0, 0, 0.4], [10, 0], [10, 10, -0.2]], true) as LwPolylineEntity;
     samePath(closed, reverseEntity(closed).replace![0]!);

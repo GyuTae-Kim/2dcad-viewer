@@ -20,6 +20,7 @@ import { addEntities, currentProps } from './draw';
 import { candidates, settingsOf } from './hatchcmd';
 import { memOf, previewOf, visibleEntities } from './modify2-util';
 import type { OverlayGeom, Pt } from './view';
+import { lwPoints, packBulge } from '../core/lwpoly';
 
 /** -HATCH 그라데이션 이름 ↔ 해치 객체의 그라데이션 이름 */
 export const GRADIENT_NAMES: [string, string][] = [
@@ -124,7 +125,7 @@ async function drawLoops(ctx: CommandContext): Promise<Pt[][]> {
 
 /** 점 목록 → 폴리선 해치 경로 */
 function loopPath(pts: Pt[], outer: boolean): HatchPath {
-  return { flags: outer ? 3 : 2, polyline: { closed: true, vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0 })) } };
+  return { flags: outer ? 3 : 2, polyline: { closed: true, verts: packBulge(pts) } };
 }
 
 export function registerDashHatchCommands(app: App): void {
@@ -599,7 +600,7 @@ function pathsBox(paths: readonly HatchPath[]): { minX: number; minY: number; ma
   let b: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
   for (const o of objs)
     if (o.type === 'LWPOLYLINE')
-      for (const v of o.vertices) {
+      for (const v of lwPoints(o)) {
         if (!b) b = { minX: v.x, minY: v.y, maxX: v.x, maxY: v.y };
         else b = { minX: Math.min(b.minX, v.x), minY: Math.min(b.minY, v.y), maxX: Math.max(b.maxX, v.x), maxY: Math.max(b.maxY, v.y) };
       }

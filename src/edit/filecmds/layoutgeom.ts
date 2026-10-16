@@ -4,6 +4,7 @@
  */
 import type { AttribEntity, Entity, LineEntity, LwPolylineEntity, TextEntity, Vec2, ViewportEntity } from '../../core/model';
 import { entityDefaults } from '../../core/model';
+import { packLw } from '../../core/lwpoly';
 
 /** [minX, minY, maxX, maxY] */
 export type Rect = [number, number, number, number];
@@ -203,12 +204,14 @@ export function titleBlockEntities(sheet: IsoSheet, values: TitleBlockValues, op
   const rect = (r: Rect, width = 0): LwPolylineEntity => ({
     ...base,
     type: 'LWPOLYLINE',
-    vertices: [
-      [r[0], r[1]],
-      [r[2], r[1]],
-      [r[2], r[3]],
-      [r[0], r[3]],
-    ].map(([x, y]) => ({ x: x!, y: y!, bulge: 0, startWidth: width, endWidth: width })),
+    ...packLw(
+      [
+        [r[0], r[1]],
+        [r[2], r[1]],
+        [r[2], r[3]],
+        [r[0], r[3]],
+      ].map(([x, y]) => ({ x: x!, y: y!, bulge: 0, startWidth: width, endWidth: width })),
+    ),
     closed: true,
     plinegen: false,
     constantWidth: width,

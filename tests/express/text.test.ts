@@ -13,6 +13,7 @@ import { TEXTMASK_APP, makeMask, maskPolygon, readMaskLink, withMaskLink } from 
 import { circleRadius, encloseText, largestBox } from '../../src/edit/express/tcircle';
 import { textAngle, textBox } from '../../src/edit/express/textbox';
 import { explodeTextGeometry } from '../../src/edit/express/txtexp';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc: CadDocument = createNewDocument('metric');
 let hn = 0x200;
@@ -254,11 +255,11 @@ describe('TCIRCLE', () => {
     const b = textBox(t, doc)!;
     const r = encloseText(t, doc, 'rect', 0.2, props) as LwPolylineEntity;
     expect(r.closed).toBe(true);
-    expect(r.vertices).toHaveLength(4);
-    const side = Math.hypot(r.vertices[1]!.x - r.vertices[0]!.x, r.vertices[1]!.y - r.vertices[0]!.y);
+    expect(lwVertices(r)).toHaveLength(4);
+    const side = Math.hypot(lwVertices(r)[1]!.x - lwVertices(r)[0]!.x, lwVertices(r)[1]!.y - lwVertices(r)[0]!.y);
     expect(side).toBeCloseTo(b.w + 2 * 0.5, 9);
     const s = encloseText(t, doc, 'slot', 0.2, props) as LwPolylineEntity;
-    expect(s.vertices.map((v) => v.bulge)).toEqual([0, 1, 0, 1]);
+    expect(lwVertices(s).map((v) => v.bulge)).toEqual([0, 1, 0, 1]);
   });
   it('일정 크기: 가장 큰 상자', () => {
     const a = text('AB', 0, 0);
@@ -266,7 +267,7 @@ describe('TCIRCLE', () => {
     const big = largestBox([a, b], doc)!;
     expect(big.w).toBeCloseTo(textBox(b, doc)!.w, 9);
     const r = encloseText(a, doc, 'rect', 0, props, { w: big.w, h: big.h }) as LwPolylineEntity;
-    expect(Math.hypot(r.vertices[1]!.x - r.vertices[0]!.x, r.vertices[1]!.y - r.vertices[0]!.y)).toBeCloseTo(big.w, 9);
+    expect(Math.hypot(lwVertices(r)[1]!.x - lwVertices(r)[0]!.x, lwVertices(r)[1]!.y - lwVertices(r)[0]!.y)).toBeCloseTo(big.w, 9);
   });
 });
 
@@ -298,15 +299,15 @@ describe('TXTEXP', () => {
     const fake = { layoutText: () => lay, layoutMText: () => lay };
     const parts = explodeTextGeometry(text('OO', 10, 0), doc, fake as unknown as TextEngine) as LwPolylineEntity[];
     expect(parts).toHaveLength(4);
-    expect(parts.every((p) => p.closed && p.vertices.length === 4)).toBe(true);
-    expect(parts[2]!.vertices[1]!.x).toBeCloseTo(4, 9);
+    expect(parts.every((p) => p.closed && lwVertices(p).length === 4)).toBe(true);
+    expect(lwVertices(parts[2]!)[1]!.x).toBeCloseTo(4, 9);
   });
   it('회전한 문자의 획은 회전한 자리에', () => {
     const t0 = text('I', 0, 0);
     const t1 = text('I', 0, 0, { rotation: Math.PI / 2 });
     const a = explodeTextGeometry(t0, doc, eng)[0] as LwPolylineEntity;
     const b = explodeTextGeometry(t1, doc, eng)[0] as LwPolylineEntity;
-    expect(b.vertices[0]!.x).toBeCloseTo(-a.vertices[0]!.y, 6);
-    expect(b.vertices[0]!.y).toBeCloseTo(a.vertices[0]!.x, 6);
+    expect(lwVertices(b)[0]!.x).toBeCloseTo(-lwVertices(a)[0]!.y, 6);
+    expect(lwVertices(b)[0]!.y).toBeCloseTo(lwVertices(a)[0]!.x, 6);
   });
 });

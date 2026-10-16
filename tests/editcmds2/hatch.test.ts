@@ -4,17 +4,18 @@ import { MODEL_SPACE, entityDefaults } from '../../src/core/model';
 import { PATTERNS, boundaryFromEntities, createHatch, reactorLinks } from '../../src/edit/hatch';
 import { hasPatternOrigin, hatchBoundaryEntities, hatchOrigin, hatchWithBoundary, relinkReactors, withHatchOrigin } from '../../src/edit/editcmds2/hatch';
 import { circle, line, put, setup } from '../util2/helpers';
+import { lwVertices, packBulge } from '../../src/core/lwpoly';
 
 const square = (x0: number, y0: number, s: number): HatchPath => ({
   flags: 3,
   polyline: {
     closed: true,
-    vertices: [
+    verts: packBulge([
       { x: x0, y: y0, bulge: 0 },
       { x: x0 + s, y: y0, bulge: 0 },
       { x: x0 + s, y: y0 + s, bulge: 0 },
       { x: x0, y: y0 + s, bulge: 0 },
-    ],
+    ]),
   },
 });
 
@@ -33,7 +34,7 @@ describe('HATCHGENERATEBOUNDARY: 해치 둘레의 경계', () => {
     expect(a!.closed).toBe(true);
     expect(a!.layer).toBe('경계');
     expect(a!.color.aci).toBe(1);
-    expect(a!.vertices.map((v) => [v.x, v.y])).toEqual([
+    expect(lwVertices(a!).map((v) => [v.x, v.y])).toEqual([
       [0, 0],
       [10, 0],
       [10, 10],
@@ -42,7 +43,7 @@ describe('HATCHGENERATEBOUNDARY: 해치 둘레의 경계', () => {
     // 한 바퀴 원 모서리는 반원 둘(볼록도 1)로
     expect(b!.type).toBe('LWPOLYLINE');
     expect(b!.closed).toBe(true);
-    expect(b!.vertices.map((v) => [+v.x.toFixed(9), +v.y.toFixed(9), +Math.abs(v.bulge).toFixed(9)])).toEqual([
+    expect(lwVertices(b!).map((v) => [+v.x.toFixed(9), +v.y.toFixed(9), +Math.abs(v.bulge).toFixed(9)])).toEqual([
       [23, 0, 1],
       [17, 0, 1],
     ]);

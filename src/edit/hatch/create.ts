@@ -7,6 +7,7 @@ import { pathLoop } from '../../render/hatch';
 import { pathsFillPoint } from './boundary';
 import { patternLines, userPatternLines } from './lines';
 import { findPattern } from './patterns';
+import { numArray } from '../../core/lwpoly';
 
 export interface CreateHatchOptions {
   /** 무늬 이름('SOLID', 'ANSI31' …, 사용자 정의는 '_USER') */
@@ -37,7 +38,7 @@ export interface CreateHatchOptions {
 
 function clonePath(p: HatchPath, keepSources: boolean): HatchPath {
   const out: HatchPath = { flags: p.flags };
-  if (p.polyline) out.polyline = { closed: p.polyline.closed, vertices: p.polyline.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge })) };
+  if (p.polyline) out.polyline = { closed: p.polyline.closed, verts: numArray(p.polyline.verts) };
   if (p.edges) out.edges = p.edges.map((e) => structuredClone(e));
   if (keepSources && p.sources?.length) out.sources = [...p.sources];
   return out;

@@ -4,6 +4,7 @@ import { DEFAULT_OPTIONS, PROP_LAYER } from '../../src/edit/compare/signature';
 import { changeSets, compareMargin, diagonal, type Box } from '../../src/edit/compare/sets';
 import { bigDoc, line } from './make';
 import type { Entity } from '../../src/core/model';
+import { lwVertices, setLwVertices } from '../../src/core/lwpoly';
 
 const N = 50000;
 const LIMIT = 2000;
@@ -87,7 +88,7 @@ describe('큰 도면(5만 객체) 비교 시간', () => {
     for (const e of b.model) {
       if (e.type === 'LINE') e.start = { ...e.start, y: e.start.y + 0.5 };
       else if (e.type === 'CIRCLE' || e.type === 'ARC') e.center = { ...e.center, y: e.center.y + 0.5 };
-      else if (e.type === 'LWPOLYLINE') e.vertices = e.vertices.map((v) => ({ ...v, y: v.y + 0.5 }));
+      else if (e.type === 'LWPOLYLINE') setLwVertices(e, lwVertices(e).map((v) => ({ ...v, y: v.y + 0.5 })));
       else if (e.type === 'TEXT' || e.type === 'INSERT') e.insert = { ...e.insert, y: e.insert.y + 0.5 };
     }
     const r = time(() => compareDrawings(a.doc, b.doc, DEFAULT_OPTIONS));

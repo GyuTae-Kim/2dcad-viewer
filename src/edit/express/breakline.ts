@@ -5,6 +5,7 @@
  *   … ─ A ╱╲╱ B ─ …   A = 기호 가운데 − S/2, 꺾이는 점 = 가운데 ∓ S/4 ± 법선 × S/2
  */
 import type { EntityBase, LwPolylineEntity, Vec2 } from '../../core/model';
+import { packLwPoints } from '../../core/lwpoly';
 
 export interface BreaklineOptions {
   /** 끊기 기호 크기(선 방향 길이) */
@@ -47,7 +48,7 @@ export function makeBreakline(props: Omit<EntityBase, 'type'>, p1: Vec2, p2: Vec
     ...props,
     handle: '',
     type: 'LWPOLYLINE',
-    vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+    ...packLwPoints(pts),
     closed: false,
     plinegen: false,
     constantWidth: 0,

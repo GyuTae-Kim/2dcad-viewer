@@ -6,6 +6,7 @@ import { cloneStore } from '../../src/edit/constraint/store';
 import { addConstraints, measureConstraint, removeConstraints, resolveParams } from '../../src/edit/constraint/system';
 import type { DimConstraint, DimType } from '../../src/edit/constraint/types';
 import { L, apply, arc, circle, line, lwpoly, put, setup, store } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const dim = (type: DimType, refs: [string, string][], name: string, expr: string, extra: Partial<DimConstraint> = {}): DimConstraint => ({
   id: 0,
@@ -98,8 +99,8 @@ describe('치수 구속', () => {
     expect((Math.atan2(B.end.y, B.end.x) * 180) / Math.PI).toBeCloseTo(60, 6);
     addDim(doc, s, dim('RADIUS', [[pl.handle, 'G1']], 'rad1', '40'));
     const P = doc.entityIndex.get(pl.handle) as LwPolylineEntity;
-    const v0 = P.vertices[1]!;
-    const v1 = P.vertices[2]!;
+    const v0 = lwVertices(P)[1]!;
+    const v1 = lwVertices(P)[2]!;
     const chord = Math.hypot(v1.x - v0.x, v1.y - v0.y);
     const r = chord / (2 * Math.sin(Math.abs(4 * Math.atan(v0.bulge)) / 2));
     expect(r).toBeCloseTo(40, 6);

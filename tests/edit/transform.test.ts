@@ -3,6 +3,7 @@ import type { ArcEntity, EllipseEntity, Entity, InsertEntity, LwPolylineEntity, 
 import { transformEntity } from '../../src/edit/geom/transform';
 import { type Affine, affInv, affMirror, affMul, affRotate, affScale, affTranslate } from '../../src/edit/geom/math';
 import { NEG_Z, P, V, arc, circle, deg, ellipse, fitSpline, line, lw, mappedPath, mtext, near, newDoc, only, poly2d, renders, samePath, spline, text, xline } from './helpers';
+import { lwVertices } from '../../src/core/lwpoly';
 
 const doc = newDoc();
 
@@ -80,7 +81,7 @@ describe('transformEntity — 종류와 표현', () => {
   it('볼록도 폴리선 대칭 → 볼록도 부호 반전', () => {
     const p = lw([[0, 0, 1], [10, 0]]) as LwPolylineEntity;
     const r = only(transformEntity(p, affMirror(V(0, 0), V(1, 0)), doc)) as LwPolylineEntity;
-    expect(r.vertices[0]!.bulge).toBeCloseTo(-1);
+    expect(lwVertices(r)[0]!.bulge).toBeCloseTo(-1);
   });
   it('볼록도 폴리선 비균등 축척 → 유리 SPLINE', () => {
     const p = lw([[0, 0, 1], [10, 0], [10, 5]]);

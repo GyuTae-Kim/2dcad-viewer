@@ -1,6 +1,7 @@
 /** 테스트 객체 만들기(vitest 없이도 쓸 수 있다) */
 import type { BlockDef, CadDocument, Entity, LwVertex, Vec2, Vec3 } from '../../src/core/model';
 import { MODEL_SPACE, createDocument, entityDefaults } from '../../src/core/model';
+import { packLw } from '../../src/core/lwpoly';
 
 export const P = (x: number, y: number, z = 0): Vec3 => ({ x, y, z });
 export const V = (x: number, y: number): Vec2 => ({ x, y });
@@ -38,7 +39,7 @@ export function ellipse(cx: number, cy: number, mx: number, my: number, ratio: n
 
 export function lw(pts: [number, number, number?][], closed = false, ext?: Vec3, width = 0): Entity {
   const vertices: LwVertex[] = pts.map(([x, y, b]) => ({ x, y, bulge: b ?? 0, startWidth: 0, endWidth: 0 }));
-  return { type: 'LWPOLYLINE', ...base(), vertices, closed, plinegen: false, constantWidth: width, elevation: 0, extrusion: ext };
+  return { type: 'LWPOLYLINE', ...base(), ...packLw(vertices), closed, plinegen: false, constantWidth: width, elevation: 0, extrusion: ext };
 }
 
 export function poly2d(pts: [number, number, number?][], closed = false): Entity {

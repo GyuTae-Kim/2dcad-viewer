@@ -19,6 +19,7 @@ import { unlockedOnly } from './layers';
 import { commitResults } from './modify';
 import { dialog, h } from './ui/dom';
 import type { OverlayGeom, Pt } from './view';
+import { lwCount, lwVertices, packLw } from '../core/lwpoly';
 
 const v3 = (p: Pt, z = 0): Vec3 => ({ x: p.x, y: p.y, z });
 
@@ -219,7 +220,7 @@ export function toleranceEntities(app: App, doc: CadDocument, text: string, at: 
     const pl: LwPolylineEntity = {
       ...base,
       type: 'LWPOLYLINE',
-      vertices: s.pts.map((q) => ({ x: at.x + q.x, y: at.y + q.y, bulge: 0, startWidth: 0, endWidth: 0 })),
+      ...packLw(s.pts.map((q) => ({ x: at.x + q.x, y: at.y + q.y, bulge: 0, startWidth: 0, endWidth: 0 }))),
       closed: !!s.closed,
       plinegen: false,
       constantWidth: 0,
@@ -305,8 +306,8 @@ function centerSettings(app: App): CenterSettings {
 function straightOf(e: Entity | undefined, pick: Pt): [Pt, Pt] | null {
   if (!e) return null;
   if (e.type === 'LINE') return [e.start, e.end];
-  if (e.type === 'LWPOLYLINE' && e.vertices.length >= 2) {
-    const vs = e.vertices;
+  if (e.type === 'LWPOLYLINE' && lwCount(e) >= 2) {
+    const vs = lwVertices(e);
     const n = e.closed ? vs.length : vs.length - 1;
     let best = -1;
     let bd = Infinity;
@@ -340,7 +341,7 @@ function roundOf(e: Entity | undefined, pick: Pt): { c: Pt; r: number; sweep: nu
     return { c: e.center, r: e.radius, sweep: sw, z: e.center.z };
   }
   if (e.type === 'LWPOLYLINE') {
-    const vs = e.vertices;
+    const vs = lwVertices(e);
     let best: { c: Pt; r: number; sweep: number; z: number } | null = null;
     let bd = Infinity;
     for (let i = 0; i < (e.closed ? vs.length : vs.length - 1); i++) {

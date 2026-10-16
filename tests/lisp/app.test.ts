@@ -6,6 +6,7 @@ import { registerDashCommands } from '../../src/app/dashcmds';
 import { registerTableCommands } from '../../src/app/tables';
 import { lispSession } from '../../src/app/lisp';
 import { makeLispApp, type LispApp } from './app';
+import { lwVertices } from '../../src/core/lwpoly';
 
 function setup(extra?: (doc: CadDocument) => void): LispApp {
   const h = makeLispApp(extra);
@@ -177,7 +178,7 @@ describe('객체 함수', () => {
     await h.lisp("(entmake '((0 . \"LWPOLYLINE\") (90 . 3) (70 . 1) (10 0 0) (10 4 0) (42 . 0.5) (10 4 3)))");
     const pl = h.model('LWPOLYLINE')[0]!;
     expect(pl.closed).toBe(true);
-    expect(pl.vertices.map((v: { x: number; y: number; bulge: number }) => [v.x, v.y, v.bulge])).toEqual([
+    expect(lwVertices(pl).map((v: { x: number; y: number; bulge: number }) => [v.x, v.y, v.bulge])).toEqual([
       [0, 0, 0],
       [4, 0, 0.5],
       [4, 3, 0],
