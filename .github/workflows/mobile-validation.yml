@@ -60,8 +60,10 @@ jobs:
           session="mobile-$GITHUB_RUN_ID"
           trap '"$cli" -s="$session" close || true; kill "$baseline_pid" "$candidate_pid" 2>/dev/null || true' EXIT
           "$cli" -s="$session" open http://127.0.0.1:4321/ --config=tools/mobile-browser.json
+          "$cli" -s="$session" run-code "async (page) => { await page.getByRole('button', {name:'파일 열기',exact:true}).click(); }"
+          "$cli" -s="$session" upload public/samples/opencad-sample.dxf
           "$cli" -s="$session" run-code "$(cat tools/mobile-browser-check.js)" | tee .runtime/performance/browser.txt
-          grep -q 'MOBILE_BROWSER_CHECK_PASSED' .runtime/performance/browser.txt
+          node tools/check-browser-result.mjs .runtime/performance/browser.txt
 
       - uses: actions/upload-artifact@v4
         if: always()

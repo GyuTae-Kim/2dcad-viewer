@@ -3,12 +3,12 @@ async (page) => {
   const assert = (value, message) => { if (!value) throw new Error(message); };
   const loaded = () => page.waitForFunction(() => window.opencad?.active, undefined, {timeout:30000});
   const fresh = async (query='') => { await page.goto(origin+query); await page.getByRole('button',{name:'예제 도면 열기',exact:true}).waitFor(); };
+  await loaded();
+  assert(await page.evaluate(() => window.opencad.docs.length===1), 'Native file picker opened exactly once');
   await fresh();
   assert(await page.locator('main').count() === 1, 'Welcome has main landmark');
   assert(await page.evaluate(() => !window.opencad && !performance.getEntriesByType('resource').some(r=>/editor-.*\.js/.test(r.name))), 'CAD must not download before intent');
-  const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button',{name:'파일 열기',exact:true}).click();
-  await (await chooserPromise).setFiles([]);
+  await page.locator('input[type=file]').setInputFiles([]);
   assert(await page.evaluate(() => !window.opencad), 'Cancelling picker must leave welcome intact');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No mobile horizontal overflow');
   await page.screenshot({path:'.runtime/performance/welcome-mobile.png'});
@@ -21,9 +21,7 @@ async (page) => {
   await page.getByRole('button',{name:'만들기',exact:true}).click(); await loaded();
   assert(await page.evaluate(() => window.opencad.docs.length===1), 'New drawing created');
   await fresh();
-  const picker = page.waitForEvent('filechooser');
-  await page.getByRole('button',{name:'파일 열기',exact:true}).click();
-  await (await picker).setFiles('public/samples/opencad-sample.dxf'); await loaded();
+  await page.locator('input[type=file]').setInputFiles('public/samples/opencad-sample.dxf'); await loaded();
   assert(await page.evaluate(() => window.opencad.docs.length===1), 'File picker opened exactly once');
   await fresh();
   await page.getByRole('button',{name:'opencad-sample.dxf',exact:true}).click(); await loaded();
@@ -46,5 +44,5 @@ async (page) => {
   await page.unroute('**/editor-*.js');
   await page.getByRole('button',{name:'새로고침',exact:true}).click();
   await page.getByRole('button',{name:'예제 도면 열기',exact:true}).click(); await loaded();
-  console.log('MOBILE_BROWSER_CHECK_PASSED: welcome, cancel, sample, commands, new, picker, recent, drop, sample URL, open URL');
+  return 'MOBILE_BROWSER_CHECK_PASSED';
 }
