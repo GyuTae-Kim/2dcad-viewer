@@ -8,13 +8,12 @@ import type { EditOp } from '../edit/session';
 import { cloneEntity } from '../edit/session';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
-import { PAPERS } from './plot';
 import { paperInfo } from './scene';
 import { ask, form } from './ui/dom';
 import { inScript } from './script';
 import { layoutSaveAs, layoutTemplate } from './layoutcmds-file';
-
-const STYLE_SHEETS = ['', 'monochrome.ctb', 'Grayscale.ctb', 'acad.ctb', 'Screening 50%.ctb', 'Fill Patterns.ctb'];
+import { runPageSetupManager } from './pagesetup-ui';
+import { runPsetupin } from './dashcmds-plot';
 
 const INCH_NAMES: Record<string, string> = { LETTER: 'Letter', LEGAL: 'Legal', TABLOID: 'ANSI_B', ANSIC: 'ANSI_C', ANSID: 'ANSI_D', ANSIE: 'ANSI_E' };
 
@@ -22,20 +21,6 @@ const INCH_NAMES: Record<string, string> = { LETTER: 'Letter', LEGAL: 'Legal', T
 export function mediaName(key: string, w: number, h: number): string {
   if (/^A\d$/.test(key)) return `ISO_full_bleed_${key}_(${w.toFixed(2)}_x_${h.toFixed(2)}_MM)`;
   return `${INCH_NAMES[key] ?? key}_(${(w / 25.4).toFixed(2)}_x_${(h / 25.4).toFixed(2)}_Inches)`;
-}
-
-/** 지금 용지에 가장 가까운 목록 항목 */
-function paperKey(p: PlotSettings): string {
-  const a = Math.min(p.paperWidth, p.paperHeight);
-  const b = Math.max(p.paperWidth, p.paperHeight);
-  const hit = PAPERS.find((x) => Math.abs(x.w - a) < 1 && Math.abs(x.h - b) < 1);
-  return hit?.key ?? '';
-}
-
-function isLandscape(p: PlotSettings): boolean {
-  const w = p.rotation & 1 ? p.paperHeight : p.paperWidth;
-  const h = p.rotation & 1 ? p.paperWidth : p.paperHeight;
-  return w >= h;
 }
 
 /** 새 배치의 기본 플롯 설정 */
@@ -338,56 +323,70 @@ export function registerLayoutCommands(app: App): void {
     },
   });
 
+  // 배치 탭 "이동 또는 복사": 배치 순서 바꾸기·사본 만들기(탭 메뉴가 LAYOUTMOVE <배치 이름>으로 부른다)
+  app.register({ name: 'LAYOUTMOVE', title: '배치 이동 또는 복사', run: (ctx, arg) => moveOrCopyLayout(app, ctx, arg) });
+
+  // PAGESETUP: 페이지 설정 관리자(pagesetup-ui.ts) — 명명된 페이지 설정 목록·현재로 설정·새로 만들기·수정·이름 바꾸기·삭제·가져오기
   app.register({
     name: 'PAGESETUP',
-    title: '페이지 설정',
-    async run(ctx) {
-      const st = app.active!;
-      if (st.blockEdit) {
-        ctx.print('블록 편집기에서는 쓸 수 없습니다.', 'err');
-        return;
-      }
-      const l = st.layoutFor(st.displaySpace);
-      if (!l) return;
-      const p = l.plot;
-      const key = paperKey(p);
-      const v = await form(
-        `페이지 설정 - ${l.name}`,
-        [
-          {
-            key: 'paper',
-            label: '용지 크기',
-            type: 'select',
-            value: key || 'KEEP',
-            options: [...(key ? [] : [{ value: 'KEEP', label: `지금 용지: ${p.paperName || `${p.paperWidth} × ${p.paperHeight} mm`}` }]), ...PAPERS.map((x) => ({ value: x.key, label: x.label }))],
-          },
-          { key: 'landscape', label: '가로 방향', type: 'check', value: isLandscape(p) },
-          { key: 'style', label: '플롯 스타일 테이블(펜 지정)', type: 'select', value: STYLE_SHEETS.includes(p.styleSheet) ? p.styleSheet : '', options: STYLE_SHEETS.map((x) => ({ value: x, label: x || '없음' })) },
-        ],
-        { ok: '확인', note: '배치의 용지·방향·플롯 스타일을 바꿉니다. PLOT은 이 설정을 기본값으로 씁니다.' },
-      );
-      if (!v) return;
-      const np: PlotSettings = { ...structuredClone(p), styleSheet: String(v.style) };
-      const land = !!v.landscape;
-      const pk = String(v.paper);
-      if (pk !== 'KEEP') {
-        const paper = PAPERS.find((x) => x.key === pk)!;
-        const w = land ? paper.h : paper.w;
-        const h = land ? paper.w : paper.h;
-        np.paperName = mediaName(pk, w, h);
-        np.paperWidth = w;
-        np.paperHeight = h;
-        np.rotation = 0;
-      } else if (land !== isLandscape(p)) np.rotation = (p.rotation + 1) & 3;
-      // 용지 원점은 그대로 두고 크기만 바꾼다
-      const before = paperInfo(l, null);
-      const nl: Layout = { ...l, plot: np };
-      const after = paperInfo({ ...nl, limitsMin: { x: 0, y: 0 }, limitsMax: { x: 0, y: 0 } }, null);
-      nl.limitsMin = { x: before.minX, y: before.minY };
-      nl.limitsMax = { x: before.minX + (after.maxX - after.minX), y: before.minY + (after.maxY - after.minY) };
-      st.session.commit({ label: 'PAGESETUP', ops: [{ kind: 'layout', key: tableKey(l.blockName), before: l, after: nl }] });
-      app.view.requestRender();
-      ctx.print(`배치 "${l.name}"의 페이지 설정을 바꿨습니다.`);
-    },
+    title: '페이지 설정 관리자',
+    run: (ctx) => runPageSetupManager(app, ctx, () => runPsetupin(app, ctx)),
   });
+}
+
+/**
+ * 배치 순서 작업: 종이 배치를 order(블록 이름 대문자) 순서로 탭 번호 1부터. 바뀐 배치만
+ */
+export function layoutOrderOps(st: DocState, order: readonly string[]): EditOp[] {
+  const ops: EditOp[] = [];
+  order.forEach((key, i) => {
+    const l = st.doc.layouts.find((x) => tableKey(x.blockName) === key);
+    if (l && l.tabOrder !== i + 1) ops.push({ kind: 'layout', key, before: l, after: { ...l, tabOrder: i + 1 } });
+  });
+  return ops;
+}
+
+/** 배치 이동 또는 복사 대화상자: 앞으로 이동할 배치(끝으로 이동), 사본 작성 */
+async function moveOrCopyLayout(app: App, ctx: CommandContext, arg?: string): Promise<void> {
+  const st = app.active!;
+  const papers = st.doc.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).sort((a, b) => a.tabOrder - b.tabOrder);
+  if (!papers.length) return;
+  const cur = st.layoutFor(st.displaySpace);
+  const src = papers.find((l) => arg && l.name.toUpperCase() === arg.trim().toUpperCase()) ?? (cur && tableKey(cur.blockName) !== MODEL_SPACE ? cur : papers[0]!);
+  const opts = [...papers.filter((l) => l !== src).map((l) => ({ value: tableKey(l.blockName), label: l.name })), { value: '', label: '(끝으로 이동)' }];
+  const v = await form(
+    '이동 또는 복사',
+    [
+      { key: 'before', label: `"${src.name}"을(를) 앞으로 이동`, type: 'select', value: opts[0]!.value, options: opts },
+      { key: 'copy', label: '사본 작성(C)', type: 'check', value: false },
+    ],
+    { ok: '확인' },
+  );
+  if (!v) return;
+  const beforeKey = String(v.before);
+  const keys = papers.map((l) => tableKey(l.blockName));
+  const srcKey = tableKey(src.blockName);
+  if (v.copy) {
+    let name = `${src.name} (2)`;
+    for (let n = 3; st.doc.layouts.some((l) => l.name.toUpperCase() === name.toUpperCase()); n++) name = `${src.name} (${n})`;
+    const srcBlock = st.doc.blocks.get(srcKey);
+    await app.edits.flush(st);
+    const { ops, layout } = createLayoutOps(app, st, name, structuredClone(src.plot), srcBlock?.entities ?? []);
+    const newKey = tableKey(layout.blockName);
+    const order = keys.slice();
+    const at = beforeKey ? order.indexOf(beforeKey) : order.length;
+    order.splice(at < 0 ? order.length : at, 0, newKey);
+    // 새 배치(만드는 작업과 LAYOUT 객체가 같은 값을 가리킨다)와 뒤로 밀린 배치의 탭 번호
+    layout.tabOrder = order.indexOf(newKey) + 1;
+    st.session.commit({ label: 'LAYOUT', ops: [...ops, ...layoutOrderOps(st, order)] });
+    ctx.print(`배치 "${src.name}"을(를) "${name}"(으)로 복사했습니다.`);
+    return;
+  }
+  const order = keys.filter((k) => k !== srcKey);
+  const at = beforeKey ? order.indexOf(beforeKey) : order.length;
+  order.splice(at < 0 ? order.length : at, 0, srcKey);
+  const ops = layoutOrderOps(st, order);
+  if (!ops.length) return;
+  st.session.commit({ label: 'LAYOUT', ops });
+  ctx.print(`배치 "${src.name}"을(를) 옮겼습니다.`);
 }

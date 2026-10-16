@@ -1,12 +1,14 @@
 /**
- * 명명된 뷰: VIEW(V, 뷰 관리자), -VIEW(-V, 명령행)
+ * 명명된 뷰: VIEW(V, 뷰 관리자 — 현재로 설정·새로 만들기·이름 바꾸기·경계 업데이트·삭제), -VIEW(-V, 명령행)
  * 모형 뷰는 모형 탭에서, 종이 공간 뷰(플래그 1)는 배치에서 복원한다. 프롬프트는 AutoCAD 2026 한국어판을 따른다.
  */
 import type { ViewRecord } from '../core/model';
+import type { EditOp } from '../edit/session';
 import { MODEL_SPACE, tableKey } from '../core/model';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
-import { dialog, form, h } from './ui/dom';
+import { ask, h } from './ui/dom';
+import { btn, fail, pickList, resultDialog, row, textIn } from './mgr-ui';
 
 type Rect = [number, number, number, number];
 
@@ -120,67 +122,126 @@ export function registerViewCommands(app: App): void {
     name: 'VIEW',
     aliases: ['V'],
     title: '뷰 관리자',
-    run() {
-      const st = app.active!;
-      let picked: string | null = null;
-      const body = h('div', { class: 'viewmgr' });
-      const render = () => {
-        body.replaceChildren();
-        const list = [...st.doc.views.values()].sort((a, b) => a.name.localeCompare(b.name));
-        if (!list.length) {
-          body.append(h('div', { style: 'color:var(--text-dim)' }, '저장된 뷰가 없습니다. [새로 만들기]로 지금 화면을 저장합니다.'));
-          return;
-        }
-        const rows = list.map((v) => {
-          const tr = h('tr', { style: picked === v.name ? 'background:var(--sel, rgba(61,141,255,0.25))' : 'cursor:pointer' }, h('td', {}, v.name), h('td', {}, v.flags & 1 ? '종이 공간' : '모형'), h('td', {}, `${v.width.toFixed(2)} × ${v.height.toFixed(2)}`));
-          tr.addEventListener('click', () => {
-            picked = v.name;
-            render();
-          });
-          tr.addEventListener('dblclick', () => void restore(app, v));
-          return tr;
-        });
-        body.append(h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, '이름'), h('th', {}, '공간'), h('th', {}, '크기'))), h('tbody', {}, ...rows)));
-      };
-      render();
-      const dlg = dialog('뷰 관리자', body, [
-        {
-          label: '새로 만들기…',
-          run: () => {
-            const rect = screenRect(app);
-            void form('새 뷰', [{ key: 'name', label: '뷰 이름', type: 'text', value: `뷰${st.doc.views.size + 1}` }], {
-              ok: '저장',
-              validate: (v) => (/^[^<>/\\":;?*|,=`]+$/.test(String(v.name).trim()) ? null : '뷰 이름에 쓸 수 없는 문자가 있습니다.'),
-            }).then((v) => {
-              if (!v) return;
-              const name = String(v.name).trim();
-              save(app, null, name, rect);
-              picked = name;
-              render();
-            });
-            return false;
-          },
-        },
-        {
-          label: '삭제',
-          run: () => {
-            if (picked && remove(app, picked)) picked = null;
-            render();
-            return false;
-          },
-        },
-        {
-          label: '현재로 설정',
-          primary: true,
-          run: () => {
-            const v = picked ? st.doc.views.get(tableKey(picked)) : undefined;
-            if (v) void restore(app, v);
-            return !!v;
-          },
-        },
-        { label: '닫기' },
-      ]);
-      void dlg;
-    },
+    run: (ctx) => viewManager(app, ctx),
   });
+}
+
+const BAD_VIEW_NAME = /[<>/\\":;?*|,=`]/;
+
+/** 뷰 이름 바꾸기 작업(대소문자만 바꾸면 같은 열쇠). 같은 이름이 있으면 null */
+export function renameViewOps(st: DocState, oldName: string, newName: string): EditOp[] | null {
+  const ok = tableKey(oldName);
+  const nk = tableKey(newName);
+  const v = st.doc.views.get(ok);
+  if (!v) return null;
+  if (nk !== ok && st.doc.views.has(nk)) return null;
+  const after: ViewRecord = { ...v, name: newName };
+  if (nk === ok) return [{ kind: 'view', key: ok, before: v, after }];
+  return [
+    { kind: 'view', key: ok, before: v, after: null },
+    { kind: 'view', key: nk, before: null, after },
+  ];
+}
+
+type ViewAct = 'current' | 'new' | 'rename' | 'update' | 'delete' | 'close';
+
+/** 뷰 관리자: 현재로 설정, 새로 만들기, 이름 바꾸기, 업데이트(지금 화면으로), 삭제. 변경은 명령 취소 한 단계(같은 묶음) */
+async function viewManager(app: App, ctx: CommandContext): Promise<void> {
+  const st = app.active!;
+  const nameOk = (n: string) => !!n.trim() && !BAD_VIEW_NAME.test(n);
+  let keep: string | null = null;
+  for (;;) {
+    const views = [...st.doc.views.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    let act: ViewAct = 'close';
+    let submitNow: (() => void) | null = null;
+    const go = (a: ViewAct) => {
+      act = a;
+      submitNow?.();
+    };
+    const list = pickList<ViewRecord>(['이름', '공간', '크기'], (v) => [v.name, v.flags & 1 ? '배치' : '모형', `${v.width.toFixed(2)} × ${v.height.toFixed(2)}`], { height: 240, onActivate: () => go('current') });
+    const body = h(
+      'div',
+      { class: 'mgr-dlg' },
+      h('div', { class: 'mgr-note' }, `현재 뷰: ${st.onLayout && !st.msVp ? '배치' : '모형'}`),
+      h(
+        'div',
+        { class: 'mgr-cols' },
+        views.length ? list.el : h('div', { class: 'mgr-note' }, '저장된 뷰가 없습니다. 새로 만들기(N)로 지금 화면을 저장합니다.'),
+        h('div', { class: 'mgr-btns', style: 'flex-direction:column;flex:0 0 150px;min-width:150px' }, btn('현재로 설정(C)', () => go('current')), btn('새로 만들기(N)...', () => go('new')), btn('이름 바꾸기(R)...', () => go('rename')), btn('경계 업데이트(B)', () => go('update')), btn('삭제(D)', () => go('delete'))),
+      ),
+    );
+    list.refresh(views, keep ? (v) => v.name === keep : undefined);
+    const r = await resultDialog<{ act: ViewAct; view: ViewRecord | null }>('뷰 관리자', body, {
+      ok: '닫기',
+      cancel: null,
+      width: 560,
+      bind: (sub) => (submitNow = sub),
+      submit: () => {
+        const v = list.selected();
+        if (act !== 'close' && act !== 'new' && !v) return fail('뷰를 고르십시오.');
+        const out = { act, view: v };
+        act = 'close';
+        return out;
+      },
+    });
+    if (!r || r.act === 'close') return;
+    const v = r.view;
+    switch (r.act) {
+      case 'current':
+        if (v) await restore(app, v);
+        return;
+      case 'new': {
+        const rect = screenRect(app);
+        const nameIn = textIn(`뷰${st.doc.views.size + 1}`, '뷰 이름');
+        const n = await resultDialog('새 뷰', h('div', { class: 'mgr-dlg' }, row('뷰 이름(N)', nameIn), h('div', { class: 'mgr-note' }, '지금 화면을 뷰로 저장합니다.')), {
+          ok: '확인',
+          width: 380,
+          submit: () => (nameOk(nameIn.value) ? nameIn.value.trim() : fail('뷰 이름에 쓸 수 없는 문자가 있습니다.')),
+        });
+        if (!n) break;
+        if (st.doc.views.has(tableKey(n))) {
+          const a = await ask('뷰 - 재정의', `뷰 "${n}"이(가) 이미 있습니다. 바꾸시겠습니까?`, [
+            { label: '예', value: 'Y', primary: true },
+            { label: '아니오', value: 'N' },
+          ]);
+          if (a !== 'Y') break;
+        }
+        save(app, ctx, n, rect);
+        keep = n;
+        break;
+      }
+      case 'rename': {
+        if (!v) break;
+        const nameIn = textIn(v.name, '새 이름');
+        const n = await resultDialog('뷰 이름 바꾸기', h('div', { class: 'mgr-dlg' }, row('새 이름', nameIn)), {
+          width: 380,
+          submit: () => {
+            const t = nameIn.value.trim();
+            if (!nameOk(t)) return fail('뷰 이름에 쓸 수 없는 문자가 있습니다.');
+            if (tableKey(t) !== tableKey(v.name) && st.doc.views.has(tableKey(t))) return fail(`뷰 "${t}"이(가) 이미 있습니다.`);
+            return t;
+          },
+        });
+        if (!n || n === v.name) break;
+        const ops = renameViewOps(st, v.name, n);
+        if (ops) st.session.commit({ label: 'VIEW', ops, group: ctx.group });
+        keep = n;
+        break;
+      }
+      case 'update':
+        if (v) {
+          const after = { ...viewOf(st, v.name, screenRect(app), st.onLayout && !st.msVp), handle: v.handle };
+          st.session.commit({ label: 'VIEW', ops: [{ kind: 'view', key: tableKey(v.name), before: v, after }], group: ctx.group });
+          keep = v.name;
+        }
+        break;
+      case 'delete':
+        if (v) {
+          const key = tableKey(v.name);
+          st.session.commit({ label: 'VIEW', ops: [{ kind: 'view', key, before: v, after: null }], group: ctx.group });
+          keep = null;
+        }
+        break;
+    }
+  }
 }

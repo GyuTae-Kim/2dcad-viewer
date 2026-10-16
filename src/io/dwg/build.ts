@@ -83,6 +83,7 @@ import { DIM_CTX } from './ctxcodec';
 import { RAW_TAG_TYPES, decodeRawTags } from './objects/rawtags';
 import { decodeTableStyleBody } from './objects/tableraw';
 import { parseDimOverrides } from './xdata';
+import { adoptSummaryInfo, parseSummaryInfo } from '../dwgprops';
 
 /** 원본 본문을 남기는 도형 */
 const RAW_TYPES = new Set(['UNKNOWN', 'REGION', '3DSOLID', 'BODY', 'SURFACE', 'PLANESURFACE', 'EXTRUDEDSURFACE', 'LOFTEDSURFACE', 'REVOLVEDSURFACE', 'SWEPTSURFACE', 'NURBSURFACE', 'OLE2FRAME', 'OLEFRAME', 'ACAD_TABLE', 'MULTILEADER', 'MESH']);
@@ -921,33 +922,13 @@ function fillHeader(doc: CadDocument, sec: DwgSections, header: ReturnType<typeo
   }
   for (const k of ['$DIMLTYPE', '$DIMLTEX1', '$DIMLTEX2']) name(n.ltypeName, k);
   hv.delete('$_CVPORT_ENT');
-  // AcDb:SummaryInfo(R2004+): 제목·주제·작성자·키워드·설명·마지막 저장한 사람 … (길이 + 문자열)
+  // AcDb:SummaryInfo(R2004+): 제목·주제·작성자·키워드·주석·마지막 저장자·수정 번호·하이퍼링크 기준·사용자 정의 특성.
+  // 모델은 DXF처럼 DWGPROPS XRECORD에 둔다(../dwgprops.ts) — 다시 저장해도 남고 DWGPROPS로 고칠 수 있다
   const si = sec.summaryInfo;
   if (si && si.length > 2) {
     try {
-      const wide = sec.ver >= R2007;
-      let p = 0;
-      const next = (): string => {
-        const n = si[p] | (si[p + 1] << 8);
-        p += 2;
-        let out = '';
-        if (wide) {
-          for (let i = 0; i < n; i++, p += 2) {
-            const c = si[p] | (si[p + 1] << 8);
-            if (c) out += String.fromCharCode(c);
-          }
-        } else {
-          let e = p;
-          while (e < p + n && si[e]) e++;
-          out = decoderFor(codepageToEncoding(doc.codepage)).decode(si.subarray(p, e));
-          p += n;
-        }
-        if (p > si.length) throw new RangeError('summary');
-        return out;
-      };
-      for (let i = 0; i < 5; i++) next();
-      const lastSavedBy = next();
-      if (lastSavedBy) hv.set('$LASTSAVEDBY', lastSavedBy);
+      const dec = decoderFor(codepageToEncoding(doc.codepage));
+      adoptSummaryInfo(doc, parseSummaryInfo(si, sec.ver >= R2007, (b) => dec.decode(b)));
     } catch {
       // 선택 정보
     }

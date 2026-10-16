@@ -15,6 +15,7 @@ import { writeObjects } from './wobjects';
 import { writeTables } from './wtables';
 import { arcTextsForWrite } from '../arctext';
 import { activeVport, vportSnap } from '../vportsnap';
+import { drawingProps } from '../dwgprops';
 
 export type { DxfVersion } from './tagwriter';
 export type { DxfWriteOptions } from './wcontext';
@@ -159,6 +160,9 @@ function writeHeader(s: TagSink, ctx: WriteContext, codepage: string): void {
   }
   // 표에 없는 변수: 원래 그룹 코드를 알면 쓴다.
   const known = new Set<string>([...HEADER_VARS.map((v) => v[0]), ...R12_HEADER_VARS.map((v) => v[0])]);
+  // 사용자 정의 특성은 아래에서 도면 특성(DWGPROPS)대로 모두 쓴다
+  written.add('$CUSTOMPROPERTYTAG');
+  written.add('$CUSTOMPROPERTY');
   for (const [name, value] of H) {
     if (written.has(name) || known.has(name)) continue;
     const code = doc.headerCodes?.get(name);
@@ -166,6 +170,14 @@ function writeHeader(s: TagSink, ctx: WriteContext, codepage: string): void {
     const dims = code >= 10 && code <= 18 ? (isPoint(value) && 'z' in value ? 3 : 2) : 0;
     emit(name, code, dims, value);
   }
+  // R2004+: 사용자 정의 특성 이름·값 쌍(같은 내용이 DWGPROPS XRECORD의 300~309에도 있다)
+  if (ver >= 1018)
+    for (const [tag, value] of drawingProps(doc).custom) {
+      w.t(9, '$CUSTOMPROPERTYTAG');
+      w.t(1, tag);
+      w.t(9, '$CUSTOMPROPERTY');
+      w.t(1, value);
+    }
   w.t(0, 'ENDSEC');
 }
 

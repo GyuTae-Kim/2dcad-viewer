@@ -15,6 +15,7 @@ import { writeClasses } from './classes';
 import { ByteOut, type R2004Section, auxHeader, emptyPreview, objectMap, templateData, writeR2000, writeR2004 } from './container';
 import { parseHandle } from './util';
 import { arcTextsForWrite } from '../../arctext';
+import { encodeSummaryInfo, summaryFromDoc } from '../../dwgprops';
 
 export type DwgWriteVersion = 'AC1015' | 'AC1018' | 'AC1024' | 'AC1027' | 'AC1032';
 
@@ -226,47 +227,9 @@ export function writeDwg(doc: CadDocument, options: DwgWriteOptions = {}): DwgWr
   return { data, warnings };
 }
 
-/** AcDb:SummaryInfo(사양 13장) */
+/** AcDb:SummaryInfo(사양 13장): 도면 특성(DWGPROPS XRECORD — ../../dwgprops.ts)과 사용자 정의 특성, 편집 시간 */
 function summaryInfo(ver: number, ctx: WCtx, tdcreate: number, tdupdate: number): Uint8Array {
-  const o = new ByteOut(256);
-  const s = (v: string) => {
-    if (ver >= R2007) {
-      o.u16(v.length ? v.length + 1 : 0);
-      for (let i = 0; i < v.length; i++) o.u16(v.charCodeAt(i));
-      if (v.length) o.u16(0);
-    } else {
-      const b = ctx.enc.encode(v);
-      o.u16(b.length ? b.length + 1 : 0);
-      o.bytes(b);
-      if (b.length) o.u8(0);
-    }
-  };
-  const hv = ctx.doc.header;
-  const get = (k: string) => {
-    const v = hv.get(k);
-    return typeof v === 'string' ? v : '';
-  };
-  s(get('$TITLE'));
-  s(get('$SUBJECT'));
-  s(get('$AUTHOR'));
-  s(get('$KEYWORDS'));
-  s(get('$COMMENTS'));
-  s(get('$LASTSAVEDBY'));
-  s(get('$REVISIONNUMBER'));
-  s(get('$HYPERLINKBASE'));
-  o.u32(0);
-  o.u32(0);
-  const jd = (x: number) => {
-    const day = Math.floor(x);
-    o.u32(day);
-    o.u32(Math.min(86399999, Math.round((x - day) * 86400000)));
-  };
-  jd(tdcreate);
-  jd(tdupdate);
-  o.u16(0);
-  o.u32(0);
-  o.u32(0);
-  return o.result();
+  return encodeSummaryInfo(summaryFromDoc(ctx.doc, tdcreate, tdupdate), ver >= R2007, (t) => ctx.enc.encode(t));
 }
 
 /** AcDb:ObjFreeSpace(사양 21장, R18까지의 형식) */

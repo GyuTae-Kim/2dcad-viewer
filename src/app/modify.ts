@@ -51,6 +51,7 @@ import { arrayGripEdit } from './assocarray-grips';
 import { gripDims, gripMoveMany, gripStretchValue, gripTakesValue } from '../edit/geom/gripops';
 import { type GripOption, ctrlHeld, gripDimGeom, gripOptions, previewEntities, trackModifiers } from './gripmenu';
 import { stretchSelection } from './editcmds2-stretch';
+import { pasteDependencies } from './pastedeps';
 
 // ---------------------------------------------------------------------------
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
@@ -494,7 +495,6 @@ function transformAll(st: DocState, hs: readonly string[], m: Affine, copy: bool
   return out;
 }
 
-/** 문서 단위로 기억하는 명령 기본값 */
 /** OFFSETGAPTYPE(AutoCAD는 레지스트리에 둔다 — 이 브라우저에 남긴다): 0 연장, 1 모깎기 호, 2 모따기 */
 const GAP_KEY = 'opencad.offsetgaptype';
 let gapMemo: 0 | 1 | 2 = 0;
@@ -516,6 +516,7 @@ export function setOffsetGapType(v: 0 | 1 | 2): void {
   }
 }
 
+/** 문서 단위로 기억하는 명령 기본값 */
 const memo = new WeakMap<DocState, Record<string, number | string | boolean>>();
 function mem(st: DocState): Record<string, number | string | boolean> {
   let m = memo.get(st);
@@ -555,68 +556,12 @@ function extentsOf(app: App, hs: readonly string[]): [number, number, number, nu
   return r;
 }
 
-/** 다른 도면에서 붙여 넣을 때 없는 도면층·선종류·스타일·블록을 함께 가져온다 */
-function importDependencies(st: DocState, src: CadDocument, list: Entity[]): EditOp[] {
-  const dst = st.doc;
-  if (src === dst) return [];
-  const ops: EditOp[] = [];
-  const done = new Set<string>();
-  const need = (kind: string, name: string | undefined) => {
-    if (!name) return false;
-    const k = `${kind}:${tableKey(name)}`;
-    if (done.has(k)) return false;
-    done.add(k);
-    return true;
-  };
-  const linetype = (name: string | undefined) => {
-    if (!name || /^(BYLAYER|BYBLOCK|CONTINUOUS)$/i.test(name) || !need('lt', name)) return;
-    const key = tableKey(name);
-    const lt = src.linetypes.get(key);
-    if (lt && !dst.linetypes.has(key)) ops.push({ kind: 'linetype', key, before: null, after: { ...structuredClone(lt), handle: st.session.newHandle() } });
-  };
-  const layer = (name: string | undefined) => {
-    if (!name || !need('la', name)) return;
-    const key = tableKey(name);
-    const la = src.layers.get(key);
-    if (la && !dst.layers.has(key)) {
-      linetype(la.linetype);
-      ops.push({ kind: 'layer', key, before: null, after: { ...structuredClone(la), handle: st.session.newHandle() } });
-    }
-  };
-  const textStyle = (name: string | undefined) => {
-    if (!name || !need('st', name)) return;
-    const key = tableKey(name);
-    const ts = src.textStyles.get(key);
-    if (ts && !dst.textStyles.has(key)) ops.push({ kind: 'textStyle', key, before: null, after: { ...structuredClone(ts), handle: st.session.newHandle() } });
-  };
-  const dimStyle = (name: string | undefined) => {
-    if (!name || !need('ds', name)) return;
-    const key = tableKey(name);
-    const ds = src.dimStyles.get(key);
-    if (ds && !dst.dimStyles.has(key)) ops.push({ kind: 'dimStyle', key, before: null, after: { ...structuredClone(ds), handle: st.session.newHandle() } });
-  };
-  const visit = (e: Entity) => {
-    layer(e.layer);
-    linetype(e.linetype);
-    const x = e as unknown as { style?: string; dimStyle?: string; block?: string };
-    if (typeof x.style === 'string') textStyle(x.style);
-    if (typeof x.dimStyle === 'string') dimStyle(x.dimStyle);
-    if ((e.type === 'INSERT' || e.type === 'DIMENSION') && typeof x.block === 'string') block(x.block);
-    if (e.type === 'INSERT') for (const a of e.attribs) visit(a);
-  };
-  const block = (name: string) => {
-    if (!need('bl', name)) return;
-    const key = tableKey(name);
-    if (dst.blocks.has(key)) return;
-    const def = src.blocks.get(key);
-    if (!def) return;
-    for (const e of def.entities) visit(e);
-    const copy: BlockDef = { ...structuredClone({ ...def, entities: [] }), handle: '', recordHandle: '', endHandle: '', entities: def.entities.map((e) => cloneEntity(e)) };
-    for (const e of copy.entities) prepareNew(st, e, undefined);
-    ops.push(...blockOps(st, copy));
-  };
-  for (const e of list) visit(e);
-  return ops;
+/**
+ * 다른 도면에서 붙여 넣을 때 없는 도면층·선종류·스타일(문자·치수·다중 지시선·테이블·여러 줄)·블록을 함께 가져온다(pastedeps.ts).
+ * 익명 블록(*D·*U·*T …)은 이 도면의 같은 이름과 겹치지 않게 새 번호로 옮긴다. list의 객체는 이 도면의 이름을 가리키게 바뀐다
+ */
+export function importDependencies(st: DocState, src: CadDocument, list: Entity[]): EditOp[] {
+  return pasteDependencies(st, src, list);
 }
 
 // ---------------------------------------------------------------------------
@@ -971,26 +916,6 @@ export function registerModifyCommands(app: App): void {
         if ('enter' in pick) return;
         if ('keyword' in pick) {
           if (pick.keyword === 'E') return;
-  // OFFSETGAPTYPE: 폴리선 간격띄우기의 바깥 꼭짓점 틈(0 연장, 1 모깎기, 2 모따기)
-  app.register({
-    name: 'OFFSETGAPTYPE',
-    title: '간격띄우기 틈 유형',
-    async run(ctx, arg) {
-      let t = arg?.trim();
-      if (!t) {
-        const r = await ctx.getPoint(`OFFSETGAPTYPE에 대한 새 값 입력 <${offsetGapType()}>:`, { preferNumber: true, allowText: true });
-        if ('enter' in r) return;
-        if (!('text' in r)) return;
-        t = r.text.trim();
-      }
-      if (t !== '0' && t !== '1' && t !== '2') {
-        ctx.print('0, 1, 2 가운데 하나가 필요합니다.', 'err');
-        return;
-      }
-      setOffsetGapType(Number(t) as 0 | 1 | 2);
-    },
-  });
-
           undoStep(app, ctx, steps);
           continue;
         }
@@ -1043,6 +968,26 @@ export function registerModifyCommands(app: App): void {
           src = next;
         }
       }
+    },
+  });
+
+  // OFFSETGAPTYPE: 폴리선 간격띄우기의 바깥 꼭짓점 틈(0 연장, 1 모깎기, 2 모따기)
+  app.register({
+    name: 'OFFSETGAPTYPE',
+    title: '간격띄우기 틈 유형',
+    async run(ctx, arg) {
+      let t = arg?.trim();
+      if (!t) {
+        const r = await ctx.getPoint(`OFFSETGAPTYPE에 대한 새 값 입력 <${offsetGapType()}>:`, { preferNumber: true, allowText: true });
+        if ('enter' in r) return;
+        if (!('text' in r)) return;
+        t = r.text.trim();
+      }
+      if (t !== '0' && t !== '1' && t !== '2') {
+        ctx.print('0, 1, 2 가운데 하나가 필요합니다.', 'err');
+        return;
+      }
+      setOffsetGapType(Number(t) as 0 | 1 | 2);
     },
   });
 
@@ -1132,18 +1077,6 @@ export function registerModifyCommands(app: App): void {
     };
     const nearestPointOnHandle = (h: string, p: Pt): number => {
       const e = st.doc.entityIndex.get(h);
-      if ('empty' in pick) {
-        const p0 = pick.point;
-        const op = opFor(pick.shift);
-        if (quick) {
-          const q = await ctx.getPoint('다음 울타리 점 지정:', { base: p0, rubber: (p) => [{ pts: [p0.x, p0.y, p.x, p.y], dashed: true }] });
-          if ('point' in q) fenceThrough([p0, q.point], op);
-        } else {
-          const q = await ctx.getPoint('반대 구석 지정:', { base: p0, rubber: (p) => [{ pts: [p0.x, p0.y, p.x, p0.y, p.x, p.y, p0.x, p.y], closed: true, dashed: true }] });
-          if ('point' in q) crossingThrough(p0, q.point, op);
-        }
-        continue;
-      }
       const q = e ? nearestPointOn(e, p, st.doc) : null;
       return q ? Math.hypot(q.x - p.x, q.y - p.y) : Infinity;
     };
@@ -1160,6 +1093,73 @@ export function registerModifyCommands(app: App): void {
     };
     /** 울타리(꺾은선)가 지나는 자리마다 */
     const fenceThrough = (fence: Pt[], op: 'trim' | 'extend') => {
+      const xs = fence.map((p) => p.x);
+      const ys = fence.map((p) => p.y);
+      const picks: { handle: string; point: Pt }[] = [];
+      for (const h of candidates([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])) {
+        const e = st.doc.entityIndex.get(h);
+        if (e) for (const q of fencePicks(e, fence)) picks.push({ handle: h, point: q });
+      }
+      applyMany(picks, op);
+    };
+    status();
+    for (;;) {
+      if (!quick && !edges) {
+        ctx.print(mode === 'trim' ? '절단 모서리 선택 ...' : '경계 모서리 선택 ...');
+        const hs = await ctx.getSelection('객체 선택 또는 <모두 선택>:', { noPickfirst: true });
+        edges = hs.length ? hs : [...(st.doc.blocks.get(st.space)?.entities ?? [])].map((e) => e.handle);
+      }
+      // 빠른 작업: [절단(경계) 모서리/걸치기/모드/프로젝트/지우기], 표준: [울타리/걸치기/모드/프로젝트/모서리/지우기/명령 취소]
+      // Shift를 누른 채 고르면 반대 작업(자르기 ↔ 연장). 빈 곳을 누르면 빠른 작업은 두 점 울타리, 표준은 걸치기 창
+      const kws: Keyword[] = quick
+        ? [
+            mode === 'trim' ? { key: 'T', label: '절단 모서리' } : { key: 'B', label: '경계 모서리' },
+            { key: 'C', label: '걸치기' },
+            { key: 'O', label: '모드' },
+            { key: 'P', label: '프로젝트' },
+            ...(mode === 'trim' ? [{ key: 'R', label: '지우기' }] : []),
+            ...(steps.length ? [{ key: 'U', label: '명령 취소' }] : []),
+          ]
+        : [
+            { key: 'F', label: '울타리' },
+            { key: 'C', label: '걸치기' },
+            { key: 'O', label: '모드' },
+            { key: 'P', label: '프로젝트' },
+            { key: 'E', label: '모서리' },
+            ...(mode === 'trim' ? [{ key: 'R', label: '지우기' }] : []),
+            { key: 'U', label: '명령 취소' },
+          ];
+      const prompt = `${mode === 'trim' ? '자를 객체 선택 또는 Shift 키를 누른 채 선택하여 연장' : '연장할 객체 선택 또는 Shift 키를 누른 채 선택하여 자르기'} 또는 [${kws.map((k) => `${k.label}(${k.key})`).join('/')}]:`;
+      const pick = await ctx.getEntity(prompt, kws, { emptyPick: true });
+      if ('enter' in pick) return;
+      if ('empty' in pick) {
+        const p0 = pick.point;
+        const op = opFor(pick.shift);
+        if (quick) {
+          const q = await ctx.getPoint('다음 울타리 점 지정:', { base: p0, rubber: (p) => [{ pts: [p0.x, p0.y, p.x, p.y], dashed: true }] });
+          if ('point' in q) fenceThrough([p0, q.point], op);
+        } else {
+          const q = await ctx.getPoint('반대 구석 지정:', { base: p0, rubber: (p) => [{ pts: [p0.x, p0.y, p.x, p0.y, p.x, p.y, p0.x, p.y], closed: true, dashed: true }] });
+          if ('point' in q) crossingThrough(p0, q.point, op);
+        }
+        continue;
+      }
+      if ('keyword' in pick) {
+        switch (pick.keyword) {
+          case 'T':
+          case 'B':
+            quick = false;
+            edges = null;
+            break;
+          case 'O': {
+            const k = await ctx.getPoint(`${mode === 'trim' ? '자르기' : '연장'} 모드 옵션 입력 [빠른 작업(Q)/표준(S)] <${quick ? '빠른 작업' : '표준'}>:`, {
+              keywords: [{ key: 'Q', label: '빠른 작업' }, { key: 'S', label: '표준' }],
+            });
+            if ('keyword' in k) {
+              quick = k.keyword === 'Q';
+              m[`${mode}Mode`] = k.keyword;
+              edges = null;
+            }
             status();
             break;
           }
@@ -1212,61 +1212,6 @@ export function registerModifyCommands(app: App): void {
               fence.push(q.point);
             }
             if (fence.length >= 2) fenceThrough(fence, mode);
-      const xs = fence.map((p) => p.x);
-      const ys = fence.map((p) => p.y);
-      const picks: { handle: string; point: Pt }[] = [];
-      for (const h of candidates([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])) {
-        const e = st.doc.entityIndex.get(h);
-        if (e) for (const q of fencePicks(e, fence)) picks.push({ handle: h, point: q });
-      }
-      applyMany(picks, op);
-    };
-    status();
-    for (;;) {
-      if (!quick && !edges) {
-        ctx.print(mode === 'trim' ? '절단 모서리 선택 ...' : '경계 모서리 선택 ...');
-        const hs = await ctx.getSelection('객체 선택 또는 <모두 선택>:', { noPickfirst: true });
-        edges = hs.length ? hs : [...(st.doc.blocks.get(st.space)?.entities ?? [])].map((e) => e.handle);
-      }
-      // 빠른 작업: [절단(경계) 모서리/걸치기/모드/프로젝트/지우기], 표준: [울타리/걸치기/모드/프로젝트/모서리/지우기/명령 취소]
-      // Shift를 누른 채 고르면 반대 작업(자르기 ↔ 연장). 빈 곳을 누르면 빠른 작업은 두 점 울타리, 표준은 걸치기 창
-      const kws: Keyword[] = quick
-        ? [
-            mode === 'trim' ? { key: 'T', label: '절단 모서리' } : { key: 'B', label: '경계 모서리' },
-            { key: 'C', label: '걸치기' },
-            { key: 'O', label: '모드' },
-            { key: 'P', label: '프로젝트' },
-            ...(mode === 'trim' ? [{ key: 'R', label: '지우기' }] : []),
-            ...(steps.length ? [{ key: 'U', label: '명령 취소' }] : []),
-          ]
-        : [
-            { key: 'F', label: '울타리' },
-            { key: 'C', label: '걸치기' },
-            { key: 'O', label: '모드' },
-            { key: 'P', label: '프로젝트' },
-            { key: 'E', label: '모서리' },
-            ...(mode === 'trim' ? [{ key: 'R', label: '지우기' }] : []),
-            { key: 'U', label: '명령 취소' },
-          ];
-      const prompt = `${mode === 'trim' ? '자를 객체 선택 또는 Shift 키를 누른 채 선택하여 연장' : '연장할 객체 선택 또는 Shift 키를 누른 채 선택하여 자르기'} 또는 [${kws.map((k) => `${k.label}(${k.key})`).join('/')}]:`;
-      const pick = await ctx.getEntity(prompt, kws, { emptyPick: true });
-      if ('enter' in pick) return;
-      if ('keyword' in pick) {
-        switch (pick.keyword) {
-          case 'T':
-          case 'B':
-            quick = false;
-            edges = null;
-            break;
-          case 'O': {
-            const k = await ctx.getPoint(`${mode === 'trim' ? '자르기' : '연장'} 모드 옵션 입력 [빠른 작업(Q)/표준(S)] <${quick ? '빠른 작업' : '표준'}>:`, {
-              keywords: [{ key: 'Q', label: '빠른 작업' }, { key: 'S', label: '표준' }],
-            });
-            if ('keyword' in k) {
-              quick = k.keyword === 'Q';
-              m[`${mode}Mode`] = k.keyword;
-              edges = null;
-            }
             break;
           }
           case 'R': {
@@ -1283,13 +1228,11 @@ export function registerModifyCommands(app: App): void {
       lastAdded = [];
       applyAt(pick.handle, pick.point, false, opFor(pick.shift));
     }
-      const modeLabel: Record<string, string> = { DE: '증분', P: '퍼센트', T: '합계', DY: '동적' };
   };
   app.register({ name: 'TRIM', aliases: ['TR'], title: '자르기', run: trimLike('trim') });
   app.register({ name: 'EXTEND', aliases: ['EX'], title: '연장', run: trimLike('extend') });
 
   // ------------------------------------------------------------- BREAK
-          { key: 'DY', label: '동적' },
   app.register({
     name: 'BREAK',
     aliases: ['BR'],
@@ -1340,11 +1283,13 @@ export function registerModifyCommands(app: App): void {
       const m = mem(st);
       let mode: LengthenMode | 'dynamic' | null = null;
       let modeKey = String(m.lenMode ?? 'T');
+      const modeLabel: Record<string, string> = { DE: '증분', P: '퍼센트', T: '합계', DY: '동적' };
       for (;;) {
         const r = await ctx.getEntity(`측정할 객체 선택 또는 [증분(DE)/퍼센트(P)/합계(T)/동적(DY)] <${modeLabel[modeKey] ?? '합계'}(${modeKey})>:`, [
           { key: 'DE', label: '증분' },
           { key: 'P', label: '퍼센트' },
           { key: 'T', label: '합계' },
+          { key: 'DY', label: '동적' },
         ]);
         if ('handle' in r) {
           const e = st.doc.entityIndex.get(r.handle);
@@ -1436,6 +1381,8 @@ export function registerModifyCommands(app: App): void {
     title: '분해',
     async run(ctx) {
       const st = app.active!;
+      const hs = await selectEditable(app, ctx);
+      if (!hs.length) return;
       const results: EditResult[] = [];
       let fail = 0;
       for (const h of hs) {
@@ -1453,8 +1400,8 @@ export function registerModifyCommands(app: App): void {
       if (fail) ctx.print(`${fail}개는 분해할 수 없습니다.`);
       ctx.print(`${results.length}개를 분해해 객체 ${a.added.length}개를 만들었습니다.`);
       app.setSelection(a.added.slice(0, 5000));
-    }
-  };
+    },
+  });
 
   // ------------------------------------------------------------- ARRAYCLASSIC(예전 배열 대화상자)
   // ARRAY·ARRAYRECT·ARRAYPOLAR의 명령행 흐름은 src/app/arraycmd.ts(이 함수 끝에서 등록)
@@ -1502,37 +1449,14 @@ export function registerModifyCommands(app: App): void {
         }
       st.selection.clear();
       const res = commitResults(app, ctx, results, 'ARRAYRECT');
-    }
-  };
-
-  app.register({
-    name: 'ARRAYCLASSIC',
-    title: '배열(대화상자)',
-    async run(ctx) {
-      const hs = await selectEditable(app, ctx);
-      if (!hs.length) return;
-      const r = await ctx.getPoint('배열 유형 입력 [직사각형(R)/원형(PO)] <직사각형>:', {
-        keywords: [
-          { key: 'R', label: '직사각형' },
-          { key: 'PO', label: '원형' },
-        ],
-      });
-      if ('keyword' in r && r.keyword === 'PO') await classicPolar(ctx, hs);
-      else if ('keyword' in r || 'enter' in r) await classicRect(ctx, hs);
       app.refreshSelectionOverlay();
       ctx.print(`항목 ${rows * cols}개(새 객체 ${res.added.length}개)를 만들었습니다.`);
-  // ARRAY·ARRAYRECT·ARRAYPOLAR(명령행: 기본 배열 미리보기 → 그립·옵션)
-  registerArrayCommands(app);
-  // MOCORO(이동·복사·회전·축척 한 번에) — src/app/mocoro.ts
-  registerMocoroCommand(app);
-    },
-  });
+    }
+  };
 
   const classicPolar = async (ctx: CommandContext, hs: string[]) => {
     {
       const st = app.active!;
-      const hs = await selectEditable(app, ctx);
-      if (!hs.length) return;
       ctx.print(`유형 = 원형  연관 = ${arrayAssociativity() ? '예' : '아니오'}`);
       const c = await ctx.getPoint('배열의 중심점 지정:');
       if (!('point' in c)) return;
@@ -1578,8 +1502,29 @@ export function registerModifyCommands(app: App): void {
       const res = commitResults(app, ctx, results, 'ARRAYPOLAR');
       app.refreshSelectionOverlay();
       ctx.print(`항목 ${n}개(새 객체 ${res.added.length}개)를 만들었습니다.`);
+    }
+  };
+
+  app.register({
+    name: 'ARRAYCLASSIC',
+    title: '배열(대화상자)',
+    async run(ctx) {
+      const hs = await selectEditable(app, ctx);
+      if (!hs.length) return;
+      const r = await ctx.getPoint('배열 유형 입력 [직사각형(R)/원형(PO)] <직사각형>:', {
+        keywords: [
+          { key: 'R', label: '직사각형' },
+          { key: 'PO', label: '원형' },
+        ],
+      });
+      if ('keyword' in r && r.keyword === 'PO') await classicPolar(ctx, hs);
+      else if ('keyword' in r || 'enter' in r) await classicRect(ctx, hs);
     },
   });
+  // ARRAY·ARRAYRECT·ARRAYPOLAR(명령행: 기본 배열 미리보기 → 그립·옵션)
+  registerArrayCommands(app);
+  // MOCORO(이동·복사·회전·축척 한 번에) — src/app/mocoro.ts
+  registerMocoroCommand(app);
 
   // ------------------------------------------------------------- FILLET·CHAMFER
   const hnum = (st: DocState, k: string, def: number) => {
@@ -1727,20 +1672,14 @@ export function registerModifyCommands(app: App): void {
     }
   };
   app.register({ name: 'FILLET', aliases: ['F'], title: '모깎기', run: corner('fillet') });
-  // 모드: 신축·이동·회전·축척·대칭(Enter·스페이스로 순환하거나 ST·MO·RO·SC·MI — 오른쪽 클릭 메뉴는 앱이 키워드로 만든다).
-  // 복사: C 또는 Ctrl(⌘)을 누른 채 찍기(다중 복사가 이어진다). 다중 복사 중 Ctrl을 누르고 있으면 첫 복사의 간격·각도의 배수로 스냅.
-  // 여러 핫 그립(hotGrip.items[].point, 없으면 누른 그립 점)은 같은 변위로 신축한다. 그립 하나를 신축하는 중 입력한 값은
-  // 결과 길이(선분 길이, 호 끝은 호 길이, 호 중간은 반지름, 폴리선 정점은 앞 세그먼트 길이)이고 미리보기에 동적 치수를 그린다.
-  // 다기능 그립 옵션(src/app/gripmenu.ts): 메뉴에서 고르면 arg = 'opt:열쇠'로 바로 실행, 그립 편집 중에는 키워드로 고른다.
   app.register({ name: 'CHAMFER', aliases: ['CHA'], title: '모따기', run: corner('chamfer') });
 
   // ------------------------------------------------------------- JOIN
   app.register({
     name: 'JOIN',
-      const doc = st.doc;
     aliases: ['J'],
     title: '결합',
-    async run(ctx, arg) {
+    async run(ctx) {
       const st = app.active!;
       const hs = await selectEditable(app, ctx);
       if (!hs.length) return;
@@ -1758,16 +1697,8 @@ export function registerModifyCommands(app: App): void {
   });
 
   // ------------------------------------------------------------- STRETCH
-      trackModifiers();
   app.register({
     name: 'STRETCH',
-      const modeKw: Keyword[] = [
-        { key: 'ST', label: '신축' },
-        { key: 'MO', label: '이동' },
-        { key: 'RO', label: '회전' },
-        { key: 'SC', label: '축척' },
-        { key: 'MI', label: '대칭' },
-      ];
     aliases: ['S'],
     title: '신축',
     async run(ctx) {
@@ -1796,11 +1727,17 @@ export function registerModifyCommands(app: App): void {
   });
 
   // ------------------------------------------------------------- 그립 편집
+  // 모드: 신축·이동·회전·축척·대칭(Enter·스페이스로 순환하거나 ST·MO·RO·SC·MI — 오른쪽 클릭 메뉴는 앱이 키워드로 만든다).
+  // 복사: C 또는 Ctrl(⌘)을 누른 채 찍기(다중 복사가 이어진다). 다중 복사 중 Ctrl을 누르고 있으면 첫 복사의 간격·각도의 배수로 스냅.
+  // 여러 핫 그립(hotGrip.items[].point, 없으면 누른 그립 점)은 같은 변위로 신축한다. 그립 하나를 신축하는 중 입력한 값은
+  // 결과 길이(선분 길이, 호 끝은 호 길이, 호 중간은 반지름, 폴리선 정점은 앞 세그먼트 길이)이고 미리보기에 동적 치수를 그린다.
+  // 다기능 그립 옵션(src/app/gripmenu.ts): 메뉴에서 고르면 arg = 'opt:열쇠'로 바로 실행, 그립 편집 중에는 키워드로 고른다.
   app.register({
     name: 'GRIPEDIT',
     title: '그립 편집',
-    async run(ctx) {
+    async run(ctx, arg) {
       const st = app.active!;
+      const doc = st.doc;
       const hot = app.hotGrip;
       app.hotGrip = null;
       if (!hot) return;
@@ -1821,8 +1758,16 @@ export function registerModifyCommands(app: App): void {
         .map((it) => ({ handle: it.handle, id: it.id, point: (it as { point?: Pt }).point ?? hot.point }));
       const sel = unlockedOnly(app, [...st.selection]);
       if (!sel.length) return;
+      trackModifiers();
       const modes = ['stretch', 'move', 'rotate', 'scale', 'mirror'] as const;
       const names = { stretch: '신축', move: '이동', rotate: '회전', scale: '축척', mirror: '대칭' } as const;
+      const modeKw: Keyword[] = [
+        { key: 'ST', label: '신축' },
+        { key: 'MO', label: '이동' },
+        { key: 'RO', label: '회전' },
+        { key: 'SC', label: '축척' },
+        { key: 'MI', label: '대칭' },
+      ];
       let mi = 0;
       let base: Pt = hot.point;
       let copy = false;
@@ -1937,7 +1882,6 @@ export function registerModifyCommands(app: App): void {
           const k = dist(base, p);
           return k > 1e-12 ? scaleAbout(base, k) : null;
         }
-        let step: { d?: Pt; a?: number } | null = null;
         if (mode === 'mirror') return mirrorAbout(base, p);
         return null;
       };
@@ -1950,7 +1894,6 @@ export function registerModifyCommands(app: App): void {
           // 회전·축척은 숫자가 각도·비율, 값을 받는 그립의 신축은 결과 길이(그 밖은 숫자 = 직접 거리)
           preferNumber: mode === 'rotate' || mode === 'scale' || (mode === 'stretch' && dynamic),
           keywords: [...modeKw, { key: 'B', label: '기준점' }, { key: 'C', label: '복사' }, { key: 'U', label: '명령 취소' }, { key: 'X', label: '종료' }, ...opts.map((o) => ({ key: o.key, label: o.label }))],
-              step = mode === 'move' ? { d: { x: p.x - base.x, y: p.y - base.y } } : mode === 'rotate' ? { a: ang(base, p) } : null;
           ghost: (p0) => {
             cursor = p0;
             const p = snapPick(mode, p0);
@@ -1966,14 +1909,7 @@ export function registerModifyCommands(app: App): void {
             return m ? ghost.at(m) : [];
           },
         });
-        // 바뀐 것 없이 안내만 있으면(길이가 너무 짧음 등) 알리고 다시 묻는다
-        if (results.every((x) => !x.replace?.length && !x.add?.length && !x.remove?.length)) {
-          const msg = results.find((x) => x.message)?.message;
-          if (msg) ctx.print(msg, 'err');
-          continue;
-        }
         if ('enter' in r) {
-        if (copy && !first && step) first = step;
           // Enter·스페이스: 다음 모드
           mi = (mi + 1) % modes.length;
           continue;
@@ -2001,6 +1937,7 @@ export function registerModifyCommands(app: App): void {
         }
         let results: EditResult[] = [];
         let xform: Affine | undefined;
+        let step: { d?: Pt; a?: number } | null = null;
         if ('point' in r) {
           // Ctrl(⌘)을 누른 채 찍으면 복사(다중 복사로 이어진다)
           if (!copy && ctrlHeld()) copy = true;
@@ -2013,6 +1950,7 @@ export function registerModifyCommands(app: App): void {
             if (m) {
               results = transformAll(st, sel, m, copy);
               xform = m;
+              step = mode === 'move' ? { d: { x: p.x - base.x, y: p.y - base.y } } : mode === 'rotate' ? { a: ang(base, p) } : null;
             }
           }
         } else if ('text' in r) {
@@ -2028,7 +1966,14 @@ export function registerModifyCommands(app: App): void {
           if (xform) results = transformAll(st, sel, xform, copy);
         }
         if (!results.length) continue;
+        // 바뀐 것 없이 안내만 있으면(길이가 너무 짧음 등) 알리고 다시 묻는다
+        if (results.every((x) => !x.replace?.length && !x.add?.length && !x.remove?.length)) {
+          const msg = results.find((x) => x.message)?.message;
+          if (msg) ctx.print(msg, 'err');
+          continue;
+        }
         steps.push(commitResults(app, ctx, results, 'GRIP', { transform: xform }).ops);
+        if (copy && !first && step) first = step;
         if (!copy) break;
       }
       app.refreshSelectionOverlay();

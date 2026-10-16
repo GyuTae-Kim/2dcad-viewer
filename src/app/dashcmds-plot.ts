@@ -475,7 +475,8 @@ async function runDashPsetupin(app: App, ctx: CommandContext): Promise<void> {
   }
 }
 
-async function runPsetupin(app: App, ctx: CommandContext): Promise<void> {
+/** PSETUPIN(대화상자, FILEDIA 0·스크립트는 명령행) — 페이지 설정 관리자의 가져오기도 쓴다 */
+export async function runPsetupin(app: App, ctx: CommandContext): Promise<void> {
   if (fileNameMode(app)) return runDashPsetupin(app, ctx);
   const st = app.active!;
   const src = await sourceDrawing(app, ctx, false);

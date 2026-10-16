@@ -1,5 +1,6 @@
 /**
- * 출력: PLOT(용지·축척·플롯 스타일을 골라 PDF·SVG로), PUBLISH(모든 배치를 한 PDF로)
+ * 출력: PLOT(명명된 페이지 설정·용지·축척·간격띄우기·플롯 스타일·매수를 골라 PDF·SVG·브라우저 인쇄로), PREVIEW, PUBLISH(고른 배치를 한 PDF로).
+ * PLOT의 "배치에 적용"은 지금 설정을 배치(모형 탭이면 모형)의 페이지 설정으로 도면에 저장한다(명령 취소 한 단계).
  */
 import { ensureLayoutVariants } from './psltscale';
 import { MODEL_SPACE, tableKey } from '../core/model';
@@ -7,8 +8,12 @@ import type { PlotStyle } from '../render/styles';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { type Page, type PageOptions, PT_PER_MM, baseName, download, exportPageSvg, layoutPage, modelPage, pdfDocument } from './export';
-import { dialog, form, h } from './ui/dom';
-import { ctbByName, ctbList, pickCtbFiles } from './ctblib';
+import { dialog, h } from './ui/dom';
+import { namedPageSetups } from '../edit/script/pagesetup';
+import { type PageForm, layoutPlotOps, pageFields, pageFormOf, pageSettingsOf } from './pagesetup-ui';
+import { checkIn, fail, group, numIn, numOf, resultDialog, row, selectIn } from './mgr-ui';
+import { inScript } from './script';
+import { ctbByName, pickCtbFiles } from './ctblib';
 import { plotStampOn, setPlotStampOn, stampPages } from './filecmds-stamp';
 
 /** 용지(mm, 세로 방향 폭 × 높이) */
@@ -35,7 +40,6 @@ export function styleSheetPlotStyle(name: string | undefined): PlotStyle | null 
   return 'color';
 }
 
-const SCALES = ['fit', '1:1', '1:2', '1:5', '1:10', '1:20', '1:25', '1:50', '1:100', '1:200', '1:500', '1:1000', '2:1', '5:1', '10:1'];
 
 /** 도면 단위 1이 몇 mm인지(INSUNITS) */
 export function unitMm(insunits: number): number {
@@ -45,6 +49,16 @@ export function unitMm(insunits: number): number {
 
 export interface PlotSettings {
   what: 'display' | 'extents' | 'window' | 'layout' | 'layouts';
+  /** what이 layouts일 때 플롯할 배치 블록 이름(대문자). 없으면 모든 배치 */
+  layouts?: string[];
+  /** 플롯 간격띄우기(mm, 용지 왼쪽 아래 기준). centered가 참이면 쓰지 않는다 */
+  offset?: { x: number; y: number };
+  /** 플롯의 중심(기본 참) */
+  centered?: boolean;
+  /** 거꾸로(180°) 플롯 */
+  upsideDown?: boolean;
+  /** 매수(1~) */
+  copies?: number;
   paper: string;
   landscape: boolean;
   scale: string;
@@ -88,7 +102,13 @@ function modelPlotPage(app: App, st: DocState, s: PlotSettings, unitsPerMm: numb
   const cy = (rect[1] + rect[3]) / 2;
   const hw = (pw - 2 * s.margin) / 2 / mmPerUnit;
   const hh = (ph - 2 * s.margin) / 2 / mmPerUnit;
-  const area: [number, number, number, number] = s.scale === 'fit' ? rect : [cx - hw, cy - hh, cx + hw, cy + hh];
+  let area: [number, number, number, number] = s.scale === 'fit' ? rect : [cx - hw, cy - hh, cx + hw, cy + hh];
+  // 중심이 아니면 플롯 영역의 왼쪽 아래를 용지의 (간격띄우기 X, Y) mm에 둔다: 용지 전체에 해당하는 도면 사각형
+  if (s.centered === false && s.offset) {
+    const ax = rect[0] - s.offset.x / mmPerUnit;
+    const ay = rect[1] - s.offset.y / mmPerUnit;
+    area = [ax, ay, ax + pw / mmPerUnit, ay + ph / mmPerUnit];
+  }
   return modelPage(st, area, pw * unitsPerMm, ph * unitsPerMm, mmPerUnit * unitsPerMm, unitsPerMm, pageOptions(s));
 }
 
@@ -100,8 +120,37 @@ function pageOptions(s: PlotSettings): PageOptions {
 /** 설정대로 페이지들을 만든다(배치 장면이 없으면 그려 온다). 플롯 스탬프를 켰으면 각 쪽에 적는다(화면에는 그리지 않는다) */
 export async function plotPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Promise<Page[]> {
   const pages = await drawPages(app, st, s, unitsPerMm);
+  // 배치의 간격띄우기: 용지 위에서 그림 전체를 옮긴다(모형은 modelPlotPage가 영역으로 맞춘다)
+  if ((s.what === 'layout' || s.what === 'layouts') && s.centered === false && s.offset && (s.offset.x || s.offset.y)) for (const p of pages) shiftPage(p, s.offset.x * unitsPerMm, -s.offset.y * unitsPerMm);
+  if (s.upsideDown) for (const p of pages) turnPage(p);
   if (pages.length && plotStampOn()) await stampPages(app, st, s, pages, unitsPerMm);
+  const n = Math.max(1, Math.min(99, Math.round(s.copies ?? 1)));
+  if (n > 1) {
+    const one = [...pages];
+    for (let i = 1; i < n; i++) pages.push(...one);
+  }
   return pages;
+}
+
+/** 쪽의 그림을 출력 단위로 옮긴다 */
+function shiftPage(p: Page, dx: number, dy: number): void {
+  for (const L of p.layers) {
+    L.m = [L.m[0], L.m[1], L.m[2], L.m[3], L.m[4] + dx, L.m[5] + dy];
+    if (L.clipPx) L.clipPx = [L.clipPx[0] + dx, L.clipPx[1] + dy, L.clipPx[2] + dx, L.clipPx[3] + dy];
+    if (L.clipPoly) L.clipPoly = L.clipPoly.map((v, i) => v + (i & 1 ? dy : dx));
+  }
+}
+
+/** 쪽을 180° 돌린다(대칭으로 플롯) */
+function turnPage(p: Page): void {
+  const W = p.width;
+  const H = p.height;
+  for (const L of p.layers) {
+    const m = L.m;
+    L.m = [-m[0], -m[1], -m[2], -m[3], W - m[4], H - m[5]];
+    if (L.clipPx) L.clipPx = [W - L.clipPx[2], H - L.clipPx[3], W - L.clipPx[0], H - L.clipPx[1]];
+    if (L.clipPoly) L.clipPoly = L.clipPoly.map((v, i) => (i & 1 ? H - v : W - v));
+  }
 }
 
 async function drawPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: number): Promise<Page[]> {
@@ -109,7 +158,8 @@ async function drawPages(app: App, st: DocState, s: PlotSettings, unitsPerMm: nu
   const opt = pageOptions(s);
   const pages: Page[] = [];
   if (s.what === 'layouts') {
-    const lays = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).sort((a, b) => a.tabOrder - b.tabOrder);
+    const pick = s.layouts?.length ? new Set(s.layouts.map((x) => x.toUpperCase())) : null;
+    const lays = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE && (!pick || pick.has(tableKey(l.blockName)))).sort((a, b) => a.tabOrder - b.tabOrder);
     if (lays.length) await app.ensureScene(st, MODEL_SPACE);
     for (const l of lays) {
       await app.ensureScene(st, l.blockName);
@@ -175,117 +225,7 @@ export function registerPlotCommands(app: App): void {
     name: 'PLOT',
     aliases: ['PRINT', 'EXPORTPDF'],
     title: '플롯(PDF로 출력)',
-    async run(ctx) {
-      const st = app.active!;
-      const layoutCount = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).length;
-      const prev = lastSettings.get(st);
-      const metric = !!st.units.measurement;
-      const sheet = st.layoutFor(st.displaySpace)?.plot.styleSheet;
-      const sheetCtb = ctbByName(sheet);
-      const v = await form(
-        '플롯',
-        [
-          {
-            key: 'what',
-            label: '플롯 영역',
-            type: 'select',
-            value: prev?.what ?? (!st.onLayout ? 'display' : 'layout'),
-            options: [
-              ...(!st.onLayout
-                ? [
-                    { value: 'display', label: '화면 표시' },
-                    { value: 'extents', label: '범위' },
-                    { value: 'window', label: '윈도우(두 점 지정)' },
-                  ]
-                : [{ value: 'layout', label: `배치 "${st.layoutFor(st.displaySpace)?.name ?? ''}" (용지 그대로)` }]),
-              ...(layoutCount ? [{ value: 'layouts', label: `모든 배치 (${layoutCount}쪽)` }] : []),
-            ],
-          },
-          { key: 'paper', label: '용지(모형)', type: 'select', value: prev?.paper ?? (metric ? 'A3' : 'TABLOID'), options: PAPERS.map((p) => ({ value: p.key, label: p.label })) },
-          { key: 'landscape', label: '가로 방향', type: 'check', value: prev?.landscape ?? true },
-          { key: 'scale', label: '축척(모형)', type: 'select', value: prev?.scale ?? 'fit', options: SCALES.map((x) => ({ value: x, label: x === 'fit' ? '용지에 맞춤' : `${x} (용지 mm : 도면 ${metric ? 'mm' : '단위'})` })) },
-          {
-            key: 'plotStyle',
-            label: '플롯 스타일',
-            type: 'select',
-            value: prev?.ctb ? `ctb:${prev.ctb}` : (prev?.plotStyle ?? (sheetCtb ? `ctb:${sheetCtb.name}` : (styleSheetPlotStyle(sheet) ?? 'mono'))),
-            options: [
-              { value: 'mono', label: 'monochrome (흑백)' },
-              { value: 'gray', label: 'grayscale (회색조)' },
-              { value: 'color', label: '색 그대로' },
-              ...ctbList().map((t) => ({ value: `ctb:${t.name}`, label: `${t.name} (불러온 플롯 스타일 표)` })),
-              { value: 'load', label: 'CTB·STB 파일 불러오기…' },
-            ],
-          },
-          { key: 'lineweights', label: '선가중치 출력', type: 'check', value: prev?.lineweights ?? true },
-          { key: 'stamp', label: '플롯 스탬프 켜기', type: 'check', value: plotStampOn() },
-          {
-            key: 'format',
-            label: '파일 형식',
-            type: 'select',
-            value: prev?.format ?? 'pdf',
-            options: [
-              { value: 'pdf', label: 'PDF' },
-              { value: 'svg', label: 'SVG(첫 쪽)' },
-              { value: 'preview', label: '미리보기(내려받지 않음)' },
-            ],
-          },
-        ],
-        { ok: '플롯', note: '파일은 이 컴퓨터에서 만들어 바로 내려받습니다. 플롯하지 않는 도면층과 Defpoints는 빠집니다.' },
-      );
-      if (!v) return;
-      setPlotStampOn(!!v.stamp);
-      let styleKey = String(v.plotStyle);
-      if (styleKey === 'load') {
-        const loaded = await pickCtbFiles();
-        if (!loaded.length) {
-          ctx.print('플롯 스타일 표 파일을 읽지 못했습니다. 색 그대로 출력합니다.', 'err');
-          styleKey = 'color';
-        } else {
-          ctx.print(`플롯 스타일 표 ${loaded.map((t) => t.name).join(', ')}을(를) 불러왔습니다.`);
-          styleKey = `ctb:${loaded[0]!.name}`;
-        }
-      }
-      const s: PlotSettings = {
-        what: v.what as PlotSettings['what'],
-        paper: String(v.paper),
-        landscape: !!v.landscape,
-        scale: String(v.scale),
-        plotStyle: styleKey.startsWith('ctb:') ? 'color' : (styleKey as PlotStyle),
-        ctb: styleKey.startsWith('ctb:') ? styleKey.slice(4) : undefined,
-        lineweights: !!v.lineweights,
-        format: v.format === 'svg' ? 'svg' : 'pdf',
-        margin: 5,
-      };
-      if (s.what === 'window') {
-        const w = await askWindow(ctx);
-        if (!w) return;
-        s.window = w;
-      }
-      lastSettings.set(st, s);
-      if (v.format === 'preview') {
-        await showPreview(app, st, s);
-        return;
-      }
-      ctx.print('출력 파일을 만드는 중…');
-      const name = baseName(st.saveName);
-      if (s.format === 'svg') {
-        const pages = await plotPages(app, st, s, 1);
-        if (!pages.length) return;
-        download(exportPageSvg(pages[0]!, 'mm'), `${name}.svg`);
-        ctx.print('SVG로 저장했습니다(단위 mm).');
-        return;
-      }
-      const pages = await plotPages(app, st, s, PT_PER_MM);
-      if (!pages.length) {
-        ctx.print('출력할 내용이 없습니다.', 'err');
-        return;
-      }
-      const blob = await pdfDocument(pages, st.saveName);
-      const suffix = s.what === 'layouts' ? '-배치' : s.what === 'layout' ? `-${st.layoutFor(st.displaySpace)?.name ?? 'layout'}` : '';
-      download(blob, `${name}${suffix}.pdf`);
-      ctx.print(`PDF ${pages.length}쪽을 저장했습니다.`);
-    },
+    run: (ctx) => runPlot(app, ctx),
   });
 
   app.register({
@@ -304,10 +244,24 @@ export function registerPlotCommands(app: App): void {
 
   app.register({
     name: 'PUBLISH',
-    title: '모든 배치를 PDF로',
+    title: '배치를 PDF 하나로 게시',
     async run(ctx) {
       const st = app.active!;
-      const s: PlotSettings = { ...(lastSettings.get(st) ?? { paper: 'A3', landscape: true, scale: 'fit', plotStyle: 'mono', lineweights: true, format: 'pdf', margin: 5 }), what: 'layouts' };
+      const lays = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).sort((a, b) => a.tabOrder - b.tabOrder);
+      if (!lays.length) {
+        ctx.print('배치가 없습니다. 모형은 PLOT으로 출력하십시오.', 'err');
+        return;
+      }
+      // 게시할 배치 고르기(시트 목록) — 스크립트에서는 모든 배치
+      let chosen = lays.map((l) => tableKey(l.blockName));
+      if (!inScript(app)) {
+        const checks = lays.map((l) => checkIn(true, l.name));
+        const body = h('div', { class: 'mgr-dlg' }, group('게시할 시트', ...lays.map((l, i) => row(l.name, checks[i]!))), h('div', { class: 'mgr-note' }, '고른 배치를 탭 순서대로 PDF 한 파일에 담습니다. 각 배치의 페이지 설정(용지)을 씁니다.'));
+        const r = await resultDialog('게시', body, { ok: '게시(P)', width: 420, submit: () => (checks.some((c) => c.checked) ? lays.filter((_, i) => checks[i]!.checked).map((l) => tableKey(l.blockName)) : fail('게시할 배치를 하나 이상 고르십시오.')) });
+        if (!r) return;
+        chosen = r;
+      }
+      const s: PlotSettings = { ...(lastSettings.get(st) ?? { paper: 'A3', landscape: true, scale: 'fit', plotStyle: 'mono', lineweights: true, format: 'pdf', margin: 5 }), what: 'layouts', layouts: chosen, copies: 1 };
       const pages = await plotPages(app, st, s, PT_PER_MM);
       if (!pages.length) {
         ctx.print('배치가 없습니다. 모형은 PLOT으로 출력하십시오.', 'err');
@@ -315,6 +269,259 @@ export function registerPlotCommands(app: App): void {
       }
       download(await pdfDocument(pages, st.saveName), `${baseName(st.saveName)}-배치.pdf`);
       ctx.print(`배치 ${pages.length}쪽을 PDF 하나로 저장했습니다.`);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// PLOT 대화상자
+// ---------------------------------------------------------------------------
+
+type Device = 'pdf' | 'svg' | 'print' | 'preview';
+
+const DEVICES: { value: Device; label: string }[] = [
+  { value: 'pdf', label: 'DWG To PDF.pc3 (PDF 파일로 내려받기)' },
+  { value: 'print', label: '브라우저 인쇄(이 컴퓨터의 프린터)' },
+  { value: 'svg', label: 'SVG(첫 쪽, mm)' },
+  { value: 'preview', label: '미리보기만(내려받지 않음)' },
+];
+
+/** 플롯 대화상자 칸 → 출력 설정 */
+export function plotSettingsOfForm(f: PageForm, model: boolean, allLayouts: boolean, device: Device, copies: number, metric: boolean): PlotSettings {
+  const ctb = ctbByName(f.styleSheet);
+  const what: PlotSettings['what'] = !model ? (allLayouts ? 'layouts' : 'layout') : f.area === 'extents' ? 'extents' : f.area === 'window' || f.area === 'limits' ? 'window' : 'display';
+  return {
+    what,
+    paper: f.paper === 'KEEP' ? (metric ? 'A3' : 'TABLOID') : f.paper,
+    landscape: f.landscape,
+    scale: f.scale,
+    plotStyle: ctb ? 'color' : (styleSheetPlotStyle(f.styleSheet) ?? 'color'),
+    ctb: ctb?.name,
+    lineweights: f.lineweights,
+    format: device === 'svg' ? 'svg' : 'pdf',
+    margin: 5,
+    window: f.window,
+    centered: f.centered,
+    offset: { x: f.offsetX, y: f.offsetY },
+    upsideDown: f.upsideDown,
+    copies,
+  };
+}
+
+/** 출력 설정 → 플롯 대화상자 칸(이전 플롯) */
+function formOfSettings(s: PlotSettings, base: PageForm): PageForm {
+  return {
+    ...base,
+    paper: s.paper,
+    landscape: s.landscape,
+    scale: s.scale,
+    styleSheet: s.ctb ?? (s.plotStyle === 'mono' ? 'monochrome.ctb' : s.plotStyle === 'gray' ? 'Grayscale.ctb' : base.styleSheet),
+    area: s.what === 'extents' ? 'extents' : s.what === 'window' ? 'window' : s.what === 'display' ? 'display' : base.area,
+    window: s.window ?? base.window,
+    lineweights: s.lineweights,
+    centered: s.centered ?? true,
+    offsetX: s.offset?.x ?? 0,
+    offsetY: s.offset?.y ?? 0,
+    upsideDown: !!s.upsideDown,
+  };
+}
+
+/** 브라우저 인쇄: 쪽을 SVG 그림으로 인쇄 전용 영역에 놓고 window.print() */
+async function printPages(pages: Page[], paperMm: { w: number; h: number }): Promise<void> {
+  const urls = pages.map((pg) => URL.createObjectURL(exportPageSvg(pg, 'mm')));
+  const box = h('div', { id: 'mgr-print' }, ...urls.map((u) => h('img', { src: u, alt: '' })));
+  const style = h('style', {}, `#mgr-print{display:none}
+@media print{body>*:not(#mgr-print){display:none!important}#mgr-print{display:block}#mgr-print img{display:block;width:${paperMm.w}mm;height:${paperMm.h}mm;page-break-after:always;break-after:page}@page{size:${paperMm.w}mm ${paperMm.h}mm;margin:0}}`);
+  document.head.append(style);
+  document.body.append(box);
+  await Promise.all([...box.querySelectorAll('img')].map((img) => (img.complete ? Promise.resolve() : new Promise((r) => img.addEventListener('load', r, { once: true })))));
+  const done = () => {
+    box.remove();
+    style.remove();
+    for (const u of urls) URL.revokeObjectURL(u);
+  };
+  window.addEventListener('afterprint', done, { once: true });
+  window.print();
+  // afterprint를 주지 않는 브라우저
+  setTimeout(() => {
+    if (box.isConnected) done();
+  }, 60_000);
+}
+
+async function runPlot(app: App, ctx: CommandContext): Promise<void> {
+  const st = app.active!;
+  if (st.blockEdit) {
+    ctx.print('블록 편집기에서는 쓸 수 없습니다.', 'err');
+    return;
+  }
+  const model = !st.onLayout;
+  const layout = st.layoutFor(st.displaySpace);
+  const metric = !!st.units.measurement;
+  const layoutCount = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).length;
+  const prev = lastSettings.get(st);
+  // 처음 값: 이전 플롯 → 배치(모형)의 페이지 설정
+  const defaults: PageForm = {
+    paper: metric ? 'A3' : 'TABLOID',
+    landscape: true,
+    upsideDown: false,
+    styleSheet: 'monochrome.ctb',
+    area: model ? 'display' : 'layout',
+    scale: 'fit',
+    offsetX: 0,
+    offsetY: 0,
+    centered: true,
+    lineweights: true,
+    scaleLineweights: false,
+  };
+  const fromLayout = layout && (!model || layout.plot.pageSetupName || layout.plot.paperWidth > 0) ? pageFormOf(layout.plot, model) : defaults;
+  if (fromLayout.paper === 'KEEP') fromLayout.paper = defaults.paper;
+  let form: PageForm = prev ? formOfSettings(prev, fromLayout) : fromLayout;
+  if (model && form.area === 'layout') form.area = 'display';
+  if (!model) form.area = 'layout';
+  let device: Device = prev?.format === 'svg' ? 'svg' : 'pdf';
+  let copies = prev?.copies ?? 1;
+  let allLayouts = prev?.what === 'layouts';
+  let setupName = '';
+  for (;;) {
+    const r = await plotDialog(app, ctx, { form, model, device, copies, allLayouts, setupName, layoutCount, hasPrev: !!prev });
+    if (!r) return;
+    ({ form, device, copies, allLayouts, setupName } = r);
+    if (r.action === 'window') {
+      const w = await askWindow(ctx);
+      if (w) form = { ...form, window: w, area: 'window' };
+      continue;
+    }
+    if (r.action === 'apply') {
+      if (!layout) ctx.print('모형 탭의 페이지 설정이 이 도면에 없어 저장하지 못했습니다.', 'err');
+      else {
+        const np = pageSettingsOf(layout.plot, form, model);
+        np.pageSetupName = setupName;
+        st.session.commit({ label: 'PLOT', ops: layoutPlotOps(layout, np), group: ctx.group });
+        ctx.print(`지금 설정을 ${model ? '모형' : `배치 "${layout.name}"`}의 페이지 설정으로 저장했습니다.`);
+      }
+      continue;
+    }
+    break;
+  }
+  if (form.area === 'window' && model && !form.window) {
+    const w = await askWindow(ctx);
+    if (!w) return;
+    form = { ...form, window: w };
+  }
+  if (form.area === 'limits' && model) {
+    const lo = st.doc.header.get('$LIMMIN') as { x: number; y: number } | undefined;
+    const hi = st.doc.header.get('$LIMMAX') as { x: number; y: number } | undefined;
+    form = { ...form, window: lo && hi ? [lo.x, lo.y, hi.x, hi.y] : form.window };
+  }
+  const s = plotSettingsOfForm(form, model, allLayouts, device, copies, metric);
+  lastSettings.set(st, s);
+  if (device === 'preview') {
+    await showPreview(app, st, s);
+    return;
+  }
+  ctx.print('출력 파일을 만드는 중…');
+  const name = baseName(st.saveName);
+  if (device === 'svg') {
+    const pages = await plotPages(app, st, s, 1);
+    if (!pages.length) return;
+    download(exportPageSvg(pages[0]!, 'mm'), `${name}.svg`);
+    ctx.print('SVG로 저장했습니다(단위 mm).');
+    return;
+  }
+  if (device === 'print') {
+    const pages = await plotPages(app, st, s, 1);
+    if (!pages.length) {
+      ctx.print('출력할 내용이 없습니다.', 'err');
+      return;
+    }
+    const first = pages[0]!;
+    await printPages(pages, { w: first.width, h: first.height });
+    ctx.print(`브라우저 인쇄 창에 ${pages.length}쪽을 보냈습니다.`);
+    return;
+  }
+  const pages = await plotPages(app, st, s, PT_PER_MM);
+  if (!pages.length) {
+    ctx.print('출력할 내용이 없습니다.', 'err');
+    return;
+  }
+  const blob = await pdfDocument(pages, st.saveName);
+  const suffix = s.what === 'layouts' ? '-배치' : s.what === 'layout' ? `-${layout?.name ?? 'layout'}` : '';
+  download(blob, `${name}${suffix}.pdf`);
+  ctx.print(`PDF ${pages.length}쪽을 저장했습니다.`);
+}
+
+interface PlotDialogState {
+  form: PageForm;
+  model: boolean;
+  device: Device;
+  copies: number;
+  allLayouts: boolean;
+  setupName: string;
+  layoutCount: number;
+  hasPrev: boolean;
+}
+
+function plotDialog(app: App, ctx: CommandContext, v: PlotDialogState): Promise<(PlotDialogState & { action: 'plot' | 'window' | 'apply' }) | null> {
+  const st = app.active!;
+  const named = namedPageSetups(st.doc).items.filter((x) => x.model === v.model);
+  const setup = selectIn([{ value: '', label: '<없음>' }, ...named.map((x) => ({ value: x.name, label: x.name }))], v.setupName, '페이지 설정 이름');
+  const fields = pageFields(v.form, v.model);
+  setup.addEventListener('change', () => {
+    const it = named.find((x) => x.name === setup.value);
+    if (it) fields.set(pageFormOf(it.plot, v.model));
+  });
+  const device = selectIn(DEVICES, v.device, '프린터/플로터 이름');
+  const copies = numIn(v.copies, '매수');
+  const all = checkIn(v.allLayouts, '모든 배치 플롯');
+  const stamp = checkIn(plotStampOn(), '플롯 스탬프 켜기');
+  let action: 'plot' | 'window' | 'apply' = 'plot';
+  let submitNow: (() => void) | null = null;
+  fields.onWindow(() => {
+    action = 'window';
+    submitNow?.();
+  });
+  const loadCtb = async () => {
+    const loaded = await pickCtbFiles();
+    if (!loaded.length) {
+      ctx.print('플롯 스타일 표 파일을 읽지 못했습니다.', 'err');
+      return;
+    }
+    ctx.print(`플롯 스타일 표 ${loaded.map((t) => t.name).join(', ')}을(를) 불러왔습니다.`);
+    fields.set({ ...fields.read(), styleSheet: loaded[0]!.name });
+  };
+  const body = h(
+    'div',
+    { class: 'mgr-dlg' },
+    group('페이지 설정', row('이름(A)', setup)),
+    h('div', { class: 'mgr-cols' }, group('프린터/플로터', row('이름(M)', device)), group('매수(B)', row('1~99', copies))),
+    fields.el,
+    !v.model && v.layoutCount > 1 ? row(`모든 배치 플롯(${v.layoutCount}쪽)`, all) : null,
+    row('플롯 스탬프 켜기', stamp),
+    h('div', { class: 'mgr-note' }, '파일은 이 컴퓨터에서 만들어 바로 내려받습니다. 플롯하지 않는 도면층과 Defpoints는 빠집니다. 배치는 용지 전체를 플롯합니다.'),
+  );
+  return resultDialog('플롯', body, {
+    ok: '확인',
+    width: 720,
+    bind: (s) => (submitNow = s),
+    extra: [
+      { label: '플롯 스타일 불러오기…', run: () => void loadCtb() },
+      {
+        label: '배치에 적용(U)',
+        run: () => {
+          action = 'apply';
+          submitNow?.();
+        },
+      },
+    ],
+    submit: () => {
+      const n = numOf(copies);
+      if (!Number.isInteger(n) || n < 1 || n > 99) return fail('매수: 1과(와) 99 사이의 정수가 필요합니다.');
+      const f = fields.read();
+      if (!f.centered && (!Number.isFinite(f.offsetX) || !Number.isFinite(f.offsetY))) return fail('플롯 간격띄우기: 숫자를 입력하십시오.');
+      setPlotStampOn(stamp.checked);
+      const a = action;
+      action = 'plot';
+      return { ...v, form: f, device: device.value as Device, copies: n, allLayouts: all.checked, setupName: setup.value, action: a };
     },
   });
 }
