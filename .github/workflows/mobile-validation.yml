@@ -35,6 +35,8 @@ jobs:
           npm run build
           mv dist .runtime/performance/baseline
           git checkout --detach "$GITHUB_SHA"
+      - name: Install Korean glyphs for representative browser rendering
+        run: sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk
       - name: Compare cold mobile loads
         timeout-minutes: 8
         run: |
