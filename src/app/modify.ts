@@ -47,6 +47,8 @@ import { arrayGripEdit } from './assocarray-grips';
 import { stretchSelection } from './editcmds2-stretch';
 
 // ---------------------------------------------------------------------------
+import { gripDims, gripMoveMany, gripStretchValue, gripTakesValue } from '../edit/geom/gripops';
+import { type GripOption, ctrlHeld, gripDimGeom, gripOptions, previewEntities, trackModifiers } from './gripmenu';
 // 변환 행렬(x' = a·x + c·y + e, y' = b·x + d·y + f)
 // ---------------------------------------------------------------------------
 
@@ -1583,7 +1585,9 @@ export function registerModifyCommands(app: App): void {
         app.refreshSelectionOverlay();
         return;
       }
-      const items = hot.items.filter((it) => unlockedOnly(app, [it.handle]).length);
+      const items = hot.items
+        .filter((it) => unlockedOnly(app, [it.handle]).length)
+        .map((it) => ({ handle: it.handle, id: it.id, point: (it as { point?: Pt }).point ?? hot.point }));
       const sel = unlockedOnly(app, [...st.selection]);
       if (!sel.length) return;
       const modes = ['stretch', 'move', 'rotate', 'scale', 'mirror'] as const;
@@ -1593,14 +1597,108 @@ export function registerModifyCommands(app: App): void {
       let copy = false;
       const steps: number[] = [];
       const ghost = new Ghost(app, sel);
-      const stretchRes = (to: Pt): EditResult[] =>
-        items.flatMap((it) => {
-          const e = st.doc.entityIndex.get(it.handle);
-          if (!e) return [];
-          const r = gripMove(e, it.id, to, st.doc);
+      // 객체별 핫 그립. 한 객체의 같은 자리 그립은 하나만(타원형 호가 축 끝에서 끝나면 호의 끝)
+      const byHandle = new Map<string, { handle: string; id: string; point: Pt }[]>();
+      for (const it of items) {
+        const l = byHandle.get(it.handle) ?? [];
+        const k = l.findIndex((g) => g.point.x === it.point.x && g.point.y === it.point.y);
+        if (k < 0) l.push(it);
+        else if (it.id === 'start' || it.id === 'end') l[k] = it;
+        byHandle.set(it.handle, l);
+      }
+      const grips = [...byHandle.values()].flat();
+      // 그립 하나: 다기능 옵션(신축 밖의 것)과 신축 중 값 입력
+      const single = grips.length === 1 ? grips[0]! : null;
+      const singleEnt = single ? doc.entityIndex.get(single.handle) : undefined;
+      const opts = single && singleEnt ? gripOptions(app, single, singleEnt, st).filter((o) => o.kind !== 'stretch') : [];
+      const dynamic = !!(single && singleEnt && gripTakesValue(singleEnt, single.id));
+      let cursor: Pt | null = null;
+      const asCopy = (r: EditResult): EditResult => (copy ? { add: [...(r.replace ?? []), ...(r.add ?? [])] } : r);
+      const changed = (res: EditResult[]) => res.flatMap((x) => [...(x.replace ?? []), ...(x.add ?? [])]);
+      const geomOf = (res: EditResult[]): OverlayGeom[] => {
+        const list = changed(res);
+        return list.length ? resultGeom(app, { replace: previewEntities(doc, list) }) : [];
+      };
+      // 동적 치수: 신축한 그립 객체의 길이·각도(복사면 새 객체)
+      const dimsGeom = (res: EditResult[]): OverlayGeom[] => {
+        if (!dynamic || !single || !singleEnt) return [];
+        const after = changed(res).find((x) => x.handle === single.handle);
+        const dims = after ? gripDims(singleEnt, single.id, after) : [];
+        return dims.length ? [gripDimGeom(dims, 10 * app.view.pixelSize(), st.units)] : [];
+      };
+      const stretchRes = (to: Pt): EditResult[] => {
+        const d = { x: to.x - base.x, y: to.y - base.y };
+        // 기준점 자리의 그립은 찍은 점 그대로(스냅한 점이 반올림으로 어긋나지 않게)
+        const tgt = (p: Pt): Pt => (p.x === base.x && p.y === base.y ? to : { x: p.x + d.x, y: p.y + d.y });
+        const out: EditResult[] = [];
+        for (const [h, gs] of byHandle) {
+          const e = doc.entityIndex.get(h);
+          if (!e) continue;
+          const r = gs.length === 1 ? gripMove(e, gs[0]!.id, tgt(gs[0]!.point), doc) : gripMoveMany(e, gs.map((g) => ({ id: g.id, to: tgt(g.point) })), doc);
           // 복사: 원본은 두고 바뀐 것을 새 객체로
-          return copy ? [{ add: [...(r.replace ?? []), ...(r.add ?? [])] }] : [r];
-        });
+          out.push(asCopy(r));
+        }
+        return out;
+      };
+      // 다중 복사의 간격 스냅: 첫 복사의 변위(신축·이동)·각도(회전)의 정수배
+      let first: { d?: Pt; a?: number } | null = null;
+      const snapPick = (mode: (typeof modes)[number], p: Pt): Pt => {
+        if (!copy || !first || !ctrlHeld()) return p;
+        const f = first.d;
+        if ((mode === 'move' || mode === 'stretch') && f) {
+          const ff = f.x * f.x + f.y * f.y;
+          if (!(ff > 0)) return p;
+          const t = ((p.x - base.x) * f.x + (p.y - base.y) * f.y) / ff;
+          const k = Math.round(t) || Math.sign(t) || 1;
+          return { x: base.x + f.x * k, y: base.y + f.y * k };
+        }
+        if (mode === 'rotate' && first.a) {
+          const t = ang(base, p) / first.a;
+          const k = Math.round(t) || Math.sign(t) || 1;
+          const r = dist(base, p);
+          return { x: base.x + r * Math.cos(first.a * k), y: base.y + r * Math.sin(first.a * k) };
+        }
+        return p;
+      };
+      // 다기능 옵션 실행(확정은 명령 취소 한 단계)
+      const runOption = async (o: GripOption, at: Pt): Promise<void> => {
+        ctx.print(`** ${o.label} **`);
+        if (o.kind === 'command') {
+          o.start?.();
+          return;
+        }
+        let res: EditResult | null = null;
+        if (o.kind === 'now') res = o.apply?.() ?? null;
+        else {
+          let last: Pt | null = null;
+          const r = await ctx.getPoint(o.prompt ?? '대상점 지정:', {
+            base: at,
+            preferNumber: !!o.numeric,
+            ghost: (p) => {
+              last = p;
+              const x = o.apply?.(p);
+              return x && (x.replace?.length || x.add?.length) ? geomOf([x]) : [];
+            },
+          });
+          if ('point' in r) res = o.apply?.(r.point) ?? null;
+          else if ('text' in r && o.value) {
+            const v = num(r.text);
+            if (v !== null) res = o.value(v, last);
+          }
+        }
+        if (!res) return;
+        if (!res.replace?.length && !res.add?.length && !res.remove?.length) {
+          if (res.message) ctx.print(res.message, 'err');
+          return;
+        }
+        commitResults(app, ctx, [res], 'GRIP');
+      };
+      if (arg?.startsWith('opt:')) {
+        const o = opts.find((x) => x.key === arg.slice(4));
+        if (o && single) await runOption(o, single.point);
+        app.refreshSelectionOverlay();
+        return;
+      }
       const xf = (mode: (typeof modes)[number], p: Pt): Affine | null => {
         if (mode === 'move') return translate(p.x - base.x, p.y - base.y);
         if (mode === 'rotate') return rotateAbout(base, ang(base, p));
@@ -1617,16 +1715,19 @@ export function registerModifyCommands(app: App): void {
         ctx.print(`** ${names[mode]}${copy ? ' (다중)' : ''} **`);
         const r = await ctx.getPoint(`${what} 지정 또는 [기준점(B)/복사(C)/명령 취소(U)/종료(X)]:`, {
           base,
-          preferNumber: mode === 'rotate' || mode === 'scale',
-          keywords: [{ key: 'B', label: '기준점' }, { key: 'C', label: '복사' }, { key: 'U', label: '명령 취소' }, { key: 'X', label: '종료' }],
-          ghost: (p) => {
+          // 회전·축척은 숫자가 각도·비율, 값을 받는 그립의 신축은 결과 길이(그 밖은 숫자 = 직접 거리)
+          preferNumber: mode === 'rotate' || mode === 'scale' || (mode === 'stretch' && dynamic),
+          keywords: [...modeKw, { key: 'B', label: '기준점' }, { key: 'C', label: '복사' }, { key: 'U', label: '명령 취소' }, { key: 'X', label: '종료' }, ...opts.map((o) => ({ key: o.key, label: o.label }))],
+          ghost: (p0) => {
+            cursor = p0;
+            const p = snapPick(mode, p0);
             if (mode === 'stretch') {
               if (items.length > 200) return [];
               // 구속으로 이어진 객체도 따라오는 모습으로(풀 수 없으면 그립 결과만)
               let res = stretchRes(p);
               const cons = constraintEditHook(st, res, 'GRIP');
               if (cons.ok) res = cons.results;
-              return resultGeom(app, { replace: res.flatMap((x) => [...(x.replace ?? []), ...(x.add ?? [])]) });
+              return [...geomOf(res), ...dimsGeom(res)];
             }
             const m = xf(mode, p);
             return m ? ghost.at(m) : [];
@@ -1638,10 +1739,21 @@ export function registerModifyCommands(app: App): void {
           continue;
         }
         if ('keyword' in r) {
-          if (r.keyword === 'X') break;
-          if (r.keyword === 'C') copy = true;
-          if (r.keyword === 'U') undoStep(app, ctx, steps);
-          if (r.keyword === 'B') {
+          const k = r.keyword;
+          const mk = modeKw.findIndex((x) => x.key === k);
+          if (mk >= 0) {
+            mi = mk;
+            continue;
+          }
+          const o = opts.find((x) => x.key === k);
+          if (o && single) {
+            await runOption(o, single.point);
+            break;
+          }
+          if (k === 'X') break;
+          if (k === 'C') copy = true;
+          if (k === 'U') undoStep(app, ctx, steps);
+          if (k === 'B') {
             const b = await ctx.getPoint('기준점 지정:');
             if ('point' in b) base = b.point;
           }
@@ -1650,9 +1762,14 @@ export function registerModifyCommands(app: App): void {
         let results: EditResult[] = [];
         let xform: Affine | undefined;
         if ('point' in r) {
-          if (mode === 'stretch') results = stretchRes(r.point);
-          else {
-            const m = xf(mode, r.point);
+          // Ctrl(⌘)을 누른 채 찍으면 복사(다중 복사로 이어진다)
+          if (!copy && ctrlHeld()) copy = true;
+          const p = snapPick(mode, r.point);
+          if (mode === 'stretch') {
+            results = stretchRes(p);
+            step = { d: { x: p.x - base.x, y: p.y - base.y } };
+          } else {
+            const m = xf(mode, p);
             if (m) {
               results = transformAll(st, sel, m, copy);
               xform = m;
@@ -1660,11 +1777,22 @@ export function registerModifyCommands(app: App): void {
           }
         } else if ('text' in r) {
           const v = num(r.text);
+  // 모드: 신축·이동·회전·축척·대칭(Enter·스페이스로 순환하거나 ST·MO·RO·SC·MI — 오른쪽 클릭 메뉴는 앱이 키워드로 만든다).
+  // 복사: C 또는 Ctrl(⌘)을 누른 채 찍기(다중 복사가 이어진다). 다중 복사 중 Ctrl을 누르고 있으면 첫 복사의 간격·각도의 배수로 스냅.
+  // 여러 핫 그립(hotGrip.items[].point, 없으면 누른 그립 점)은 같은 변위로 신축한다. 그립 하나를 신축하는 중 입력한 값은
+  // 결과 길이(선분 길이, 호 끝은 호 길이, 호 중간은 반지름, 폴리선 정점은 앞 세그먼트 길이)이고 미리보기에 동적 치수를 그린다.
+  // 다기능 그립 옵션(src/app/gripmenu.ts): 메뉴에서 고르면 arg = 'opt:열쇠'로 바로 실행, 그립 편집 중에는 키워드로 고른다.
           if (v === null) continue;
-          if (mode === 'rotate') xform = rotateAbout(base, (v * Math.PI) / 180);
-          else if (mode === 'scale' && v > 0) xform = scaleAbout(base, v);
+          if (mode === 'stretch') {
+            const one = single && singleEnt ? gripStretchValue(singleEnt, single.id, v, cursor, doc) : null;
+            if (one) results = [asCopy(one)];
+          } else if (mode === 'rotate') {
+            xform = rotateAbout(base, (v * Math.PI) / 180);
+            step = { a: (v * Math.PI) / 180 };
+          } else if (mode === 'scale' && v > 0) xform = scaleAbout(base, v);
           if (xform) results = transformAll(st, sel, xform, copy);
         }
+      const doc = st.doc;
         if (!results.length) continue;
         steps.push(commitResults(app, ctx, results, 'GRIP', { transform: xform }).ops);
         if (!copy) break;
@@ -1683,8 +1811,16 @@ export function registerModifyCommands(app: App): void {
       const b = await ctx.getPoint('기준점 지정:');
       if (!('point' in b)) return;
       base = b.point;
+      trackModifiers();
     } else {
       const ext = extentsOf(app, hs);
+      const modeKw: Keyword[] = [
+        { key: 'ST', label: '신축' },
+        { key: 'MO', label: '이동' },
+        { key: 'RO', label: '회전' },
+        { key: 'SC', label: '축척' },
+        { key: 'MI', label: '대칭' },
+      ];
       base = ext ? { x: ext[0], y: ext[1] } : { x: 0, y: 0 };
     }
     clipboard = { doc: st.doc, base, entities: hs.map((h) => cloneEntity(st.doc.entityIndex.get(h)!)) };
@@ -1701,7 +1837,7 @@ export function registerModifyCommands(app: App): void {
   app.register({
     name: 'PASTECLIP',
     title: '붙여넣기',
-    async run(ctx) {
+    async run(ctx, arg) {
       const st = app.active!;
       const clip = clipboard;
       if (!clip || !clip.entities.length) {
@@ -1746,6 +1882,7 @@ export function registerModifyCommands(app: App): void {
       st.selection.clear();
       const a = commitResults(app, ctx, list.map((e) => copyEntity(e, translate(0, 0), st.doc)), 'PASTEORIG');
       app.setSelection(a.added.slice(0, 5000));
+        let step: { d?: Pt; a?: number } | null = null;
       ctx.print(`${a.added.length}개를 원래 좌표에 붙여 넣었습니다.`);
     },
   });
@@ -1753,6 +1890,7 @@ export function registerModifyCommands(app: App): void {
     name: 'PASTEBLOCK',
     title: '블록으로 붙여넣기',
     async run(ctx) {
+              step = mode === 'move' ? { d: { x: p.x - base.x, y: p.y - base.y } } : mode === 'rotate' ? { a: ang(base, p) } : null;
       const st = app.active!;
       const clip = clipboard;
       if (!clip || !clip.entities.length) {
@@ -1763,7 +1901,14 @@ export function registerModifyCommands(app: App): void {
       const preview = pk && clip.doc === st.doc ? pk.geometryOf(clip.entities) : null;
       const pg = preview ? Ghost.of(preview) : null;
       const r = await ctx.getPoint('삽입점 지정:', { ghost: (p) => (pg ? pg.at(translate(p.x - clip.base.x, p.y - clip.base.y)) : []) });
+        // 바뀐 것 없이 안내만 있으면(길이가 너무 짧음 등) 알리고 다시 묻는다
+        if (results.every((x) => !x.replace?.length && !x.add?.length && !x.remove?.length)) {
+          const msg = results.find((x) => x.message)?.message;
+          if (msg) ctx.print(msg, 'err');
+          continue;
+        }
       if (!('point' in r)) return;
+        if (copy && !first && step) first = step;
       const list = clip.entities.map((e) => cloneEntity(e));
       const deps = importDependencies(st, clip.doc, list);
       // AutoCAD처럼 A$C + 16진 8자리 이름의 블록(기준점 = 복사 기준점)

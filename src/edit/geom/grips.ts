@@ -5,7 +5,9 @@
  * - 타원: 중심(이동), 축 끝(그 축 반지름, 단축이 길어지면 두 축을 맞바꾸고 매개변수 −π/2), 호 끝(중심에서 점으로 가는 반직선의 교점).
  * - 폴리선: 정점(이동), 세그먼트 중간(직선은 세그먼트 평행 이동, 호는 새 점을 지나는 호).
  * - 스플라인: 맞춤점(조정점을 다시 구한다) 또는 조정점. 문자·블록 참조·점 등: 삽입점(이동), 블록 속성(그 속성만).
- * - 치수: 정의점·문자(측정값을 다시 잰다). 블록 그림은 regenDimension이 있으면 그것으로, 없으면 문자 그립만 근사한다.
+ * - 치수: 정의점·문자(측정값을 다시 잰다). 문자 그립은 DIMTMOVE(재지정, 없으면 스타일)를 따른다 — 0이면 치수선도 문자를 따라간다.
+ *   블록 그림은 regenDimension이 있으면 그것으로, 없으면 문자 그립만 근사한다.
+ * - 가리기(WIPEOUT): 경계 꼭짓점(그 꼭짓점 신축). 자르지 않은 이미지(IMAGE): 네 구석(맞은편 구석을 두고 가로세로 비율을 지킨 축척).
  */
 import type {
   ArcEntity,
@@ -16,6 +18,7 @@ import type {
   EllipseEntity,
   Entity,
   HatchEntity,
+  ImageEntity,
   InsertEntity,
   LwPolylineEntity,
   MTextEntity,
@@ -28,8 +31,10 @@ import type {
 import { tableKey } from '../../core/model';
 import { bulgeVertices, lwVertices, numArray, setLwVertices, vertCount } from '../../core/lwpoly';
 import { bulgeArc, interpolateFitPoints } from '../../geom/curves';
+import { moveDimensionText } from '../dim/create';
 import { type EllPiece, pieceAt } from './curve';
-import { type Affine, TAU, add, affApply, affInv, affLin, affTranslate, angleOf, ccwFrom, dist, mid, normAngle, sub } from './math';
+import { makeWipeout, wipeoutPolygon } from './markup';
+import { type Affine, TAU, add, affApply, affInv, affLin, affScale, affTranslate, angleOf, ccwFrom, dist, dot, mid, normAngle, sub } from './math';
 import { cloneEntity, entityPath, freshEntity, makeArc } from './path';
 import { isNaturalExt, planProj } from './ocs';
 import { insertionPoint } from './query';
@@ -172,11 +177,17 @@ export function gripPoints(e: Entity, doc: CadDocument): GripPoint[] {
         g('v3', { x: c.x - w, y: c.y + h }, 'vertex'),
       ];
     }
+    case 'WIPEOUT': {
+      const poly = wipeoutPolygon(e);
+      if (poly.length >= 3) return poly.map((p, i) => g('v' + i, p, 'vertex'));
+      return [g('ins', insertionPoint(e)!, 'ins')];
+    }
+    case 'IMAGE':
+      if (!e.clipping) return imageCorners(e).map((p, i) => g('v' + i, p, 'vertex'));
+      return [g('ins', insertionPoint(e)!, 'ins')];
     case 'SHAPE':
     case 'TOLERANCE':
     case 'ACAD_TABLE':
-    case 'IMAGE':
-    case 'WIPEOUT':
     case 'PDFUNDERLAY':
     case 'DWFUNDERLAY':
     case 'DGNUNDERLAY':
@@ -208,6 +219,14 @@ function segMid(a: Vec2, b: Vec2, bulge: number): Vec2 {
   if (!arc) return mid(a, b);
   const m = arc.a0 + arc.sweep / 2;
   return { x: arc.cx + arc.r * Math.cos(m), y: arc.cy + arc.r * Math.sin(m) };
+}
+
+/** 자르지 않은 이미지의 네 구석(WCS): 왼쪽 아래(삽입점) → 오른쪽 아래 → 오른쪽 위 → 왼쪽 위 */
+function imageCorners(e: ImageEntity): Vec2[] {
+  const o = { x: e.insert.x, y: e.insert.y };
+  const u = { x: e.uVector.x * e.imageSize.x, y: e.uVector.y * e.imageSize.x };
+  const v = { x: e.vVector.x * e.imageSize.y, y: e.vVector.y * e.imageSize.y };
+  return [o, add(o, u), add(add(o, u), v), add(o, v)];
 }
 
 function mtextWidthGrip(e: MTextEntity): Vec2 {
@@ -399,6 +418,29 @@ export function gripMove(e: Entity, id: string, to: Vec2, doc: CadDocument, opts
       if (id === 'v0') r.upperLeft = { x: to.x, y: to.y, z: e.upperLeft.z };
       else r.lowerRight = { x: to.x, y: to.y, z: e.lowerRight.z };
       return { replace: [r] };
+    }
+    case 'WIPEOUT': {
+      if (id[0] !== 'v') return move();
+      // 경계 꼭짓점 하나를 옮긴 다각형으로 다시 만든다(틀은 새 범위에 맞춘다, 표시·밝기 값은 그대로)
+      const poly = wipeoutPolygon(e);
+      const i = Number(id.slice(1));
+      if (!poly[i]) return { message: '그립이 없습니다.' };
+      poly[i] = { x: to.x, y: to.y };
+      const w = makeWipeout(e, poly, e.insert.z);
+      if (!w) return { message: MSG.tooShort };
+      return { replace: [{ ...w, handle: e.handle, displayFlags: e.displayFlags, brightness: e.brightness, contrast: e.contrast, fade: e.fade }] };
+    }
+    case 'IMAGE': {
+      if (id[0] !== 'v') return move();
+      // 구석: 맞은편 구석을 두고 대각선 방향으로 잰 비율만큼 축척(가로세로 비율 유지)
+      const i = Number(id.slice(1));
+      const opp = grips.find((q) => q.id === 'v' + ((i + 2) % 4))?.point;
+      if (!opp) return { message: '그립이 없습니다.' };
+      const diag = sub(gp.point, opp);
+      const dd = dot(diag, diag);
+      const k = dd > 0 ? dot(sub(to, opp), diag) / dd : 0;
+      if (!(k > 1e-9)) return { message: MSG.tooShort };
+      return transformEntity(e, affScale(k, k, opp), doc);
     }
     default:
       return move();
@@ -615,8 +657,20 @@ function hatchGrip(e: HatchEntity, id: string, d: Vec2): HatchEntity {
 // 치수
 // ---------------------------------------------------------------------------
 
+/** 문자 그립: DIMTMOVE(재지정, 없으면 스타일)에 따라 옮긴다 — 0이면 치수선(호·지시선)도 문자를 따라간다 */
+function dimTextFollow(e: DimensionEntity, d: Vec2, doc: CadDocument): DimensionEntity {
+  const r = moveDimPoint(e, 'textMid', d);
+  try {
+    const t = moveDimensionText(doc, e, r.textMid);
+    if (!Number.isFinite(t.measurement) && Number.isFinite(r.measurement)) t.measurement = r.measurement;
+    return t;
+  } catch {
+    return r;
+  }
+}
+
 function dimGrip(e: DimensionEntity, key: Parameters<typeof moveDimPoint>[1], d: Vec2, doc: CadDocument, opts: GripOptions): EditResult {
-  const r = moveDimPoint(e, key, d);
+  const r = key === 'textMid' ? dimTextFollow(e, d, doc) : moveDimPoint(e, key, d);
   if (opts.regenDimension) {
     const nb = opts.regenDimension(r, doc);
     if (nb) {
