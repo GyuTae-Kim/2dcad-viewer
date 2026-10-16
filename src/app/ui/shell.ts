@@ -1699,6 +1699,12 @@ export class Shell implements UiHooks {
       if ((ev as KeyboardEvent).key === 'Enter') this.pickFiles();
     });
     const sample = h('button', { class: 'btn', onclick: () => void this.openSample() }, iconSpan('sample'), '예제 도면 열기');
+    const newDrawing = h(
+      'div',
+      { class: 'start-new' },
+      h('button', { class: 'btn primary', onclick: () => void this.app.run('NEW', 'metric') }, iconSpan('new'), '새 도면 (mm)'),
+      h('button', { class: 'btn', title: 'acad 서식(영국식, 인치)', onclick: () => void this.app.run('NEW', 'imperial') }, '인치'),
+    );
     this.start.append(
       h(
         'div',
@@ -1712,6 +1718,7 @@ export class Shell implements UiHooks {
           h(
             'div',
             { class: 'start-side' },
+            h('div', { class: 'card' }, h('h3', {}, '새로 그리기'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '빈 도면을 만들어 바로 그리기를 시작합니다(Ctrl+N).'), newDrawing),
             h('div', { class: 'card' }, h('h3', {}, '최근 문서'), this.recentList),
             h('div', { class: 'card' }, h('h3', {}, '처음이라면'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '예제 도면으로 기능을 둘러볼 수 있습니다.'), sample),
             h(

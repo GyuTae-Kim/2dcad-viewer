@@ -177,8 +177,10 @@ export function registerSaveCommands(app: App): void {
     aliases: ['QNEW'],
     title: '새 도면',
     noDoc: true,
-    async run(ctx) {
-      const v = await form(
+    async run(ctx, arg) {
+      // 시작 화면 단추·스크립트는 서식을 인자로 넘겨 대화상자 없이 만든다(NEW metric · NEW imperial)
+      const given = arg?.trim().toLowerCase();
+      const v = given === 'metric' || given === 'imperial' ? { units: given } : await form(
         '새 도면',
         [
           {

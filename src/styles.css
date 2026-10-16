@@ -1769,3 +1769,8 @@ button.aci.on {
 :root[data-theme='light'] .filetab.active {
   color: #e8ebf0;
 }
+.start-new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
