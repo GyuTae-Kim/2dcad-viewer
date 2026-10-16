@@ -134,13 +134,11 @@
 ## 다른 형식
 
 OpenCAD의 다음 뷰어로 SKP(SketchUp), STEP, NC(G-code·MPR 등)를 같은 방식(서버 없이 브라우저 안에서)으로 만듭니다.
-2D 도면과 같은 파일 탭에 3D 문서로 열립니다.
+2026-10-16부터 형식마다 별도 저장소에서 개발하며, 남은 일도 각 저장소 README에 있습니다.
 
-- [x] 3D 뷰어 코어(WebGL2): 궤도·이동·확대, 뷰 큐브·표준 뷰, 원근/평행, 음영·윤곽·와이어프레임·X-ray, 굵은 선·점선, BVH 고르기, 측정, 그림 저장
-- [x] NC: G-code(ISO·Fanuc·LinuxCNC·GRBL·Mach3 — 호·나선·고정 사이클·부프로그램·변수), Heidenhain 평문, woodWOP MPR(판·드릴·윤곽·홈·포켓), 코드 보기·공구 목록·재생
-- [x] STEP(AP203·AP214·AP242): B-rep 곡면 삼각화, 조립·색·단위, 제품 나무
-- [x] SKP: SketchUp 2021~2026(면·모서리·재질 색·그룹/컴포넌트·태그)
-- [ ] SKP: SketchUp 2020 이하(MFC 객체 그래프), 무늬·장면, 2024 표본 확인
-- [ ] NC: 회전축(4·5축)·선반, 반경 보정 경로, 좌표 회전·배율, Heidenhain FK·포켓 사이클, MPR 나머지 매크로·좌표계
-- [ ] STEP: 와이어프레임·PMI 주석, 면 단위 고르기, 레이어
-- [ ] 3D 뷰어: 선분 하나 강조 API, 큰 좌표 정밀도(묶음 원점), 단면 보기
+- [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d): 공용 3D 뷰어 코어(WebGL2)
+- [opencad-nc](https://github.com/GyuTae-Kim/opencad-nc): G-code·Heidenhain 평문·woodWOP MPR
+- [opencad-step](https://github.com/GyuTae-Kim/opencad-step): STEP(AP203·AP214·AP242)
+- [opencad-skp](https://github.com/GyuTae-Kim/opencad-skp): SketchUp 2021~2026
+
+이 저장소에서 3D 문서를 열던 탭·리본·패널 화면(`src/app/view3d/`)은 커밋 `d7c584a`에서 볼 수 있습니다.
