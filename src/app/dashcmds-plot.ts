@@ -345,7 +345,7 @@ async function runDashPlot(app: App, ctx: CommandContext): Promise<void> {
         ],
         'A',
       );
-      if (shade !== 'A' && shade !== 'W') ctx.print('2D 뷰어라 화면표시대로 플롯합니다.');
+      if (shade !== 'A' && shade !== 'W') ctx.print('2D 캐드라 화면표시대로 플롯합니다.');
     } else {
       await askYN(ctx, '선가중치를 플롯 축척에 적용?', false);
       await askYN(ctx, '도면 공간을 먼저 플롯?', false);

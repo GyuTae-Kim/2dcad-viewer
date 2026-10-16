@@ -189,7 +189,7 @@ export function registerEditCmds2Image(app: App): void {
         return;
       }
       if (ops.length) st.session.commit({ label: 'IMAGEQUALITY', ops, group: ctx.group });
-      if (k === 'D') ctx.print('참고: 이 뷰어는 화면에 이미지를 늘 높은 품질로 그립니다. 설정은 도면에 저장됩니다.');
+      if (k === 'D') ctx.print('참고: 이 프로그램은 화면에 이미지를 늘 높은 품질로 그립니다. 설정은 도면에 저장됩니다.');
     },
   });
 

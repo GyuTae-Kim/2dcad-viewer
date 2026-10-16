@@ -689,7 +689,7 @@ async function fitData(app: App, ctx: CommandContext, t: Tools, h: string): Prom
           const v = await askNumber(ctx, '맞춤 공차 입력', e.fitTolerance || 1e-10, { min: 0, distance: false, text: (x) => x.toExponential(4).toUpperCase() });
           if (typeof v === 'number') {
             t.apply(e, fitTolerance(e, v));
-            if (v > 1e-9) ctx.print('공차 값을 저장했습니다. 이 뷰어는 곡선을 맞춤점을 지나게 그립니다.');
+            if (v > 1e-9) ctx.print('공차 값을 저장했습니다. 이 프로그램은 곡선을 맞춤점을 지나게 그립니다.');
           }
           break;
         }

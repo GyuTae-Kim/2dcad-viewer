@@ -21,7 +21,7 @@ export const IDENTITY_XF: Readonly<RefXf> = Object.freeze({ m: [1, 0, 0, 1, 0, 0
 
 export const MSG_MINSERT = '배열로 삽입된 블록 참조(MINSERT)는 내부에서 편집할 수 없습니다.';
 export const MSG_NONUNIFORM = 'X, Y 축척이 서로 다른 참조는 내부에서 편집할 수 없습니다.';
-export const MSG_TILTED = 'Z축이 기울어진 참조는 이 2D 뷰어에서 내부 편집할 수 없습니다.';
+export const MSG_TILTED = 'Z축이 기울어진 참조는 이 2D 캐드에서 내부 편집할 수 없습니다.';
 
 /** 블록 참조의 변환. 편집할 수 없는 참조면 안내 문구 */
 export function insertXf(def: Pick<BlockDef, 'basePoint'>, ins: InsertEntity): RefXf | string {

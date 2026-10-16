@@ -163,7 +163,7 @@ export function makeLinetypeRecord(name: string, description: string, elements: 
 
 /** .lin 파일 내용(한 선종류) */
 export function linFileText(name: string, description: string, pattern: string): string {
-  return `;; OpenCAD 2D 뷰어 MKLTYPE로 만든 선종류\n*${name},${description}\n${pattern}\n`;
+  return `;; OpenCAD DWG·DXF MKLTYPE로 만든 선종류\n*${name},${description}\n${pattern}\n`;
 }
 
 /** 선종류 이름이 쓸 수 있는지(아니면 안내 문구) */

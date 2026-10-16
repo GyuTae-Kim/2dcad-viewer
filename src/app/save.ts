@@ -100,7 +100,7 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
   forgetRecovery(st);
   targets.set(st, t);
   app.ui.refreshTabs();
-  document.title = `${st.saveName} - OpenCAD 2D 뷰어`;
+  document.title = `${st.saveName} - OpenCAD DWG·DXF`;
   const label = SAVE_TYPES.find((x) => x.format === t.format && x.version === t.version)?.label ?? t.version;
   ctx.print(`${name}을(를) ${label}${t.binary ? ' 이진' : ''} 형식으로 저장했습니다(${(res.data.byteLength / 1024).toFixed(0)} KB, ${Math.round(res.ms)}ms).`);
   for (const w of res.warnings.slice(0, 5)) ctx.print(`참고: ${w.message}${w.count ? ` (${w.count})` : ''}`);

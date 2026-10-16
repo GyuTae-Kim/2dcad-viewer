@@ -774,7 +774,7 @@ export interface Ole2FrameEntity extends EntityBase {
   lowerRight: Vec3;
 }
 
-/** ACIS 기반 객체 — 2D 뷰어는 형상을 풀지 않고 프록시 그림이 있으면 그것을 그린다. */
+/** ACIS 기반 객체 — 2D 캐드는 형상을 풀지 않고 프록시 그림이 있으면 그것을 그린다. */
 export interface AcisEntity extends EntityBase {
   type: 'REGION' | '3DSOLID' | 'BODY' | 'SURFACE' | 'PLANESURFACE' | 'EXTRUDEDSURFACE' | 'LOFTEDSURFACE' | 'REVOLVEDSURFACE' | 'SWEPTSURFACE' | 'NURBSURFACE';
   /** 일부 파일이 담는 단순 와이어(분해된 선) */
