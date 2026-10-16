@@ -249,6 +249,8 @@ export class App {
   private lastMove: { w: Pt; s: Pt; ev: PointerEvent } | null = null;
   /** 왼쪽 버튼을 누른 곳의 뜻(명령이 없을 때): 그립, 끌어 옮기기, 창·올가미 */
   private press: { kind: 'grip' | 'move' | 'window'; world: Pt; screen: Pt; ghost?: DragGhost; lasso?: Lasso; started?: boolean } | null = null;
+  /** 명령 없이 객체를 고른 마지막 클릭(두 번 누르기의 두 번째 클릭이 막 생긴 그립을 눌러도 그립 편집으로 가지 않게) */
+  private lastPickClick: { time: number; screen: Pt } | null = null;
   /** 핫 그립(Shift+클릭으로 여럿) */
   private hotGrips: Pt[] = [];
   /** 커서가 올라간 그립과 다기능 그립 메뉴 타이머 */
@@ -1974,6 +1976,12 @@ export class App {
     // 그립: 누르면 그립 편집, Shift+클릭은 핫 그립 더하기·빼기
     if (!r && st.selection.size && this.gripList.length && !this.busyCommand) {
       const g = this.gripAt(w, ev.pointerType === 'touch');
+      // 방금 객체를 고른 클릭과 같은 자리를 곧바로 다시 누르면 두 번 누르기다(AutoCAD처럼 그립 편집 대신 dblclick이 맡는다)
+      const lp = this.lastPickClick;
+      if (g && !ev.shiftKey && lp && isDoubleClickFollowUp(lp, performance.now(), s)) {
+        this.lastPickClick = null;
+        return;
+      }
       if (g) {
         this.clickGrip(g.point, ev.shiftKey);
         return;
@@ -1987,6 +1995,7 @@ export class App {
       // PICKADD 1·2: 더하기(Shift로 누르면 고른 것은 빼고 아니면 더한다), 0: 바꾸기(Shift 더하기·빼기)
       this.setSelection(hs, pickMode(this.settings.pickadd, { shift: ev.shiftKey, selected: st.selection.has(h) }));
       this.clearHover();
+      if (!r) this.lastPickClick = { time: performance.now(), screen: s };
     };
     if (h && this.cycleMenu(pk, w, tol, ev, pickIt)) return;
     if (h) {
@@ -2790,4 +2799,9 @@ export function dblClickCommand(e: Entity): string | null {
     default:
       return null;
   }
+}
+
+/** 두 번 누르기 판정: 객체를 고른 클릭 뒤 500ms(Windows 기본 두 번 누르기 간격) 안에 4px 안쪽을 다시 눌렀는가 */
+export function isDoubleClickFollowUp(prev: { time: number; screen: Pt }, now: number, screen: Pt): boolean {
+  return now - prev.time <= 500 && Math.hypot(screen.x - prev.screen.x, screen.y - prev.screen.y) <= 4;
 }
