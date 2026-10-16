@@ -11,10 +11,21 @@
   <body>
     <div id="app">
       <!-- 앱이 준비되면 같은 기능을 안내하는 시작 화면으로 교체됩니다. -->
-      <main class="site-intro">
+      <main class="site-intro boot-start">
         <nav aria-label="사이트 이동"><a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a></nav>
         <h1>OpenCAD 무료 DWG·DXF 캐드</h1>
         <p>DWG·DXF 도면을 열거나 새로 만들어 그리고, 고치고, 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.</p>
+        <div class="boot-actions">
+          <button type="button" class="btn primary" data-startup-action="open" disabled>파일 열기</button>
+          <button type="button" class="btn" data-startup-action="sample" disabled>예제 도면 열기</button>
+          <button type="button" class="btn" data-startup-action="new" disabled>새 도면</button>
+        </div>
+        <p class="boot-status" role="status" aria-live="polite"></p>
+        <section class="boot-recent" aria-label="최근 문서">
+          <h2>최근 문서</h2>
+          <div class="boot-recent-list">이 브라우저에서 연 도면이 여기에 표시됩니다.</div>
+        </section>
+        <input data-startup-files type="file" accept=".dxf,.dwg,.scr,.lsp,.mnl" multiple hidden />
         <h2>지원 형식과 기능</h2>
         <ul>
           <li>DWG R13~R2018, DXF R12~R2018(ASCII·이진) 열기, 새 도면 만들기</li>
