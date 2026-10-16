@@ -1,4 +1,5 @@
 import type { EditorActions } from './app/startup';
+import { beginOpen } from './app/analytics';
 import { App } from './app/app';
 import { registerCommands } from './app/commands';
 import { registerDrawCommands } from './app/draw';
@@ -297,14 +298,16 @@ export function startEditor(root: HTMLElement): EditorActions {
   const openUrl = params.get('open');
   if (openUrl) {
     void (async () => {
+      const attempt = beginOpen('url', openUrl.split(/[?#]/)[0]!.split('.').pop() ?? 'other');
       try {
         const u = new URL(openUrl, document.baseURI);
         if (u.protocol !== 'https:' && u.origin !== location.origin) throw new Error('https 주소만 열 수 있습니다.');
         const r = await fetch(u);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const name = decodeURIComponent(u.pathname.split('/').pop() || 'drawing.dxf');
-        await app.openFile(name, await r.arrayBuffer());
+        await app.openFile(name, await r.arrayBuffer(), 'url', attempt);
       } catch (e) {
+        attempt.error('fetch_error');
         toast(`파일을 받지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
       }
     })();

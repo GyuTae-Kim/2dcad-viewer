@@ -1,5 +1,6 @@
 /** 화면 골격: 제목 막대, 리본, 파일 탭, 배치 탭, 상태 막대, 시작 화면 */
 import type { App, UiHooks } from '../app';
+import { beginOpen } from '../analytics';
 import { MODEL_SPACE, tableKey } from '../../core/model';
 import { unitAbbr } from '../../core/units';
 import { ALL_SNAPS, SNAP_NAMES } from '../snap';
@@ -979,12 +980,15 @@ export class Shell implements UiHooks {
         continue;
       }
       if (f.size > 512 * 1024 * 1024) {
+        beginOpen('local', f.name.split('.').pop() ?? 'other').error('size_limit');
         toast(`${f.name}: 512MB보다 큰 파일은 열 수 없습니다.`, 'error');
         continue;
       }
-      const buf = await f.arrayBuffer();
+      const attempt = beginOpen('local', f.name.split('.').pop() ?? 'other');
+      let buf: ArrayBuffer;
+      try { buf = await f.arrayBuffer(); } catch (error) { attempt.error('read_error'); throw error; }
       const copy = buf.slice(0);
-      const st = await this.app.openFile(f.name, buf);
+      const st = await this.app.openFile(f.name, buf, 'local', attempt);
       if (st) void this.recent.add(f.name, copy).then(() => this.refreshRecent());
     }
   }
@@ -1785,12 +1789,14 @@ export class Shell implements UiHooks {
   }
 
   async openSample(): Promise<void> {
+    const attempt = beginOpen('sample', 'dxf');
     try {
       const url = new URL('samples/opencad-sample.dxf', document.baseURI);
       const r = await fetch(url);
       if (!r.ok) throw new Error(String(r.status));
-      await this.app.openFile('opencad-sample.dxf', await r.arrayBuffer());
+      await this.app.openFile('opencad-sample.dxf', await r.arrayBuffer(), 'sample', attempt);
     } catch {
+      attempt.error('fetch_error');
       toast('예제 도면을 받지 못했습니다.', 'error');
     }
   }
