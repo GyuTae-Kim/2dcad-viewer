@@ -1,5 +1,6 @@
 import { RecentStore } from './recent';
 import { colorTheme } from './theme';
+import { showAnalyticsSettings } from './analytics';
 
 export interface EditorActions {
   openFiles(files: File[]): Promise<void>;
@@ -61,6 +62,11 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
     element.addEventListener('click', action, { signal: events.signal });
     return element;
   };
+  const privacy = button('방문 통계 설정', showAnalyticsSettings);
+  privacy.style.cssText = 'border:0;background:none;color:inherit;text-decoration:underline;font:inherit;cursor:pointer;padding:0';
+  const privacyLine = document.createElement('p');
+  privacyLine.append(privacy);
+  intro.append(privacyLine);
   const bind = (name: string, action: () => void) => {
     const element = actions.querySelector<HTMLButtonElement>(`[data-startup-action="${name}"]`)!;
     element.disabled = false;
