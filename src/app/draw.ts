@@ -12,11 +12,11 @@ import { registerDraw3dCommands } from './draw3d';
 import type { App, CommandContext, PointResult } from './app';
 import { CancelError } from './app';
 import type { Pt } from './view';
-import { dialog, h } from './ui/dom';
+import { registerTextCommands } from './textedit/commands';
+import { type EditorResult, type TextDialogOptions, richTextDialog } from './textedit';
 import { unlockedOnly } from './layers';
 import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
-import { textStyleAnnotative } from '../edit/annoscale/xdata';
 import { isoCircleEllipse, isoEllipseKeyword } from './viewtools-iso';
 import { packLw, packLwPoints } from '../core/lwpoly';
 import type { DocState } from './docstate';
@@ -1423,110 +1423,9 @@ export function registerDrawCommands(app: App): void {
     },
   });
 
-  // ------------------------------------------------------------- TEXT
-  app.register({
-    name: 'TEXT',
-    aliases: ['DT', 'DTEXT'],
-    title: '단일 행 문자',
-    async run(ctx) {
-      const d = app.active!.doc;
-      const styleName = String(d.header.get('$TEXTSTYLE') ?? 'Standard');
-      const style = d.textStyles.get(tableKey(styleName));
-      const defH = Number(d.header.get('$TEXTSIZE') ?? 2.5) || 2.5;
-      // 주석 스타일이면 높이는 용지 문자 높이(AutoCAD와 같다)
-      const anno = textStyleAnnotative(d, styleName);
-      ctx.print(`현재 문자 스타일: "${style?.name ?? styleName}"  문자 높이: ${fmt(ctx, style?.height || defH)}  주석: ${anno ? '예' : '아니오'}`);
-      const p0 = pt(await ctx.getPoint('문자의 시작점 지정:'));
-      if (!p0) return;
-      let height = style?.height || 0;
-      if (!height) height = await getDistance(ctx, anno ? '용지 문자 높이 지정' : '높이 지정', p0, defH);
-      d.header.set('$TEXTSIZE', height);
-      const rot = await getAngle(ctx, '문자의 회전 각도 지정', p0, 0);
-      let at = p0;
-      app.cmd.acceptSpaces = true;
-      try {
-        for (;;) {
-          const r = await ctx.getPoint('문자 입력(빈 줄에서 Enter로 끝):', { allowText: true });
-          if ('enter' in r || !('text' in r)) break;
-          addEntities(
-            app,
-            ctx,
-            [
-              {
-                ...base(),
-                type: 'TEXT',
-                handle: '',
-                insert: v3(at),
-                height,
-                text: r.text,
-                rotation: rot,
-                widthFactor: style?.widthFactor || 1,
-                oblique: style?.oblique || 0,
-                style: style?.name ?? styleName,
-                generation: 0,
-                halign: 0,
-                valign: 0,
-  // UNDO(옵션: 작업 수·자동·조정·시작·끝·표식·뒤) — src/app/undocmd.ts
-  registerUndoCommand(app);
-  // 3DPOLY·3DFACE·TRACE — src/app/draw3d.ts
-  registerDraw3dCommands(app);
-              } as Entity,
-            ],
-            'TEXT',
-          );
-          // 다음 줄
-          const step = height * 1.667;
-          at = { x: at.x + Math.sin(rot) * step, y: at.y - Math.cos(rot) * step };
-        }
-      } finally {
-        app.cmd.acceptSpaces = false;
-      }
-    },
-  });
-
-  // ------------------------------------------------------------- MTEXT
-  app.register({
-    name: 'MTEXT',
-    aliases: ['MT', 'T'],
-    title: '여러 줄 문자',
-    async run(ctx) {
-      const d = app.active!.doc;
-      const styleName = String(d.header.get('$TEXTSTYLE') ?? 'Standard');
-      const defH = Number(d.header.get('$TEXTSIZE') ?? 2.5) || 2.5;
-      const a = pt(await ctx.getPoint('첫 번째 구석 지정:'));
-      if (!a) return;
-      const b = pt(await ctx.getPoint('반대 구석 지정:', { base: a, rubber: (q) => [{ pts: [a.x, a.y, q.x, a.y, q.x, q.y, a.x, q.y], closed: true, dashed: true }] }));
-      if (!b) return;
-      const text = await textDialog('여러 줄 문자', '', defH);
-      if (!text || !text.text.trim()) return;
-      const left = Math.min(a.x, b.x);
-      const top = Math.max(a.y, b.y);
-      addEntities(
-        app,
-        ctx,
-        [
-          {
-            ...base(),
-            type: 'MTEXT',
-            handle: '',
-            insert: { x: left, y: top, z: 0 },
-            height: text.height,
-            width: Math.abs(b.x - a.x),
-            attachment: 1,
-            drawingDirection: 1,
-            text: text.text.replace(/\r?\n/g, '\\P'),
-            style: styleName,
-            rotation: 0,
-            lineSpacingStyle: 1,
-            lineSpacingFactor: 1,
-            backgroundFlags: 0,
-            backgroundScale: 1.5,
-          } as Entity,
-        ],
-        'MTEXT',
-      );
-    },
-  });
+  // ------------------------------------------------------------- TEXT·MTEXT
+  // 도면 위 한 줄 편집기(DTEXT)와 여러 줄 문자 제자리 편집기: src/app/textedit/commands.ts
+  registerTextCommands(app);
 
   // ------------------------------------------------------------- ERASE·U·REDO
   app.register({
@@ -1567,6 +1466,10 @@ export function registerDrawCommands(app: App): void {
       ctx.print(tx ? `${tx.label} 명령을 취소했습니다.` : '되돌릴 것이 없습니다.');
     },
   });
+  // UNDO(옵션: 작업 수·자동·조정·시작·끝·표식·뒤) — src/app/undocmd.ts
+  registerUndoCommand(app);
+  // 3DPOLY·3DFACE·TRACE — src/app/draw3d.ts
+  registerDraw3dCommands(app);
   app.register({
     name: 'REDO',
     aliases: ['MREDO'],
@@ -1605,44 +1508,12 @@ function polyPreview(vs: LwVertex[], closed: boolean): number[] {
   return out;
 }
 
-/** 여러 줄 문자 입력 대화상자 */
-export function textDialog(title: string, initial: string, height: number): Promise<{ text: string; height: number } | null> {
-  return new Promise((resolve) => {
-    const ta = h('textarea', { style: 'width:100%;min-height:140px;background:var(--bg-input);color:var(--text);border:1px solid var(--border-soft);border-radius:4px;padding:8px;font:13px var(--font)' });
-    (ta as HTMLTextAreaElement).value = initial;
-    const hi = h('input', { type: 'number', step: 'any', min: '0', value: String(height), style: 'width:120px' });
-    let done = false;
-    const body = h('div', {}, h('div', { class: 'form-row' }, h('span', {}, '문자 높이'), hi), ta, h('div', { style: 'margin-top:6px;color:var(--text-dim)' }, '줄바꿈은 새 문단이 됩니다. 확인 = Ctrl+Enter'));
-    const back = dialog(title, body, [
-      {
-        label: '취소',
-        run: () => {
-          done = true;
-          resolve(null);
-        },
-      },
-      {
-        label: '확인',
-        primary: true,
-        run: () => {
-          done = true;
-          resolve({ text: (ta as HTMLTextAreaElement).value, height: parseFloat((hi as HTMLInputElement).value) || height });
-        },
-      },
-    ]);
-    setTimeout(() => (ta as HTMLTextAreaElement).focus());
-    ta.addEventListener('keydown', (ev) => {
-      const k = ev as KeyboardEvent;
-      k.stopPropagation();
-      if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) (back.querySelector('footer .btn.primary') as HTMLButtonElement)?.click();
-    });
-    new MutationObserver(() => {
-      if (!document.body.contains(back) && !done) {
-        done = true;
-        resolve(null);
-      }
-    }).observe(document.body, { childList: true });
-  });
+/**
+ * 여러 줄 문자 편집기(제자리 편집기, src/app/textedit). opt.at이 있으면 그 점(부착점 opt.attachment)에, 없으면
+ * 커서 자리에 뜬다. 결과 text는 MTEXT 서식 문자열(문단 \P, 서식 코드 포함)이고 나머지 값은 편집기가 바꾼 객체 특성이다.
+ */
+export function textDialog(title: string, initial: string, height: number, opt: TextDialogOptions = {}): Promise<EditorResult | null> {
+  return richTextDialog(title, initial, height, opt);
 }
 
 export { CancelError };

@@ -78,9 +78,9 @@ export function registerAnnot2Commands(app: App): void {
       let text = '';
       let angle = 0;
       if (kind === 'N') {
-        const t = await textDialog('치수 문자(<>는 측정값)', '<>', 0);
+        const t = await textDialog('치수 문자(<>는 측정값)', '<>', 0, { app, ctx });
         if (!t) return;
-        text = t.text.replace(/\r?\n/g, '\\P');
+        text = t.text;
       } else if (kind === 'R') {
         const a = await askAngle(ctx, '치수 문자의 각도 지정:', 0);
         angle = a ?? 0;
@@ -388,8 +388,8 @@ export function registerAnnot2Commands(app: App): void {
           const t = await ctx.getPoint(`치수 문자를 입력 <${o.text || '<>'}>:`, { allowText: true });
           if ('text' in t) o.text = t.text;
         } else if (p.keyword === 'M') {
-          const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0);
-          if (t) o.text = t.text.replace(/\r?\n/g, '\\P');
+          const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0, { app, ctx });
+          if (t) o.text = t.text;
         } else if (p.keyword === 'A') {
           const a = await askAngle(ctx, '치수 문자의 각도를 지정:', 0);
           o.rot = a ?? 0;

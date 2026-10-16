@@ -168,8 +168,8 @@ export function registerDimSmartCommand(app: App): void {
           return true;
         }
         if (key === 'M') {
-          const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0);
-          if (t) o.text = t.text.replace(/\r?\n/g, '\\P');
+          const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0, { app, ctx });
+          if (t) o.text = t.text;
           return true;
         }
         if (key === 'N') {

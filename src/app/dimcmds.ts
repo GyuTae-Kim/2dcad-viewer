@@ -28,6 +28,8 @@ import type { App, CommandContext, Keyword } from './app';
 import { finishNewDimension, inheritedRef, newDimensionAssocOps, objectRef, pointRef, snapNewDimension } from './dimassoc';
 import type { DocState } from './docstate';
 import { textDialog } from './draw';
+import { headerOverrides, overridesOf } from './dimstyle';
+import { applyOverrides } from '../edit/annot/override';
 import type { OverlayGeom, Pt } from './view';
 import { lwCount, lwVertices } from '../core/lwpoly';
 
@@ -103,6 +105,7 @@ export function dimensionBlockOps(st: DocState, dim: DimensionEntity, reuse: boo
  */
 export function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity, label: string, refs: readonly (PointRef | null)[] = []): number {
   const st = app.active!;
+  withStyleOverrides(st.doc, dim);
   const assoc = snapNewDimension(app, dim, refs);
   const blockOps = dimensionBlockOps(st, dim, false);
   const space = st.doc.blocks.get(st.space);
@@ -116,6 +119,18 @@ export function addDimension(app: App, ctx: CommandContext, dim: DimensionEntity
   const n = ops.length + finishNewDimension(app, ctx, dim.handle, label);
   printDimText(app, ctx, shownDim);
   return n;
+}
+
+/**
+ * <스타일 재지정>: 머리말 치수 변수가 현재 치수 스타일과 다르면 새 치수가 그 값을 자기 재지정으로 지닌다(AutoCAD와 같다).
+ * 치수가 현재 스타일이 아니거나 이미 재지정을 가진 변수는 그대로 둔다.
+ */
+export function withStyleOverrides(doc: CadDocument, dim: DimensionEntity): void {
+  const cur = String(doc.header.get('$DIMSTYLE') ?? '');
+  if (!cur || tableKey(dim.dimStyle || 'Standard') !== tableKey(cur)) return;
+  const ov = overridesOf(doc, headerOverrides(doc, cur));
+  for (const k of Object.keys(dim.overrides ?? {})) delete ov[Number(k)];
+  if (Object.keys(ov).length) Object.assign(dim, applyOverrides(dim, ov));
 }
 
 /** 치수 문자 안내 */
@@ -140,6 +155,16 @@ function circleEntity(e: Entity | undefined): Entity | undefined {
 /** 문서 기본 치수 스타일 옵션(문자 재지정) */
 export interface DimOpts {
   text?: string;
+  /** 여러 줄 문자(M) 편집기의 <> 칩에 보일 측정값(모르면 <>) */
+  measure?: string;
+  /** 각도(A): 치수 문자 각도(라디안, DXF 53). 0이면 기본 방향 */
+  angle?: number;
+}
+
+/** 옵션(문자 각도)을 새 치수에 */
+export function withDimOpts(d: DimensionEntity, o: DimOpts): DimensionEntity {
+  if (o.angle) d.textRotation = o.angle;
+  return d;
 }
 
 /** 미리보기 형상 */
@@ -157,16 +182,33 @@ export function preview(app: App, make: (p: Pt) => DimensionEntity | null): (p: 
   };
 }
 
-/** 문자(T)·여러 줄 문자(M) 옵션 처리. 계속하면 true */
+/** 문자(T)·여러 줄 문자(M)·각도(A) 옵션 처리. 계속하면 true */
 export async function textOption(ctx: CommandContext, key: string, o: DimOpts): Promise<boolean> {
+  if (key === 'A') {
+    for (;;) {
+      const r = await ctx.getPoint(`치수 문자의 각도를 지정 <${+(((o.angle ?? 0) * 180) / Math.PI).toFixed(4)}>:`, { preferNumber: true });
+      if ('text' in r) {
+        const v = Number(r.text);
+        if (!Number.isFinite(v)) {
+          ctx.print('각도를 입력하십시오.', 'err');
+          continue;
+        }
+        o.angle = (v * Math.PI) / 180;
+      } else if ('point' in r) {
+        const r2 = await ctx.getPoint('두 번째 점 지정:', { base: r.point });
+        if ('point' in r2) o.angle = Math.atan2(r2.point.y - r.point.y, r2.point.x - r.point.x);
+      }
+      return true;
+    }
+  }
   if (key === 'T') {
     const r = await ctx.getPoint(`치수 문자를 입력 <${o.text ? o.text : '<>'}>:`, { allowText: true });
     if ('text' in r) o.text = r.text;
     return true;
   }
   if (key === 'M') {
-    const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0);
-    if (t) o.text = t.text.replace(/\r?\n/g, '\\P');
+    const t = await textDialog('치수 문자(<>는 측정값)', o.text || '<>', 0, { app: ctx.app, ctx, measure: o.measure });
+    if (t) o.text = t.text;
     return true;
   }
   return false;
@@ -246,10 +288,8 @@ export function registerDimCommands(app: App): void {
     let rotation: number | undefined;
     for (;;) {
       const make = (p: Pt) =>
-        aligned
-          ? createAlignedDimension(doc, v3(p1), v3(p2), v3(p), { text: o.text })
-          : createLinearDimension(doc, v3(p1), v3(p2), v3(p), { text: o.text, rotation });
-      const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }];
+        withDimOpts(aligned ? createAlignedDimension(doc, v3(p1), v3(p2), v3(p), { text: o.text }) : createLinearDimension(doc, v3(p1), v3(p2), v3(p), { text: o.text, rotation }), o);
+      const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }, { key: 'A', label: '각도' }];
       if (!aligned) kws.push({ key: 'H', label: '수평' }, { key: 'V', label: '수직' }, { key: 'R', label: '회전' });
       const r = await ctx.getPoint(`치수선의 위치 지정 또는 [${kws.map((k) => `${k.label}(${k.key})`).join('/')}]:`, { keywords: kws, ghost: preview(app, make) });
       if ('point' in r) {
@@ -321,9 +361,11 @@ export function registerDimCommands(app: App): void {
           return;
         }
       } else return;
+      const make0 = make;
+      make = (q: Pt) => withDimOpts(make0(q), o);
       for (;;) {
-        const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }];
-        const p = await ctx.getPoint('치수 호 선 위치 지정 또는 [여러 줄 문자(M)/문자(T)]:', { keywords: kws, ghost: preview(app, make) });
+        const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }, { key: 'A', label: '각도' }];
+        const p = await ctx.getPoint('치수 호 선 위치 지정 또는 [여러 줄 문자(M)/문자(T)/각도(A)]:', { keywords: kws, ghost: preview(app, make) });
         if ('point' in p) {
           addDimension(app, ctx, make(p.point), 'DIMANGULAR', refs);
           return;
@@ -347,8 +389,15 @@ export function registerDimCommands(app: App): void {
     }
     const o: DimOpts = {};
     const center = v3(c.c);
-    const make = (p: Pt): DimensionEntity => {
-      if (kind === 'arc') return createArcLengthDimension(doc, center, c.r, c.a0!, c.a1!, v3(p), { text: o.text });
+    // 호 길이 치수의 부분(P): 호 위 두 점 사이만
+    let span: { a0: number; a1: number } | null = null;
+    const make = (p: Pt): DimensionEntity => withDimOpts(make1(p), o);
+    const make1 = (p: Pt): DimensionEntity => {
+      if (kind === 'arc') {
+        const d = createArcLengthDimension(doc, center, c.r, span?.a0 ?? c.a0!, span?.a1 ?? c.a1!, v3(p), { text: o.text });
+        if (span && d.arc) d.arc.partial = true;
+        return d;
+      }
       const a = Math.atan2(p.y - c.c.y, p.x - c.c.x);
       const on = { x: c.c.x + c.r * Math.cos(a), y: c.c.y + c.r * Math.sin(a), z: 0 };
       const d = kind === 'radius' ? createRadialDimension(doc, center, c.r, on, { text: o.text }) : createDiameterDimension(doc, center, c.r, on, { text: o.text });
@@ -358,8 +407,38 @@ export function registerDimCommands(app: App): void {
       return d;
     };
     const what = kind === 'arc' ? '호 길이 치수 위치 지정' : '치수선의 위치 지정';
+    const kws: Keyword[] = [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }, { key: 'A', label: '각도' }];
+    if (kind === 'arc') kws.push({ key: 'P', label: '부분' });
     for (;;) {
-      const p = await ctx.getPoint(`${what} 또는 [여러 줄 문자(M)/문자(T)]:`, { keywords: [{ key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }], ghost: preview(app, make) });
+      const p = await ctx.getPoint(`${what} 또는 [${kws.map((k) => `${k.label}(${k.key})`).join('/')}]:`, { keywords: kws, ghost: preview(app, make) });
+      if ('keyword' in p && p.keyword === 'P' && kind === 'arc') {
+        // 호 위의 두 점(호의 시작에서 반시계로 잰 각을 호 범위로)
+        const onArc = (q: Pt): number => {
+          let a = Math.atan2(q.y - c.c.y, q.x - c.c.x);
+          const a0 = c.a0!;
+          let sweep = c.a1! - a0;
+          while (sweep <= 0) sweep += 2 * Math.PI;
+          let t = a - a0;
+          while (t < 0) t += 2 * Math.PI;
+          if (t > sweep) t = t - sweep < 2 * Math.PI - t ? sweep : 0;
+          a = a0 + t;
+          return a;
+        };
+        const q1 = await ctx.getPoint('호 길이 치수의 첫 번째 점 지정:');
+        if (!('point' in q1)) continue;
+        const q2 = await ctx.getPoint('호 길이 치수의 두 번째 점 지정:');
+        if (!('point' in q2)) continue;
+        const b0 = onArc(q1.point);
+        const b1 = onArc(q2.point);
+        const lo = (x: number) => {
+          let t = x - c.a0!;
+          while (t < 0) t += 2 * Math.PI;
+          return t;
+        };
+        span = lo(b0) <= lo(b1) ? { a0: b0, a1: b1 } : { a0: b1, a1: b0 };
+        if (Math.abs(span.a1 - span.a0) < 1e-9) span = null;
+        continue;
+      }
       if ('point' in p) {
         const d = make(p.point);
         // 반지름 [15 현 위 점, 10 중심], 지름 [15, 10 반대쪽 현 위 점], 호 길이 [13 시작, 14 끝, 15 중심]
@@ -483,10 +562,10 @@ export function registerDimCommands(app: App): void {
       const o: DimOpts = {};
       let xAxis: boolean | undefined;
       for (;;) {
-        const make = (p: Pt) => createOrdinateDimension(doc, v3(f.point), v3(p), { text: o.text, xAxis });
-        const p = await ctx.getPoint('지시선 끝점을 지정 또는 [X데이텀(X)/Y데이텀(Y)/여러 줄 문자(M)/문자(T)]:', {
+        const make = (p: Pt) => withDimOpts(createOrdinateDimension(doc, v3(f.point), v3(p), { text: o.text, xAxis }), o);
+        const p = await ctx.getPoint('지시선 끝점을 지정 또는 [X데이텀(X)/Y데이텀(Y)/여러 줄 문자(M)/문자(T)/각도(A)]:', {
           base: f.point,
-          keywords: [{ key: 'X', label: 'X데이텀' }, { key: 'Y', label: 'Y데이텀' }, { key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }],
+          keywords: [{ key: 'X', label: 'X데이텀' }, { key: 'Y', label: 'Y데이텀' }, { key: 'M', label: '여러 줄 문자' }, { key: 'T', label: '문자' }, { key: 'A', label: '각도' }],
           ghost: preview(app, make),
         });
         if ('point' in p) {

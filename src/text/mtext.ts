@@ -22,6 +22,9 @@ export interface RunStyle {
   strike: boolean;
   /** 0 아래, 1 가운데, 2 위(\A) */
   valign: number;
+  /** 트루타입 굵게·기울임(\f의 |b1·|i1). 정하지 않으면 문자 스타일을 따른다 */
+  bold?: boolean;
+  italic?: boolean;
 }
 
 export interface Run {
@@ -319,6 +322,8 @@ export function parseMText(src: string, opt: ParseOptions): Paragraph[] {
         modify((x) => {
           x.font = name;
           x.ttf = c === 'f' && !/\.shx$/i.test(name);
+          x.bold = !!x.ttf && /\|b1(\||$)/.test(arg);
+          x.italic = !!x.ttf && /\|i1(\||$)/.test(arg);
         });
         break;
       }

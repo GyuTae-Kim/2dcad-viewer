@@ -1,30 +1,17 @@
 /**
  * 표·설정 명령: STYLE(문자 스타일), LINETYPE(선종류 불러오기), LTSCALE·CELTSCALE·PSLTSCALE, UNITS, SETVAR
  */
-import type { HeaderValue, TextStyle } from '../core/model';
+import type { HeaderValue } from '../core/model';
 import { tableKey } from '../core/model';
 import type { EditOp } from '../edit/session';
 import { STANDARD_LINETYPES, makeLinetype } from '../edit/linetypes';
 import type { App, CommandContext } from './app';
 import { dialog, form, h } from './ui/dom';
-import { annotativeFlag, textStyleAnnotative, withAnnotativeFlag } from '../edit/annoscale/xdata';
+import { textStyleDialog } from './textedit/styledlg';
 import { compareVar } from '../edit/compare/settings';
 import { VIEWTOOL_VARS } from '../edit/viewtools/vars';
 import { EDITCMDS2_VARS } from '../edit/editcmds2/vars';
 
-/** 웹에서 바로 쓸 수 있는 글꼴(없으면 대체 글꼴로 그린다) */
-const FONTS = [
-  { value: 'txt.shx', label: 'txt.shx (선 글꼴)' },
-  { value: 'simplex.shx', label: 'simplex.shx (선 글꼴)' },
-  { value: 'romans.shx', label: 'romans.shx (선 글꼴)' },
-  { value: 'isocp.shx', label: 'isocp.shx (선 글꼴)' },
-  { value: 'arial.ttf', label: 'Arial' },
-  { value: 'times.ttf', label: 'Times New Roman' },
-  { value: 'cour.ttf', label: 'Courier New' },
-  { value: 'malgun.ttf', label: '맑은 고딕' },
-  { value: 'gulim.ttc', label: '굴림' },
-  { value: 'batang.ttc', label: '바탕' },
-];
 
 function setHeaderOps(doc: { header: Map<string, HeaderValue> }, values: Record<string, HeaderValue>): EditOp[] {
   const ops: EditOp[] = [];
@@ -50,60 +37,12 @@ async function askNumber(ctx: CommandContext, prompt: string, def: number, check
 
 export function registerTableCommands(app: App): void {
   // ------------------------------------------------------------- STYLE
+  // "문자 스타일" 대화상자: src/app/textedit/styledlg.ts
   app.register({
     name: 'STYLE',
     aliases: ['ST', 'DDSTYLE'],
     title: '문자 스타일',
-    async run(ctx) {
-      const st = app.active!;
-      const styles = [...st.doc.textStyles.values()].filter((s) => s.name && !(s.flags & 1));
-      const cur = String(st.doc.header.get('$TEXTSTYLE') ?? 'Standard');
-      const v = await form(
-        '문자 스타일',
-        [
-          { key: 'name', label: '스타일 이름', type: 'text', value: styles.find((s) => tableKey(s.name) === tableKey(cur))?.name ?? cur, placeholder: '새 이름을 쓰면 새로 만듭니다' },
-          { key: 'font', label: '글꼴', type: 'select', value: 'txt.shx', options: FONTS },
-          { key: 'height', label: '높이(0 = 가변)', type: 'number', value: 0 },
-          { key: 'width', label: '폭 비율', type: 'number', value: 1 },
-          { key: 'oblique', label: '기울기(도)', type: 'number', value: 0 },
-          { key: 'annotative', label: '주석(높이 = 용지 문자 높이)', type: 'check', value: textStyleAnnotative(st.doc, cur) },
-          { key: 'current', label: '현재 스타일로', type: 'check', value: true },
-        ],
-        {
-          ok: '적용',
-          note: `있는 스타일: ${styles.map((s) => s.name).join(', ')}`,
-          validate: (x) => {
-            const n = String(x.name).trim();
-            if (!n || /[<>/\\":;?*|,=`]/.test(n)) return '이름이 올바르지 않습니다.';
-            if (!(Number(x.width) > 0)) return '폭 비율은 0보다 커야 합니다.';
-            if (Number(x.height) < 0) return '높이는 0 이상이어야 합니다.';
-            return null;
-          },
-        },
-      );
-      if (!v) return;
-      const name = String(v.name).trim();
-      const key = tableKey(name);
-      const before = st.doc.textStyles.get(key) ?? null;
-      const font = String(v.font);
-      const ttf = /\.tt[fc]$/i.test(font);
-      const after: TextStyle = {
-        ...(before ? structuredClone(before) : { handle: st.session.newHandle(), flags: 0, generation: 0, lastHeight: 2.5, bigFont: '' }),
-        name: before?.name ?? name,
-        font,
-        bigFont: ttf ? '' : (before?.bigFont ?? ''),
-        fontFamily: ttf ? FONTS.find((f) => f.value === font)?.label : undefined,
-        height: Number(v.height),
-        widthFactor: Number(v.width),
-        oblique: (Number(v.oblique) * Math.PI) / 180,
-      } as TextStyle;
-      // 주석 스타일(AcadAnnotative). 끄면 실물처럼 {1, 0}으로 남기고, 처음부터 끈 새 스타일에는 붙이지 않는다
-      if (v.annotative || annotativeFlag(after.xdata) !== undefined) after.xdata = withAnnotativeFlag(after.xdata, !!v.annotative);
-      const ops: EditOp[] = [{ kind: 'textStyle', key, before, after }];
-      if (v.current) ops.push(...setHeaderOps(st.doc, { $TEXTSTYLE: after.name }));
-      st.session.commit({ label: 'STYLE', ops });
-      ctx.print(`문자 스타일 "${after.name}"을(를) ${before ? '고쳤습니다' : '만들었습니다'}.`);
-    },
+    run: () => textStyleDialog(app),
   });
 
   // ------------------------------------------------------------- LINETYPE

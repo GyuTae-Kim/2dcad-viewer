@@ -1,16 +1,24 @@
 /**
  * 치수 스타일 관리자: DIMSTYLE(D, DST, DDIM, DIMSTY)
- * 스타일 목록에서 현재로 설정·새로 만들기(기준 스타일 복사)·수정·삭제. 스타일을 고치면 그 스타일을 쓰는 치수를 다시 만든다.
+ * 한 대화상자 안의 스타일 목록(모든·사용 중인 스타일, 현재 스타일 아래 <스타일 재지정>)·미리보기·설명과
+ * 현재로 설정·새로 만들기·수정·재지정·비교. 목록의 오른쪽 클릭(또는 F2·Delete)으로 이름 바꾸기·삭제,
+ * <스타일 재지정>은 현재 스타일에 저장·이름 바꾸기(새 스타일)·삭제.
+ * 수정·새 스타일·재지정 대화상자는 선·기호 및 화살표·문자·맞춤·1차 단위·대체 단위·공차 7탭이 한 대화상자 안에 있고
+ * 값을 바꾸면 미리보기가 따라간다. 스타일을 고치면 그 스타일을 쓰는 치수를 다시 만든다.
+ * 재지정은 머리말 치수 변수(AutoCAD가 재지정을 두는 자리)에 두고, 새 치수(dimcmds.addDimension)가 그 값을 재지정으로 지닌다.
  * 탭 이름과 항목은 AutoCAD 2026 한국어판의 "치수 스타일 수정" 대화상자를 따른다.
  */
 import { DIM_VAR_DEFAULTS } from '../core/dimvars';
-import type { DimStyle, DimensionEntity, Entity } from '../core/model';
+import type { CadDocument, DimStyle, DimensionEntity, Entity, HeaderValue } from '../core/model';
 import { tableKey } from '../core/model';
+import { createLinearDimension, createRadialDimension, generateDimensionGeometry } from '../edit/dim';
+import { DIM_VAR_BY_NAME, type Overrides } from '../edit/annot/override';
 import type { EditOp } from '../edit/session';
 import type { App } from './app';
+import { drawGeometry } from './blockpreview';
 import { dimensionBlockOps } from './dimcmds';
 import type { DocState } from './docstate';
-import { type FormField, dialog, form, h } from './ui/dom';
+import { ask, dialog, form, h, showMenu } from './ui/dom';
 import { annotativeFlag, withAnnotativeFlag } from '../edit/annoscale/xdata';
 
 type Opt = { value: string; label: string };
@@ -247,76 +255,65 @@ const TABS: [string, VarField[]][] = [
   ],
 ];
 
-const val = (s: DimStyle, v: string): number | string => s.vars[v] ?? DIM_VAR_DEFAULTS[v] ?? 0;
 
-/** 탭 하나의 입력 칸 */
-function fieldsOf(st: DocState, s: DimStyle, tab: VarField[]): FormField[] {
-  const styles = [...st.doc.textStyles.values()].filter((t) => t.name && !(t.flags & 1)).map((t) => ({ value: t.name, label: t.name }));
-  return tab.map((f): FormField => {
-    const cur = val(s, f.v);
-    switch (f.kind) {
-      case 'check':
-        return { key: f.v, label: f.label, type: 'check', value: Number(cur) !== 0 };
-      case 'select':
-        return { key: f.v, label: f.label, type: 'select', value: String(cur), options: f.options! };
-      case 'arrow': {
-        const v = String(cur || (f.v !== 'DIMLDRBLK' ? val(s, 'DIMBLK') : '') || '').toUpperCase();
-        const opts = ARROWS.some((a) => a.value === v) ? ARROWS : [...ARROWS, { value: v, label: `사용자 블록 ${v}` }];
-        return { key: f.v, label: f.label, type: 'select', value: v, options: opts };
-      }
-      case 'style':
-        return { key: f.v, label: f.label, type: 'select', value: String(cur || 'Standard'), options: styles.length ? styles : [{ value: 'Standard', label: 'Standard' }] };
-      case 'text':
-        return { key: f.v, label: f.label, type: 'text', value: String(cur) };
-      case 'angle':
-        return { key: f.v, label: f.label, type: 'number', value: +((Number(cur) * 180) / Math.PI).toFixed(6) };
-      case 'lw':
-        return { key: f.v, label: f.label, type: 'number', value: Number(cur) < 0 ? Number(cur) : Number(cur) / 100 };
-      default:
-        return { key: f.v, label: f.label, type: 'number', value: Number(cur) };
-    }
-  });
+type Vars = Record<string, number | string>;
+
+/** 스타일의 변수(없는 것은 기본값) */
+export function styleVars(s: DimStyle | undefined): Vars {
+  return { ...DIM_VAR_DEFAULTS, ...(s?.vars ?? {}) };
 }
 
-/** 입력 값 → 변수 */
-function applyFields(s: DimStyle, tab: VarField[], v: Record<string, string | number | boolean>): DimStyle {
-  const vars = { ...s.vars };
-  for (const f of tab) {
-    const x = v[f.v];
-    if (x === undefined) continue;
-    switch (f.kind) {
-      case 'check':
-        vars[f.v] = x ? 1 : 0;
-        break;
-      case 'select':
-        vars[f.v] = Number(x);
-        break;
-      case 'arrow':
-      case 'style':
-      case 'text':
-        vars[f.v] = String(x);
-        break;
-      case 'angle':
-        vars[f.v] = (Number(x) * Math.PI) / 180;
-        break;
-      case 'int':
-        vars[f.v] = Math.max(0, Math.round(Number(x)));
-        break;
-      case 'lw':
-        vars[f.v] = Number(x) < 0 ? Math.round(Number(x)) : Math.round(Number(x) * 100);
-        break;
-      default:
-        vars[f.v] = Number(x);
+const sameVal = (a: number | string | undefined, b: number | string | undefined): boolean => {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  return String(a ?? '').toUpperCase() === String(b ?? '').toUpperCase();
+};
+
+/** 재지정으로 쓰는 변수(이름을 핸들로 바꿔야 하는 화살촉·선종류는 빼고 문자 스타일은 이름으로) */
+const OVERRIDE_VARS = Object.keys(DIM_VAR_DEFAULTS).filter((n) => !/^DIM(BLK\d?|LDRBLK|LTYPE|LTEX\d)$/.test(n));
+
+/** 머리말 치수 변수 중 스타일 값과 다른 것(<스타일 재지정>) */
+export function headerOverrides(doc: CadDocument, styleName: string): Vars {
+  const s = doc.dimStyles.get(tableKey(styleName));
+  if (!s) return {};
+  const sv = styleVars(s);
+  const out: Vars = {};
+  for (const n of OVERRIDE_VARS) {
+    const hv = doc.header.get(`$${n}`);
+    if (hv === undefined || typeof hv === 'object') continue;
+    if (!sameVal(hv as number | string, sv[n])) out[n] = hv as number | string;
+  }
+  return out;
+}
+
+/** 재지정 변수 → 치수 객체의 재지정(그룹 코드 → 값). 문자 스타일은 핸들로 */
+export function overridesOf(doc: CadDocument, ov: Vars): Overrides {
+  const out: Overrides = {};
+  for (const [n, v] of Object.entries(ov)) {
+    const code = DIM_VAR_BY_NAME.get(n);
+    if (code === undefined) continue;
+    if (n === 'DIMTXSTY') {
+      const ts = doc.textStyles.get(tableKey(String(v)));
+      if (ts?.handle) out[code] = ts.handle;
+      continue;
     }
+    if (code >= 340) continue;
+    out[code] = v;
   }
-  // 화살촉을 따로 정하면 DIMSAH를 켠다(같으면 DIMBLK 하나로)
-  if ('DIMBLK1' in vars || 'DIMBLK2' in vars) {
-    if (vars.DIMBLK1 === vars.DIMBLK2) {
-      vars.DIMBLK = vars.DIMBLK1 ?? '';
-      vars.DIMSAH = 0;
-    } else vars.DIMSAH = 1;
+  return out;
+}
+
+/** 머리말 치수 변수를 vars로 맞추는 작업(머리말에 있는 변수만) */
+function headerVarOps(doc: CadDocument, vars: Vars, only?: readonly string[]): EditOp[] {
+  const ops: EditOp[] = [];
+  for (const n of only ?? OVERRIDE_VARS) {
+    const key = `$${n}`;
+    const before = doc.header.get(key);
+    if (before === undefined && !(only && only.includes(n))) continue;
+    const after = vars[n];
+    if (after === undefined || (before !== undefined && typeof before !== 'object' && sameVal(before as number | string, after))) continue;
+    ops.push({ kind: 'header', name: key, before, after: after as HeaderValue });
   }
-  return { ...s, vars };
+  return ops;
 }
 
 /** 이 스타일을 쓰는 치수(모든 공간·블록)를 다시 만드는 편집 */
@@ -340,11 +337,263 @@ function regenOps(st: DocState, styleName: string): EditOp[] {
   return ops;
 }
 
-function usedStyles(st: DocState): Set<string> {
-  const used = new Set<string>();
-  for (const b of st.doc.blocks.values()) for (const e of b.entities) if (e.type === 'DIMENSION') used.add(tableKey(e.dimStyle || 'Standard'));
+function usedStyles(st: DocState): Map<string, number> {
+  const used = new Map<string, number>();
+  for (const b of st.doc.blocks.values())
+    for (const e of b.entities)
+      if (e.type === 'DIMENSION' || e.type === 'LEADER' || e.type === 'TOLERANCE') {
+        const k = tableKey((e as { dimStyle?: string }).dimStyle || 'Standard');
+        used.set(k, (used.get(k) ?? 0) + 1);
+      }
   return used;
 }
+
+/** 스타일 이름 바꾸기: 스타일 레코드와 그 이름을 쓰는 치수·지시선·공차, 머리말 $DIMSTYLE */
+export function dimStyleRenameOps(st: DocState, from: string, to: string): EditOp[] {
+  const doc = st.doc;
+  const fk = tableKey(from);
+  const s = doc.dimStyles.get(fk);
+  if (!s) return [];
+  const ops: EditOp[] = [
+    { kind: 'dimStyle', key: fk, before: s, after: null },
+    { kind: 'dimStyle', key: tableKey(to), before: null, after: { ...s, name: to } },
+  ];
+  for (const [bk, b] of doc.blocks)
+    for (const e of b.entities) {
+      if ((e.type === 'DIMENSION' || e.type === 'LEADER' || e.type === 'TOLERANCE') && tableKey((e as { dimStyle: string }).dimStyle || 'Standard') === fk) ops.push({ kind: 'modify', block: bk, before: e, after: { ...structuredClone(e), dimStyle: to } as Entity });
+    }
+  if (tableKey(String(doc.header.get('$DIMSTYLE') ?? '')) === fk) ops.push({ kind: 'header', name: '$DIMSTYLE', before: doc.header.get('$DIMSTYLE'), after: to });
+  return ops;
+}
+
+/** 변수 설명(대화상자 항목 이름) */
+const LABELS = new Map<string, string>(TABS.flatMap(([, fs]) => fs.map((f) => [f.v, f.label] as const)));
+
+export interface VarDiff {
+  name: string;
+  label: string;
+  a: string;
+  b: string;
+}
+
+const show = (v: number | string | undefined): string => (v === undefined ? '' : typeof v === 'number' ? String(+v.toFixed(6)) : v === '' ? '""' : v);
+
+/** 두 스타일의 다른 변수(b가 없으면 a의 모든 변수) */
+export function compareVars(a: Vars, b: Vars | null): VarDiff[] {
+  const names = [...new Set([...Object.keys(a), ...(b ? Object.keys(b) : [])])].filter((n) => /^DIM/.test(n)).sort();
+  const out: VarDiff[] = [];
+  for (const n of names) {
+    if (b && sameVal(a[n], b[n])) continue;
+    out.push({ name: n, label: LABELS.get(n) ?? n, a: show(a[n]), b: b ? show(b[n]) : '' });
+  }
+  return out;
+}
+
+const PREVIEW = '__OPENCAD_PREVIEW__';
+
+/** 치수 스타일 미리보기(선형 두 개·반지름 하나)를 캔버스에 */
+export function drawDimPreview(app: App, canvas: HTMLCanvasElement, base: DimStyle | undefined, vars: Vars): void {
+  const st = app.active;
+  if (!st) return;
+  const style: DimStyle = { ...(base ?? { handle: '0', flags: 0 }), name: PREVIEW, vars } as DimStyle;
+  const pd = { ...st.doc, dimStyles: new Map(st.doc.dimStyles).set(tableKey(PREVIEW), style) } as CadDocument;
+  const s = (Number(vars.DIMTXT) || 2.5) * (Number(vars.DIMSCALE) || 1);
+  const L = s * 10;
+  const ents: Entity[] = [];
+  try {
+    const ds = [
+      createLinearDimension(pd, { x: 0, y: 0, z: 0 }, { x: L, y: 0, z: 0 }, { x: L / 2, y: L * 0.85, z: 0 }, { style: PREVIEW }),
+      createLinearDimension(pd, { x: L, y: 0, z: 0 }, { x: L, y: L * 0.6, z: 0 }, { x: L + s * 3, y: L * 0.3, z: 0 }, { style: PREVIEW }),
+      createRadialDimension(pd, { x: L * 0.35, y: L * 0.3, z: 0 }, L * 0.2, Math.PI / 4, { style: PREVIEW }),
+    ];
+    for (const d of ds) ents.push(...generateDimensionGeometry(pd, d).entities);
+    const ln = (x0: number, y0: number, x1: number, y1: number) => ents.push({ type: 'LINE', handle: '', layer: '0', color: { aci: 256 }, linetype: 'ByLayer', lineweight: -1, ltscale: 1, transparency: -1, start: { x: x0, y: y0, z: 0 }, end: { x: x1, y: y1, z: 0 } } as Entity);
+    ln(0, 0, L, 0);
+    ln(L, 0, L, L * 0.6);
+    ln(L, L * 0.6, 0, L * 0.6);
+    ln(0, L * 0.6, 0, 0);
+    ents.push({ type: 'CIRCLE', handle: '', layer: '0', color: { aci: 256 }, linetype: 'ByLayer', lineweight: -1, ltscale: 1, transparency: -1, center: { x: L * 0.35, y: L * 0.3, z: 0 }, radius: L * 0.2 } as Entity);
+  } catch {
+    /* 그릴 수 없는 값 */
+  }
+  let g = null;
+  try {
+    g = ents.length ? (app.picker()?.geometryOf(ents) ?? null) : null;
+  } catch {
+    g = null;
+  }
+  drawGeometry(canvas, g, '#cfd6e0');
+}
+
+// ---------------------------------------------------------------------------
+// 수정·새 스타일·재지정 대화상자(7탭)
+// ---------------------------------------------------------------------------
+
+const CSS_IN = 'height:24px;background:var(--bg-input);color:var(--text);border:1px solid var(--border-soft);border-radius:3px;font:inherit;padding:0 4px';
+
+/** 탭 하나의 입력 칸(값이 바뀌면 vars를 고치고 change를 부른다) */
+function tabPanel(st: DocState, vars: Vars, tab: VarField[], change: () => void): HTMLElement {
+  const styles = [...st.doc.textStyles.values()].filter((t) => t.name && !(t.flags & 1)).map((t) => t.name);
+  const rows = tab.map((f) => {
+    const cur = vars[f.v] ?? DIM_VAR_DEFAULTS[f.v] ?? 0;
+    let el: HTMLInputElement | HTMLSelectElement;
+    const set = (v: number | string) => {
+      vars[f.v] = v;
+      // 화살촉을 따로 정하면 DIMSAH를 켠다(같으면 DIMBLK 하나로)
+      if (f.v === 'DIMBLK1' || f.v === 'DIMBLK2') {
+        const b1 = String(vars.DIMBLK1 ?? vars.DIMBLK ?? '');
+        const b2 = String(vars.DIMBLK2 ?? vars.DIMBLK ?? '');
+        if (b1.toUpperCase() === b2.toUpperCase()) {
+          vars.DIMBLK = b1;
+          vars.DIMSAH = 0;
+        } else vars.DIMSAH = 1;
+      }
+      change();
+    };
+    switch (f.kind) {
+      case 'check': {
+        const c = h('input', { type: 'checkbox', 'aria-label': f.label }) as HTMLInputElement;
+        c.checked = Number(cur) !== 0;
+        c.addEventListener('change', () => set(c.checked ? 1 : 0));
+        el = c;
+        break;
+      }
+      case 'select':
+      case 'arrow':
+      case 'style': {
+        let opts: Opt[] = f.options ?? [];
+        let v = String(cur);
+        if (f.kind === 'arrow') {
+          v = String(cur || (f.v !== 'DIMLDRBLK' ? (vars.DIMBLK ?? '') : '') || '').toUpperCase();
+          opts = ARROWS.some((a) => a.value === v) ? ARROWS : [...ARROWS, { value: v, label: `사용자 블록 ${v}` }];
+        } else if (f.kind === 'style') {
+          opts = (styles.length ? styles : ['Standard']).map((n) => ({ value: n, label: n }));
+          v = opts.find((o) => tableKey(o.value) === tableKey(v || 'Standard'))?.value ?? opts[0]!.value;
+        }
+        const sel = h('select', { 'aria-label': f.label, style: CSS_IN }, ...opts.map((o) => h('option', { value: o.value }, o.label))) as HTMLSelectElement;
+        sel.value = v;
+        sel.addEventListener('change', () => set(f.kind === 'select' ? Number(sel.value) : sel.value));
+        el = sel;
+        break;
+      }
+      default: {
+        const i = h('input', { 'aria-label': f.label, style: `${CSS_IN};width:110px`, inputmode: f.kind === 'text' ? undefined : 'decimal' }) as HTMLInputElement;
+        i.value = f.kind === 'angle' ? String(+((Number(cur) * 180) / Math.PI).toFixed(6)) : f.kind === 'lw' ? String(Number(cur) < 0 ? Number(cur) : Number(cur) / 100) : String(cur);
+        i.addEventListener('keydown', (ev) => ev.stopPropagation());
+        i.addEventListener('change', () => {
+          if (f.kind === 'text') return set(i.value);
+          const n = Number(i.value.trim());
+          if (!Number.isFinite(n)) {
+            i.style.borderColor = 'var(--danger)';
+            return;
+          }
+          i.style.borderColor = '';
+          if (f.kind === 'angle') set((n * Math.PI) / 180);
+          else if (f.kind === 'int') set(Math.max(0, Math.round(n)));
+          else if (f.kind === 'lw') set(n < 0 ? Math.round(n) : Math.round(n * 100));
+          else if (f.kind === 'color') set(Math.max(0, Math.min(256, Math.round(n))));
+          else set(n);
+        });
+        el = i;
+      }
+    }
+    return h('label', { class: 'form-row', style: 'display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:3px 0' }, h('span', {}, f.label), el);
+  });
+  return h('div', { class: 'ds-panel' }, ...rows);
+}
+
+/** 7탭 대화상자. 확인하면 변수와 주석 여부 */
+function editDialog(app: App, title: string, base: DimStyle | undefined, start: Vars, annotative: boolean | undefined): Promise<{ vars: Vars; annotative: boolean | undefined } | null> {
+  const st = app.active!;
+  const vars: Vars = { ...start };
+  let anno = annotative;
+  return new Promise((resolve) => {
+    let done = false;
+    const canvas = h('canvas', { width: 240, height: 180, style: 'width:240px;height:180px;background:var(--canvas-model);border:1px solid var(--border-soft);border-radius:4px' }) as HTMLCanvasElement;
+    const redraw = () => drawDimPreview(app, canvas, base, vars);
+    const tabs = h('div', { role: 'tablist', style: 'display:flex;flex-wrap:wrap;gap:2px;margin-bottom:6px' });
+    const panel = h('div', { style: 'min-height:300px;max-height:52vh;overflow:auto;padding-right:6px' });
+    let active = TABS[0]![0];
+    const showTab = (name: string) => {
+      active = name;
+      tabs.replaceChildren(
+        ...TABS.map(([t]) => {
+          const b = h('button', { type: 'button', role: 'tab', class: `btn ${t === active ? 'primary' : ''}`, 'aria-selected': t === active ? 'true' : 'false' }, t);
+          b.addEventListener('click', () => showTab(t));
+          return b;
+        }),
+      );
+      const fields = TABS.find(([t]) => t === name)![1];
+      const p = tabPanel(st, vars, fields, redraw);
+      if (name === '맞춤') {
+        // 치수 피쳐 축척의 "주석"(AcadAnnotative)
+        const c = h('input', { type: 'checkbox', 'aria-label': '주석' }) as HTMLInputElement;
+        c.checked = !!anno;
+        c.addEventListener('change', () => (anno = c.checked));
+        p.append(h('label', { class: 'form-row', style: 'display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:3px 0' }, h('span', {}, '주석(축척은 주석 축척을 따름)'), c));
+      }
+      panel.replaceChildren(p);
+    };
+    showTab(active);
+    const body = h('div', { style: 'display:grid;grid-template-columns:minmax(300px,1fr) 240px;gap:12px;align-items:start' }, h('div', {}, tabs, panel), h('div', {}, h('div', { style: 'color:var(--text-dim);margin-bottom:4px' }, '미리보기'), canvas));
+    const back = dialog(title, body, [
+      { label: '취소', run: () => ((done = true), resolve(null)) },
+      { label: '확인', primary: true, run: () => ((done = true), resolve({ vars, annotative: anno })) },
+    ]);
+    const box = back.querySelector('.dialog') as HTMLElement | null;
+    if (box) box.style.width = 'min(720px, 100%)';
+    setTimeout(redraw);
+    new MutationObserver((_, obs) => {
+      if (!back.isConnected) {
+        obs.disconnect();
+        if (!done) resolve(null);
+      }
+    }).observe(document.body, { childList: true });
+  });
+}
+
+/** 비교 대화상자 */
+function compareDialog(app: App, first: string): void {
+  const st = app.active!;
+  const names = [...st.doc.dimStyles.values()].filter((s) => s.name).map((s) => s.name).sort((a, b) => a.localeCompare(b));
+  const a = h('select', { 'aria-label': '비교', style: CSS_IN }, ...names.map((n) => h('option', { value: n }, n))) as HTMLSelectElement;
+  const b = h('select', { 'aria-label': '대상', style: CSS_IN }, h('option', { value: '' }, '<없음>'), ...names.map((n) => h('option', { value: n }, n))) as HTMLSelectElement;
+  a.value = names.find((n) => tableKey(n) === tableKey(first)) ?? names[0] ?? '';
+  b.value = names.find((n) => tableKey(n) !== tableKey(a.value)) ?? '';
+  const out = h('div', { style: 'max-height:50vh;overflow:auto;margin-top:8px' });
+  let rows: VarDiff[] = [];
+  const render = () => {
+    const va = styleVars(st.doc.dimStyles.get(tableKey(a.value)));
+    const vb = b.value ? styleVars(st.doc.dimStyles.get(tableKey(b.value))) : null;
+    rows = compareVars(va, vb);
+    out.replaceChildren(
+      h('div', { style: 'color:var(--text-dim);margin-bottom:4px' }, vb ? (rows.length ? `다른 점 ${rows.length}개` : '두 스타일이 같습니다.') : `${a.value}의 모든 특성`),
+      h(
+        'table',
+        { class: 'grid' },
+        h('thead', {}, h('tr', {}, h('th', {}, '설명'), h('th', {}, '변수'), h('th', {}, a.value), ...(vb ? [h('th', {}, b.value)] : []))),
+        h('tbody', {}, ...rows.map((r) => h('tr', {}, h('td', {}, r.label), h('td', { style: 'font-family:var(--mono)' }, r.name), h('td', {}, r.a), ...(vb ? [h('td', {}, r.b)] : [])))),
+      ),
+    );
+  };
+  a.addEventListener('change', render);
+  b.addEventListener('change', render);
+  render();
+  const body = h('div', {}, h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('span', {}, '비교'), a, h('span', {}, '대상'), b), out);
+  dialog('치수 스타일 비교', body, [
+    {
+      label: '클립보드로 복사',
+      run: () => {
+        const text = rows.map((r) => [r.label, r.name, r.a, r.b].join('\t')).join('\n');
+        void navigator.clipboard?.writeText(text).catch(() => undefined);
+        return true;
+      },
+    },
+    { label: '닫기', primary: true },
+  ]);
+}
+
+const BAD_NAME = /[<>/\\":;?*|,=`]/;
 
 export function registerDimStyleCommands(app: App): void {
   app.register({
@@ -353,129 +602,279 @@ export function registerDimStyleCommands(app: App): void {
     title: '치수 스타일 관리자',
     run() {
       const st = app.active!;
-      const curName = () => String(st.doc.header.get('$DIMSTYLE') ?? 'Standard') || 'Standard';
-      let picked = curName();
-      const body = h('div', {});
+      const doc = st.doc;
+      const curName = () => doc.dimStyles.get(tableKey(String(doc.header.get('$DIMSTYLE') ?? 'Standard')))?.name ?? String(doc.header.get('$DIMSTYLE') ?? 'Standard');
+      /** 고른 줄: 스타일 이름, 또는 null = <스타일 재지정> */
+      let picked: string | null = curName();
+      let filter: 'all' | 'used' = 'all';
+      const list = h('div', { tabindex: '0', role: 'listbox', 'aria-label': '스타일', style: 'min-height:220px;max-height:46vh;overflow:auto;border:1px solid var(--border-soft);border-radius:4px;background:var(--bg-input);padding:2px' });
+      const filterSel = h('select', { 'aria-label': '리스트', style: CSS_IN }, h('option', { value: 'all' }, '모든 스타일'), h('option', { value: 'used' }, '사용 중인 스타일')) as HTMLSelectElement;
+      const canvas = h('canvas', { width: 240, height: 180, style: 'width:240px;height:180px;background:var(--canvas-model);border:1px solid var(--border-soft);border-radius:4px' }) as HTMLCanvasElement;
+      const desc = h('div', { style: 'color:var(--text-dim);margin-top:6px;white-space:pre-wrap;max-width:240px' });
+      const head = h('div', { style: 'margin-bottom:6px' });
+      const pickedStyle = () => doc.dimStyles.get(tableKey(picked ?? curName()));
       const render = () => {
-        body.replaceChildren();
+        const cur = curName();
+        const ov = headerOverrides(doc, cur);
         const used = usedStyles(st);
-        const list = [...st.doc.dimStyles.values()].filter((s) => s.name).sort((a, b) => a.name.localeCompare(b.name));
-        body.append(
-          h('div', { style: 'margin-bottom:6px' }, `현재 치수 스타일: ${curName()}`),
-          h(
-            'table',
-            { class: 'grid' },
-            h('thead', {}, h('tr', {}, h('th', {}, '스타일'), h('th', {}, '치수 수'), h('th', {}, '문자 높이'), h('th', {}, '화살표'))),
-            h(
-              'tbody',
-              {},
-              ...list.map((s) => {
-                const n = [...st.doc.blocks.values()].reduce((a, b) => a + b.entities.filter((e) => e.type === 'DIMENSION' && tableKey(e.dimStyle || 'Standard') === tableKey(s.name)).length, 0);
-                const tr = h(
-                  'tr',
-                  { style: tableKey(picked) === tableKey(s.name) ? 'background:var(--sel, rgba(61,141,255,0.25))' : 'cursor:pointer' },
-                  h('td', {}, `${s.name}${tableKey(s.name) === tableKey(curName()) ? ' (현재)' : ''}`),
-                  h('td', {}, used.has(tableKey(s.name)) ? String(n) : '0'),
-                  h('td', {}, String(+Number(val(s, 'DIMTXT')).toFixed(4))),
-                  h('td', {}, String(+Number(val(s, 'DIMASZ')).toFixed(4))),
-                );
-                tr.addEventListener('click', () => {
-                  picked = s.name;
-                  render();
-                });
-                return tr;
-              }),
-            ),
-          ),
-        );
+        head.textContent = `현재 치수 스타일: ${cur}`;
+        const styles = [...doc.dimStyles.values()].filter((s) => s.name && (filter === 'all' || used.has(tableKey(s.name)) || tableKey(s.name) === tableKey(cur))).sort((a, b) => a.name.localeCompare(b.name));
+        if (picked !== null && !doc.dimStyles.has(tableKey(picked))) picked = cur;
+        if (picked === null && !Object.keys(ov).length) picked = cur;
+        list.replaceChildren();
+        const row = (label: string, key: string | null, indent: boolean) => {
+          const sel = key === null ? picked === null : picked !== null && tableKey(picked) === tableKey(key);
+          const r = h('div', { role: 'option', 'aria-selected': sel ? 'true' : 'false', style: `padding:3px 6px;${indent ? 'padding-left:22px;' : ''}cursor:pointer;border-radius:3px;${sel ? 'background:var(--accent-soft);outline:1px solid var(--accent)' : ''}` }, label);
+          r.addEventListener('click', () => {
+            picked = key;
+            render();
+          });
+          r.addEventListener('dblclick', () => void rename());
+          r.addEventListener('contextmenu', (ev) => {
+            ev.preventDefault();
+            picked = key;
+            render();
+            showMenu(ev.clientX, ev.clientY, key === null
+              ? [
+                  { label: '현재 스타일에 저장', run: () => saveOverrides() },
+                  { label: '이름 바꾸기', run: () => void rename() },
+                  { label: '삭제', run: () => clearOverrides() },
+                ]
+              : [
+                  { label: '현재로 설정', run: () => void setCurrent() },
+                  { label: '이름 바꾸기', kbd: 'F2', run: () => void rename() },
+                  { label: '삭제', kbd: 'Del', run: () => void remove() },
+                ]);
+          });
+          list.append(r);
+        };
+        for (const s of styles) {
+          const isCur = tableKey(s.name) === tableKey(cur);
+          row(`${s.name}${isCur ? ' (현재)' : ''}${used.get(tableKey(s.name)) ? `  · ${used.get(tableKey(s.name))}` : ''}`, s.name, false);
+          if (isCur && Object.keys(ov).length) row('<스타일 재지정>', null, true);
+        }
+        const base = pickedStyle();
+        const vars = picked === null ? { ...styleVars(base), ...ov } : styleVars(base);
+        drawDimPreview(app, canvas, base, vars);
+        if (picked === null) desc.textContent = `설명: ${cur} + ${Object.entries(ov).map(([k, v]) => `${LABELS.get(k) ?? k} = ${show(v)}`).join(', ')}`;
+        else if (base) {
+          const n = used.get(tableKey(base.name)) ?? 0;
+          desc.textContent = `설명: ${base.name}\n문자 높이 ${show(vars.DIMTXT)}, 화살표 크기 ${show(vars.DIMASZ)}, 전체 축척 ${show(vars.DIMSCALE)}\n이 스타일을 쓰는 객체 ${n}개`;
+        } else desc.textContent = '';
       };
-      const edit = async (s: DimStyle, isNew: boolean): Promise<void> => {
-        let next = s;
-        for (;;) {
-          const pick = await form(
-            `치수 스타일 ${isNew ? '새로 만들기' : '수정'}: ${s.name}`,
-            [{ key: 'tab', label: '탭', type: 'select', value: '선', options: [...TABS.map(([t]) => ({ value: t, label: t })), { value: '__done', label: '— 확인(저장) —' }] }],
-            { ok: '열기' },
-          );
-          if (!pick) return;
-          if (pick.tab === '__done') break;
-          const tab = TABS.find(([t]) => t === pick.tab)![1];
-          const fit = pick.tab === '맞춤';
-          const fields = fieldsOf(st, next, tab);
-          // 맞춤 탭: 치수 피쳐 축척의 "주석"(AcadAnnotative)
-          if (fit) fields.push({ key: '__anno', label: '주석(축척은 주석 축척을 따름)', type: 'check', value: annotativeFlag(next.xdata) ?? false });
-          const v = await form(`${s.name} - ${pick.tab}`, fields, { ok: '적용' });
-          if (v) next = applyFields(next, tab, v);
-          if (v && fit && (v.__anno || annotativeFlag(next.xdata) !== undefined)) next = { ...next, xdata: withAnnotativeFlag(next.xdata, !!v.__anno) };
-        }
+      filterSel.addEventListener('change', () => {
+        filter = filterSel.value as 'all' | 'used';
+        render();
+      });
+      list.addEventListener('keydown', (ev) => {
+        const k = (ev as KeyboardEvent).key;
+        ev.stopPropagation();
+        if (k === 'F2') void rename();
+        else if (k === 'Delete') void (picked === null ? clearOverrides() : remove());
+      });
+      // ------------------------------------------------------------------ 동작
+      const commitStyle = (next: DimStyle, isNew: boolean, label = 'DIMSTYLE') => {
         const key = tableKey(next.name);
-        st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'dimStyle', key, before: isNew ? null : (st.doc.dimStyles.get(key) ?? null), after: next }] });
-        if (!isNew) {
-          const ops = regenOps(st, next.name);
-          if (ops.length) st.session.commit({ label: 'DIMSTYLE', ops, rebuildNow: true });
+        const ops: EditOp[] = [{ kind: 'dimStyle', key, before: isNew ? null : (doc.dimStyles.get(key) ?? null), after: next }];
+        // 현재 스타일을 고치면 머리말도 따라간다(재지정 유지)
+        if (!isNew && key === tableKey(curName())) {
+          const ov = headerOverrides(doc, next.name);
+          ops.push(...headerVarOps(doc, { ...styleVars(next), ...ov }));
         }
-        picked = next.name;
+        st.session.commit({ label, ops });
+        if (!isNew) {
+          const rg = regenOps(st, next.name);
+          if (rg.length) st.session.commit({ label, ops: rg, rebuildNow: true });
+        }
+      };
+      const setCurrent = async () => {
+        const s = picked === null ? null : doc.dimStyles.get(tableKey(picked));
+        if (!s) return;
+        const cur = curName();
+        const ov = headerOverrides(doc, cur);
+        if (tableKey(s.name) !== tableKey(cur) && Object.keys(ov).length) {
+          const a = await ask('치수 스타일 관리자', '현재 스타일의 재지정을 버리시겠습니까?', [
+            { label: '확인', value: 'ok', primary: true },
+            { label: '취소', value: 'cancel' },
+          ]);
+          if (a !== 'ok') return;
+        }
+        const ops: EditOp[] = [{ kind: 'header', name: '$DIMSTYLE', before: doc.header.get('$DIMSTYLE'), after: s.name }, ...headerVarOps(doc, styleVars(s))];
+        st.session.commit({ label: 'DIMSTYLE', ops });
+        picked = s.name;
         render();
       };
+      const create = async () => {
+        const base = pickedStyle();
+        if (!base) return;
+        const v = await form(
+          '새 치수 스타일 작성',
+          [
+            { key: 'name', label: '새 스타일 이름', type: 'text', value: `${base.name} 사본` },
+            { key: 'start', label: '시작', type: 'select', value: base.name, options: [...doc.dimStyles.values()].filter((s) => s.name).map((s) => ({ value: s.name, label: s.name })) },
+            { key: 'anno', label: '주석', type: 'check', value: annotativeFlag(base.xdata) ?? false },
+          ],
+          {
+            ok: '계속',
+            validate: (x) => {
+              const n = String(x.name).trim();
+              if (!n || BAD_NAME.test(n)) return '스타일 이름이 올바르지 않습니다.';
+              return doc.dimStyles.has(tableKey(n)) ? '같은 이름의 스타일이 있습니다.' : null;
+            },
+          },
+        );
+        if (!v) return;
+        const src = doc.dimStyles.get(tableKey(String(v.start))) ?? base;
+        const name = String(v.name).trim();
+        const r = await editDialog(app, `새 치수 스타일: ${name}`, src, styleVars(src), !!v.anno);
+        if (!r) return;
+        let s: DimStyle = { ...structuredClone(src), name, handle: st.session.newHandle(), flags: 0, vars: r.vars };
+        delete (s as { xdata?: unknown }).xdata;
+        if (r.annotative) s = { ...s, xdata: withAnnotativeFlag(s.xdata, true) };
+        commitStyle(s, true);
+        picked = name;
+        render();
+      };
+      const modify = async () => {
+        if (picked === null) return override();
+        const s = pickedStyle();
+        if (!s) return;
+        const r = await editDialog(app, `치수 스타일 수정: ${s.name}`, s, styleVars(s), annotativeFlag(s.xdata));
+        if (!r) return;
+        let next: DimStyle = { ...structuredClone(s), vars: { ...s.vars, ...diffFrom(styleVars(s), r.vars) } };
+        if (r.annotative !== undefined && (r.annotative || annotativeFlag(next.xdata) !== undefined)) next = { ...next, xdata: withAnnotativeFlag(next.xdata, r.annotative) };
+        commitStyle(next, false);
+        render();
+      };
+      const override = async () => {
+        const cur = curName();
+        const s = doc.dimStyles.get(tableKey(cur));
+        if (!s) return;
+        const ov = headerOverrides(doc, cur);
+        const r = await editDialog(app, `현재 스타일 재지정: ${cur}`, s, { ...styleVars(s), ...ov }, annotativeFlag(s.xdata));
+        if (!r) return;
+        const ops = headerVarOps(doc, r.vars, OVERRIDE_VARS.filter((n) => !sameVal(r.vars[n], { ...styleVars(s), ...ov }[n]) || ov[n] !== undefined));
+        if (ops.length) st.session.commit({ label: 'DIMSTYLE', ops });
+        picked = Object.keys(headerOverrides(doc, cur)).length ? null : cur;
+        render();
+      };
+      const saveOverrides = () => {
+        const cur = curName();
+        const s = doc.dimStyles.get(tableKey(cur));
+        const ov = headerOverrides(doc, cur);
+        if (!s || !Object.keys(ov).length) return;
+        commitStyle({ ...structuredClone(s), vars: { ...s.vars, ...ov } }, false);
+        picked = cur;
+        render();
+      };
+      const clearOverrides = () => {
+        const cur = curName();
+        const s = doc.dimStyles.get(tableKey(cur));
+        if (!s) return;
+        const ops = headerVarOps(doc, styleVars(s));
+        if (ops.length) st.session.commit({ label: 'DIMSTYLE', ops });
+        picked = cur;
+        render();
+      };
+      const rename = async () => {
+        if (picked === null) {
+          // <스타일 재지정> 이름 바꾸기: 현재 스타일 + 재지정으로 새 스타일을 만들어 현재로
+          const cur = curName();
+          const s = doc.dimStyles.get(tableKey(cur));
+          if (!s) return;
+          const v = await form('새 스타일 이름', [{ key: 'name', label: '새 스타일 이름', type: 'text', value: `${cur} 재지정` }], {
+            validate: (x) => {
+              const n = String(x.name).trim();
+              if (!n || BAD_NAME.test(n)) return '스타일 이름이 올바르지 않습니다.';
+              return doc.dimStyles.has(tableKey(n)) ? '같은 이름의 스타일이 있습니다.' : null;
+            },
+          });
+          if (!v) return;
+          const name = String(v.name).trim();
+          const ns: DimStyle = { ...structuredClone(s), name, handle: st.session.newHandle(), flags: 0, vars: { ...s.vars, ...headerOverrides(doc, cur) } };
+          st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'dimStyle', key: tableKey(name), before: null, after: ns }, { kind: 'header', name: '$DIMSTYLE', before: doc.header.get('$DIMSTYLE'), after: name }] });
+          picked = name;
+          render();
+          return;
+        }
+        const s = pickedStyle();
+        if (!s) return;
+        if (tableKey(s.name) === 'STANDARD') {
+          app.cmd.print('Standard 치수 스타일의 이름은 바꿀 수 없습니다.', 'err');
+          return;
+        }
+        if (s.name.includes('|')) {
+          app.cmd.print('외부 참조의 치수 스타일은 이름을 바꿀 수 없습니다.', 'err');
+          return;
+        }
+        const v = await form('이름 바꾸기', [{ key: 'name', label: '새 이름', type: 'text', value: s.name }], {
+          validate: (x) => {
+            const n = String(x.name).trim();
+            if (!n || BAD_NAME.test(n)) return '스타일 이름이 올바르지 않습니다.';
+            if (tableKey(n) !== tableKey(s.name) && doc.dimStyles.has(tableKey(n))) return '같은 이름의 스타일이 있습니다.';
+            return null;
+          },
+        });
+        if (!v) return;
+        const to = String(v.name).trim();
+        if (to === s.name) return;
+        st.session.commit({ label: 'RENAME', ops: dimStyleRenameOps(st, s.name, to) });
+        picked = to;
+        render();
+      };
+      const remove = async () => {
+        const s = pickedStyle();
+        if (!s || picked === null) return;
+        const key = tableKey(s.name);
+        if (key === 'STANDARD' || key === tableKey(curName()) || usedStyles(st).has(key)) {
+          app.cmd.print(`치수 스타일 "${s.name}"은(는) 현재 스타일이거나 사용 중이라 삭제할 수 없습니다.`, 'err');
+          return;
+        }
+        const a = await ask('치수 스타일 - 삭제', `치수 스타일 "${s.name}"을(를) 삭제하시겠습니까?`, [
+          { label: '예', value: 'yes', primary: true },
+          { label: '아니오', value: 'no' },
+        ]);
+        if (a !== 'yes') return;
+        st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'dimStyle', key, before: s, after: null }] });
+        picked = curName();
+        render();
+      };
+      const btn = (label: string, run: () => void) => {
+        const b = h('button', { class: 'btn', type: 'button', style: 'width:100%;margin-bottom:4px' }, label);
+        b.addEventListener('click', run);
+        return b;
+      };
+      const body = h(
+        'div',
+        {},
+        head,
+        h(
+          'div',
+          { style: 'display:grid;grid-template-columns:minmax(160px,1fr) 240px 120px;gap:10px;align-items:start' },
+          h('div', {}, h('div', { style: 'color:var(--text-dim);margin-bottom:2px' }, '스타일'), list, h('div', { style: 'margin-top:6px;display:flex;gap:6px;align-items:center' }, h('span', { style: 'color:var(--text-dim)' }, '리스트'), filterSel)),
+          h('div', {}, h('div', { style: 'color:var(--text-dim);margin-bottom:2px' }, '미리보기'), canvas, desc),
+          h(
+            'div',
+            {},
+            btn('현재로 설정', () => void setCurrent()),
+            btn('새로 만들기...', () => void create()),
+            btn('수정...', () => void modify()),
+            btn('재지정...', () => void override()),
+            btn('비교...', () => compareDialog(app, picked ?? curName())),
+          ),
+        ),
+      );
+      const back = dialog('치수 스타일 관리자', body, [{ label: '닫기', primary: true }]);
+      const box = back.querySelector('.dialog') as HTMLElement | null;
+      if (box) box.style.width = 'min(720px, 100%)';
       render();
-      dialog('치수 스타일 관리자', body, [
-        {
-          label: '새로 만들기…',
-          run: () => {
-            const base = st.doc.dimStyles.get(tableKey(picked));
-            if (!base) return false;
-            void form('새 치수 스타일 작성', [{ key: 'name', label: '새 스타일 이름', type: 'text', value: `${base.name}의 복사` }], {
-              ok: '계속',
-              validate: (v) => {
-                const n = String(v.name).trim();
-                if (!n || /[<>/\\":;?*|,=`]/.test(n)) return '스타일 이름이 올바르지 않습니다.';
-                return st.doc.dimStyles.has(tableKey(n)) ? '같은 이름의 스타일이 있습니다.' : null;
-              },
-            }).then((v) => {
-              if (!v) return;
-              const s: DimStyle = { ...structuredClone(base), name: String(v.name).trim(), handle: st.session.newHandle(), flags: 0 };
-              delete (s as { xdata?: unknown }).xdata;
-              void edit(s, true);
-            });
-            return false;
-          },
-        },
-        {
-          label: '수정…',
-          run: () => {
-            const s = st.doc.dimStyles.get(tableKey(picked));
-            if (s) void edit(structuredClone(s), false);
-            return false;
-          },
-        },
-        {
-          label: '삭제',
-          run: () => {
-            const key = tableKey(picked);
-            const s = st.doc.dimStyles.get(key);
-            if (!s) return false;
-            if (key === 'STANDARD' || key === tableKey(curName()) || usedStyles(st).has(key)) {
-              app.cmd.print(`치수 스타일 "${s.name}"은(는) 현재 스타일이거나 사용 중이라 삭제할 수 없습니다.`, 'err');
-              return false;
-            }
-            st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'dimStyle', key, before: s, after: null }] });
-            picked = curName();
-            render();
-            return false;
-          },
-        },
-        {
-          label: '현재로 설정',
-          primary: true,
-          run: () => {
-            const s = st.doc.dimStyles.get(tableKey(picked));
-            if (s) st.session.commit({ label: 'DIMSTYLE', ops: [{ kind: 'header', name: '$DIMSTYLE', before: st.doc.header.get('$DIMSTYLE'), after: s.name }] });
-            render();
-            return false;
-          },
-        },
-        { label: '닫기' },
-      ]);
     },
   });
+}
+
+/** b에서 a와 다른 값만 */
+function diffFrom(a: Vars, b: Vars): Vars {
+  const out: Vars = {};
+  for (const [k, v] of Object.entries(b)) if (!sameVal(a[k], v)) out[k] = v;
+  return out;
 }

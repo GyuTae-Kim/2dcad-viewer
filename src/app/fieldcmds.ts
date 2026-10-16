@@ -53,19 +53,64 @@ export function onFieldDisplayChange(f: (v: number) => void): () => void {
 }
 
 // ---------------------------------------------------------------------------
+// FIELDEVAL(필드 자동 업데이트): 1 열기, 2 저장, 4 플롯, 8 eTransmit, 16 재생성. AutoCAD는 도면에 두지만 저장 자리를
+// 확인할 실물이 없어 FIELDDISPLAY처럼 이 브라우저의 사용자 설정에 둔다(기본 31 = 모두)
+// ---------------------------------------------------------------------------
+
+const EVAL_KEY = 'opencad.fieldeval';
+let evalBits: number | null = null;
+
+export type FieldEvent = 'open' | 'save' | 'plot' | 'etransmit' | 'regen';
+const EVENT_BIT: Record<FieldEvent, number> = { open: 1, save: 2, plot: 4, etransmit: 8, regen: 16 };
+
+export function fieldEval(): number {
+  if (evalBits === null) {
+    try {
+      const v = Number(localStorage.getItem(EVAL_KEY));
+      evalBits = localStorage.getItem(EVAL_KEY) !== null && Number.isInteger(v) && v >= 0 && v <= 31 ? v : 31;
+    } catch {
+      evalBits = 31;
+    }
+  }
+  return evalBits;
+}
+
+export function setFieldEval(v: number): void {
+  evalBits = Math.max(0, Math.min(31, Math.round(v)));
+  try {
+    localStorage.setItem(EVAL_KEY, String(evalBits));
+  } catch {
+    /* 저장할 수 없는 환경 */
+  }
+}
+
+/**
+ * 저장·플롯·재생성 등에서 필드를 다시 계산한다(FIELDEVAL의 그 비트가 켜졌을 때). 바꾼 필드 수.
+ * 저장 직전이면 저장 날짜·파일 이름이 저장할 이름으로 바뀐다. 명령 취소 한 단계(UPDATEFIELD)로 확정한다.
+ * 저장·플롯 명령이 시작할 때 부른다(그 명령 모듈이 이 함수를 부르게 리드가 잇는다).
+ */
+export function updateFieldsOn(app: App, event: FieldEvent, opt: { fileName?: string } = {}): number {
+  const st = app.active;
+  if (!st || !(fieldEval() & EVENT_BIT[event])) return 0;
+  const r = fieldUpdateOps(st, undefined, opt.fileName);
+  if (r.ops.length) st.session.commit({ label: 'UPDATEFIELD', ops: r.ops });
+  return r.ops.length;
+}
+
+// ---------------------------------------------------------------------------
 // 평가 환경
 // ---------------------------------------------------------------------------
 
-export function fieldContext(st: DocState): FieldContext {
-  return { doc: st.doc, fileName: st.saveName || st.name, fileSize: st.size, now: new Date() };
+export function fieldContext(st: DocState, fileName?: string): FieldContext {
+  return { doc: st.doc, fileName: fileName || st.saveName || st.name, fileSize: st.size, now: new Date() };
 }
 
 /**
  * 도면(또는 고른 객체)의 필드를 다시 계산하는 작업. 저장 직전(SaveDate·Filename)이나 REGEN에서 리더가 부를 수 있다.
  * handles가 없으면 모든 블록의 문자를 본다.
  */
-export function fieldUpdateOps(st: DocState, handles?: Iterable<string>): { ops: EditOp[]; found: number; updated: number; stale: number } {
-  const ctx = fieldContext(st);
+export function fieldUpdateOps(st: DocState, handles?: Iterable<string>, fileName?: string): { ops: EditOp[]; found: number; updated: number; stale: number } {
+  const ctx = fieldContext(st, fileName);
   const ops: EditOp[] = [];
   let found = 0;
   let updated = 0;
@@ -173,7 +218,7 @@ const IN_CSS = SEL_CSS + ';height:26px;padding:0 6px';
 /**
  * 필드 대화상자. 확인하면 필드 코드(%<…>%)를 돌려준다. 객체 선택 단추는 대화상자를 잠시 숨기고 도면에서 고르게 한다.
  */
-export function fieldDialog(app: App, ctx: CommandContext, initial?: string): Promise<string | null> {
+export function fieldDialog(app: App, ctx?: CommandContext, initial?: string): Promise<string | null> {
   const st = app.active!;
   const doc = st.doc;
   const fctx = fieldContext(st);
@@ -258,7 +303,7 @@ export function fieldDialog(app: App, ctx: CommandContext, initial?: string): Pr
         }
         case 'object': {
           const who = h('div', { style: 'color:var(--text-dim)' }, objHandle ? describe(doc, objHandle) : '객체를 선택하십시오.');
-          const pick = h('button', { class: 'btn', type: 'button' }, '객체 선택');
+          const pick = h('button', { class: 'btn', type: 'button', disabled: !ctx, title: ctx ? '' : '명령 안에서만 객체를 고를 수 있습니다' }, '객체 선택');
           const props = select('특성', []);
           const prec = select('정밀도', precisionOptions, '2');
           const fillProps = () => {
@@ -269,6 +314,7 @@ export function fieldDialog(app: App, ctx: CommandContext, initial?: string): Pr
             if ([...props.options].some((o) => o.value === keep)) props.value = keep;
           };
           pick.addEventListener('click', async () => {
+            if (!ctx) return;
             back.style.display = 'none';
             try {
               const r = await ctx.getEntity('객체 선택:');
@@ -494,6 +540,28 @@ export function registerFieldCommands(app: App): void {
       if (r.stale) ctx.print(`다른 명령이 내용을 바꾼 문자 ${r.stale}개는 필드를 문자로 바꿨습니다.`);
       ctx.print(`${r.updated}개의 필드를 업데이트했습니다.`);
       app.clearSelection();
+    },
+  });
+
+  // ------------------------------------------------------------- FIELDEVAL
+  app.register({
+    name: 'FIELDEVAL',
+    title: '필드 자동 업데이트',
+    transparent: true,
+    noDoc: true,
+    async run(ctx, arg) {
+      let v = arg?.trim();
+      if (!v) {
+        const r = await ctx.getPoint(`FIELDEVAL에 대한 새 값 입력 <${fieldEval()}>:`, { preferNumber: true });
+        if (!('text' in r)) return;
+        v = r.text.trim();
+      }
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0 || n > 31) {
+        ctx.print('0에서 31 사이의 정수를 입력하십시오.', 'err');
+        return;
+      }
+      setFieldEval(n);
     },
   });
 
