@@ -39,5 +39,12 @@ async (page) => {
   await page.goto(origin+'?sample'); await loaded();
   await page.goto(origin+'?open=samples%2Fopencad-sample.dxf'); await loaded();
   assert(await page.evaluate(() => window.opencad.docs.length===1), 'URL launch preserved');
+  await fresh();
+  await page.route('**/editor-*.js', (route) => route.abort());
+  await page.getByRole('button',{name:'예제 도면 열기',exact:true}).click();
+  await page.getByRole('alert').waitFor();
+  await page.unroute('**/editor-*.js');
+  await page.getByRole('button',{name:'새로고침',exact:true}).click();
+  await page.getByRole('button',{name:'예제 도면 열기',exact:true}).click(); await loaded();
   console.log('MOBILE_BROWSER_CHECK_PASSED: welcome, cancel, sample, commands, new, picker, recent, drop, sample URL, open URL');
 }
