@@ -3,6 +3,18 @@
 OpenCAD 2D 뷰어를 만들어 온 과정을 단계별로 정리했습니다. 커밋 하나하나는 `git log`에, 남은 일은 [ROADMAP.md](ROADMAP.md)에 있습니다.
 모든 기능은 브라우저 안에서만 동작하며, 연 파일은 사용자 컴퓨터 밖으로 나가지 않습니다.
 
+## 2026-10-16 (3): NC·STEP·SKP를 별도 저장소로 분리
+
+형식마다 따로 개발하려고, 아래 "3D 뷰어 — NC·STEP·SKP" 단계에서 더한 3D 코드를 이 저장소에서 빼고 별도 저장소로 옮겼습니다.
+배포 사이트에서는 NC·STEP·SKP 파일을 더 이상 열지 않습니다.
+
+- [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d): 3D 뷰어 코어(`src/viewer3d/`)
+- [opencad-nc](https://github.com/GyuTae-Kim/opencad-nc): NC 해석기(`src/formats/nc/`)와 재생·가상 목록 등 NC 화면 도우미
+- [opencad-step](https://github.com/GyuTae-Kim/opencad-step): STEP 해석기(`src/formats/step/`)
+- [opencad-skp](https://github.com/GyuTae-Kim/opencad-skp): SketchUp 해석기(`src/formats/skp/`)와 형식 조사 기록
+
+2D 화면 골격에 붙어 있던 3D 탭·리본·패널·웹 워커(`src/app/view3d/`, `src/worker/view3d.worker.ts`)는 옮기지 않았고, 커밋 `d7c584a`에서 볼 수 있습니다.
+
 ## 2026-10-16 (2): 큰 도면 정점 평탄 좌표·워커 문서 부호화
 
 큰 도면의 문서 메모리와 GC, 워커가 문서를 보내는 시간을 줄였습니다. 합성 100만·300만 객체 DXF로 쟀고, 저장 결과(DXF·DWG)와 장면 그림의 지문은 고치기 전과 같습니다(100만 DXF `66a2d13a0eb5fbd0`·DWG `bc5d69323b08d885`·장면 `db866df2c5f7dc92`, 300만 DXF `231005554c3d04af`·장면 `5ffd8919102f920a`).
