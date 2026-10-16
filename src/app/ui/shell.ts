@@ -20,23 +20,50 @@ import { icon } from './icons';
 import { RecentStore } from '../recent';
 import { type AnnoStatus, annoStatus } from '../annoscale-status';
 import { foldCount, layoutClasses, revealX, ribbonOverlay, statusHidden, watchViewport, wheelToHorizontal } from './layout';
+import { fileAccept } from '../view3d/formats';
 
-interface Btn {
+export interface RibbonBtn {
   cmd?: string;
   label: string;
   icon: string;
   tip?: string;
-  menu?: { label: string; cmd: string; icon?: string }[];
+  /** 메뉴 항목: 명령(cmd) 또는 함수(run). on이 참이면 ✓ */
+  menu?: { label: string; cmd?: string; icon?: string; run?: () => void; on?: () => boolean }[];
   noDoc?: boolean;
   run?: () => void;
+  /** 켜짐 표시(누름 상태) */
+  on?: () => boolean;
 }
+type Btn = RibbonBtn;
 
-interface Panel {
+export interface RibbonPanel {
   title: string;
   large?: Btn[];
   cols?: Btn[][];
   /** 리본 안의 고르기 상자(현재 도면층, 색·선종류·선가중치) */
   custom?: 'layer' | 'props';
+}
+type Panel = RibbonPanel;
+
+export interface RibbonTab {
+  tab: string;
+  panels: RibbonPanel[];
+}
+
+/** 3D 문서(src/app/view3d/manager.ts)가 화면 골격에 주는 것 */
+export interface Mode3dHost {
+  /** 3D 문서 탭이 활성인지(그동안 App.active는 null) */
+  readonly active: boolean;
+  tabs(): { key: object; name: string; title: string; size: number; active: boolean; activate(): void; close(): void }[];
+  /** 3D 문서 동안 보이는 리본 탭 */
+  ribbonTab(): RibbonTab;
+  statusText(): string;
+  /** 3D 문서로 여는 파일인지(확장자) */
+  accepts(name: string): boolean;
+  /** 파일 열기(data는 넘겨준다). 탭을 열었으면 true */
+  open(name: string, data: ArrayBuffer): Promise<boolean>;
+  closeActive(): void;
+  openSample(): Promise<void>;
 }
 
 const RIBBON: { tab: string; panels: Panel[] }[] = [
@@ -861,10 +888,19 @@ export class Shell implements UiHooks {
   private readonly coords: HTMLSpanElement;
   private readonly fileInput: HTMLInputElement;
   private activeTab = 0;
+  /** 제목 막대의 "2D 뷰어"·"3D 뷰어" */
+  private readonly titleKind = h('span', {}, ' 2D 뷰어');
   private app!: App;
   palette!: Palette;
   readonly recent = new RecentStore();
-  private readonly workspace: HTMLDivElement;
+  /** 3D 문서(main.ts에서 잇는다) */
+  mode3d: Mode3dHost | null = null;
+  readonly workspace: HTMLDivElement;
+  /** 파일 탭 차례(연 차례): 2D·3D 문서 객체 → 번호 */
+  private tabSerial = new WeakMap<object, number>();
+  private tabSerialNext = 0;
+  /** 리본 단추의 켜짐 표시 */
+  private onStates: [HTMLElement, () => boolean][] = [];
   private readonly guide: HTMLElement | null;
   private readonly root: HTMLElement;
   /** 리본을 작업 영역 위에 겹쳐 펼치는 배치(좁거나 낮은 화면) */
@@ -876,7 +912,7 @@ export class Shell implements UiHooks {
     this.root = root;
     // Keep the same useful guide for static crawlers and the running start screen.
     this.guide = root.querySelector<HTMLElement>('#viewer-guide');
-    this.fileInput = h('input', { type: 'file', accept: '.dxf,.dwg,.scr,.lsp,.DXF,.DWG,.SCR,.LSP', multiple: true, hidden: true });
+    this.fileInput = h('input', { type: 'file', accept: fileAccept(), multiple: true, hidden: true });
     this.title = h('div', { class: 'titlebar' });
     this.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist' });
     this.ribbon = h('div', { class: 'ribbon' });
@@ -959,9 +995,15 @@ export class Shell implements UiHooks {
       }
       const buf = await f.arrayBuffer();
       const copy = buf.slice(0);
-      const st = await this.app.openFile(f.name, buf);
-      if (st) void this.recent.add(f.name, copy).then(() => this.refreshRecent());
+      const ok = await this.openData(f.name, buf);
+      if (ok) void this.recent.add(f.name, copy).then(() => this.refreshRecent());
     }
+  }
+
+  /** 이름(확장자)으로 2D 도면 또는 3D 문서(NC·STEP·SKP)로 연다. data는 넘겨준다 */
+  async openData(name: string, data: ArrayBuffer): Promise<boolean> {
+    if (this.mode3d?.accepts(name)) return this.mode3d.open(name, data);
+    return !!(await this.app.openFile(name, data));
   }
 
   // -------------------------------------------------------------------------
@@ -975,6 +1017,7 @@ export class Shell implements UiHooks {
         { label: '새로 만들기', icon: 'new', kbd: 'Ctrl+N', run: () => void app.run('NEW') },
         { label: '열기…', icon: 'open', kbd: 'Ctrl+O', run: () => this.pickFiles() },
         { label: '예제 도면 열기', icon: 'sample', run: () => void this.openSample() },
+        { label: 'NC 예제 열기(3D)', icon: 'sample', run: () => void this.mode3d?.openSample() },
         { separator: true },
         { label: '저장', icon: 'save', kbd: 'Ctrl+S', disabled: !app.active, run: () => void app.run('QSAVE') },
         { label: '다른 이름으로 저장…', icon: 'save', kbd: 'Ctrl+Shift+S', disabled: !app.active, run: () => void app.run('SAVEAS') },
@@ -987,7 +1030,7 @@ export class Shell implements UiHooks {
         { label: '모든 배치를 PDF로', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
         { separator: true },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
-        { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },
+        { label: '닫기', icon: 'close', disabled: !app.active && !this.mode3d?.active, run: () => (app.active ? void app.close(app.active) : this.mode3d?.closeActive()) },
         { label: '모두 닫기', icon: 'close', disabled: !app.active, run: () => void app.run('CLOSEALL') },
         { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
@@ -1005,7 +1048,7 @@ export class Shell implements UiHooks {
       this.iconBtn('redo', '다시 실행 (Ctrl+Y)', () => void app.run('REDO')),
       this.iconBtn('print', 'PDF로 인쇄 (Ctrl+P)', () => void app.run('PLOT')),
     );
-    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' 2D 뷰어');
+    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), this.titleKind);
     const right = h(
       'div',
       { class: 'title-right' },
@@ -1073,11 +1116,16 @@ export class Shell implements UiHooks {
 
   private buildRibbon(): void {
     this.ribbonTabs.innerHTML = '';
-    RIBBON.forEach((t, i) => {
-      const b = h('button', { class: `ribbon-tab ${i === this.activeTab ? 'active' : ''}`, role: 'tab', 'aria-selected': i === this.activeTab ? 'true' : 'false' }, t.tab);
+    this.onStates = [];
+    // 3D 문서 동안은 2D 탭을 숨기고 "3D 보기" 탭만 보인다(2D 탭 고른 것은 그대로 기억)
+    const is3d = !!this.mode3d?.active;
+    const tabs = is3d ? [this.mode3d!.ribbonTab()] : RIBBON;
+    const cur = is3d ? 0 : this.activeTab;
+    tabs.forEach((t, i) => {
+      const b = h('button', { class: `ribbon-tab ${i === cur ? 'active' : ''}`, role: 'tab', 'aria-selected': i === cur ? 'true' : 'false' }, t.tab);
       b.addEventListener('click', () => {
-        this.setRibbonOpen(this.activeTab === i ? !this.ribbonOpen() : true);
-        this.activeTab = i;
+        this.setRibbonOpen(cur === i ? !this.ribbonOpen() : true);
+        if (!is3d) this.activeTab = i;
         this.buildRibbon();
       });
       b.addEventListener('dblclick', () => {
@@ -1087,9 +1135,9 @@ export class Shell implements UiHooks {
       });
       this.ribbonTabs.append(b);
     });
-    revealX(this.ribbonTabs, this.ribbonTabs.children[this.activeTab] as HTMLElement | undefined ?? null);
+    revealX(this.ribbonTabs, this.ribbonTabs.children[cur] as HTMLElement | undefined ?? null);
     this.ribbon.innerHTML = '';
-    const tab = RIBBON[this.activeTab]!;
+    const tab = tabs[cur]!;
     this.combos = null;
     const els = tab.panels.map((p) => {
       const el = this.panelElement(p);
@@ -1304,9 +1352,17 @@ export class Shell implements UiHooks {
           void this.runCmd(cmd);
         };
         showMenu(r.left, r.bottom + 2, [
-          ...b.menu.map((m) => ({ label: m.label, icon: m.icon, run: () => go(m.cmd) })),
-          { separator: true },
-          { label: `${b.label} (${b.cmd})`, icon: b.icon, run: () => go(b.cmd!) },
+          ...b.menu.map((m) => ({
+            label: m.on ? `${m.on() ? '✓ ' : '\u2003'}${m.label}` : m.label,
+            icon: m.icon,
+            run: () => {
+              if (m.run) {
+                this.afterRibbonCommand();
+                m.run();
+              } else if (m.cmd) go(m.cmd);
+            },
+          })),
+          ...(b.cmd ? [{ separator: true }, { label: `${b.label} (${b.cmd})`, icon: b.icon, run: () => go(b.cmd!) }] : []),
         ]);
         return;
       }
@@ -1314,6 +1370,7 @@ export class Shell implements UiHooks {
       if (b.run) b.run();
       else if (b.cmd) void this.runCmd(b.cmd);
     });
+    if (b.on) this.onStates.push([el, b.on]);
     return el;
   }
 
@@ -1322,7 +1379,14 @@ export class Shell implements UiHooks {
     return this.app.run(name!, rest.length ? rest.join(' ') : undefined);
   }
 
+  /** 리본 단추 상태(사용 가능·켜짐)를 다시 맞춘다 */
+  refreshRibbon(): void {
+    this.refreshRibbonState();
+  }
+
   private refreshRibbonState(): void {
+    this.onStates = this.onStates.filter(([el]) => el.isConnected);
+    for (const [el, on] of this.onStates) el.classList.toggle('on', on());
     const has = !!this.app?.active;
     for (const el of document.querySelectorAll<HTMLButtonElement>('.ribbon button[data-cmd], .ribbon-pop button[data-cmd]')) {
       const c = el.dataset.cmd ?? '';
@@ -1338,31 +1402,97 @@ export class Shell implements UiHooks {
   // 탭
   // -------------------------------------------------------------------------
 
+  /** 탭 차례 번호(처음 본 차례 = 연 차례) */
+  private serialOf(key: object): number {
+    let n = this.tabSerial.get(key);
+    if (n === undefined) this.tabSerial.set(key, (n = ++this.tabSerialNext));
+    return n;
+  }
+
+  /** 2D 도면과 3D 문서를 연 차례대로 */
+  private orderedTabs(): { key: object; active: boolean; activate: () => void; el: () => HTMLElement }[] {
+    const app = this.app;
+    const out: { key: object; active: boolean; activate: () => void; el: () => HTMLElement }[] = [];
+    for (const d of app.docs) {
+      out.push({
+        key: d,
+        active: app.active === d,
+        activate: () => app.activate(d),
+        el: () => {
+          const x = h('button', { class: 'icon-btn x', title: '닫기', 'aria-label': `${d.name} 닫기`, html: icon('close2') });
+          x.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            app.close(d);
+          });
+          const dirty = d.session?.dirty;
+          const t = h('div', { class: `filetab ${app.active === d ? 'active' : ''}`, role: 'tab', title: `${d.saveName}${d.size ? ` (${formatBytes(d.size)})` : ''}${dirty ? ' · 저장하지 않은 변경 있음' : ''}` }, h('span', {}, `${d.saveName}${dirty ? ' *' : ''}`), x);
+          t.addEventListener('click', () => app.activate(d));
+          t.addEventListener('auxclick', (ev) => {
+            if ((ev as MouseEvent).button === 1) app.close(d);
+          });
+          return t;
+        },
+      });
+    }
+    for (const d of this.mode3d?.tabs() ?? []) {
+      out.push({
+        key: d.key,
+        active: d.active,
+        activate: d.activate,
+        el: () => {
+          const x = h('button', { class: 'icon-btn x', title: '닫기', 'aria-label': `${d.name} 닫기`, html: icon('close2') });
+          x.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            d.close();
+          });
+          const t = h('div', { class: `filetab filetab-3d ${d.active ? 'active' : ''}`, role: 'tab', title: `${d.title}${d.size ? ` · ${formatBytes(d.size)}` : ''}` }, h('b', { class: 'tab-badge' }, '3D'), h('span', {}, d.name), x);
+          t.addEventListener('click', () => d.activate());
+          t.addEventListener('auxclick', (ev) => {
+            if ((ev as MouseEvent).button === 1) d.close();
+          });
+          return t;
+        },
+      });
+    }
+    return out.sort((a, b) => this.serialOf(a.key) - this.serialOf(b.key));
+  }
+
   refreshTabs(): void {
     const app = this.app;
     this.fileTabs.innerHTML = '';
-    const startTab = h('div', { class: `filetab ${!app.active ? 'active' : ''}`, role: 'tab' }, h('span', {}, '시작'));
+    const startTab = h('div', { class: `filetab ${!app.active && !this.mode3d?.active ? 'active' : ''}`, role: 'tab' }, h('span', {}, '시작'));
     startTab.addEventListener('click', () => app.activate(null));
     this.fileTabs.append(startTab);
-    for (const d of app.docs) {
-      const x = h('button', { class: 'icon-btn x', title: '닫기', 'aria-label': `${d.name} 닫기`, html: icon('close2') });
-      x.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        app.close(d);
-      });
-      const dirty = d.session?.dirty;
-      const t = h('div', { class: `filetab ${app.active === d ? 'active' : ''}`, role: 'tab', title: `${d.saveName}${d.size ? ` (${formatBytes(d.size)})` : ''}${dirty ? ' · 저장하지 않은 변경 있음' : ''}` }, h('span', {}, `${d.saveName}${dirty ? ' *' : ''}`), x);
-      t.addEventListener('click', () => app.activate(d));
-      t.addEventListener('auxclick', (ev) => {
-        if ((ev as MouseEvent).button === 1) app.close(d);
-      });
-      this.fileTabs.append(t);
-    }
+    for (const t of this.orderedTabs()) this.fileTabs.append(t.el());
     const plus = h('button', { class: 'icon-btn', title: '열기', 'aria-label': '파일 열기', html: icon('plus') });
     plus.addEventListener('click', () => this.pickFiles());
     this.fileTabs.append(plus);
     revealX(this.fileTabs, this.fileTabs.querySelector<HTMLElement>('.filetab.active'));
     this.refreshRibbonState();
+  }
+
+  /** 다음·앞 탭(2D·3D 함께, Ctrl+Tab) */
+  cycleTabs(d: number): void {
+    const list = this.orderedTabs();
+    if (!list.length) return;
+    const i = list.findIndex((t) => t.active);
+    const n = list.length;
+    list[i < 0 ? (d > 0 ? 0 : n - 1) : (((i + d) % n) + n) % n]!.activate();
+  }
+
+  /** 3D 문서가 활성이 되거나 끝났을 때: 배치 클래스·리본·탭·상태 막대를 맞춘다 */
+  mode3dChanged(): void {
+    const on = !!this.mode3d?.active;
+    this.root.classList.toggle('mode-3d', on);
+    // 제목 막대·창 제목: 3D 문서를 보는 동안은 3D 뷰어
+    this.titleKind.textContent = on ? ' 3D 뷰어' : ' 2D 뷰어';
+    if (on) this.start.hidden = true;
+    document.querySelector('.ribbon-pop')?.remove();
+    this.buildRibbon();
+    this.refreshTabs();
+    this.refreshLayouts();
+    this.refreshStatus();
+    this.fitStatus();
   }
 
   refreshLayouts(): void {
@@ -1421,6 +1551,8 @@ export class Shell implements UiHooks {
   private spaceLabel = h('span', { class: 'status-text' });
   private unitLabel = h('span', { class: 'status-text' });
   private selLabel = h('span', { class: 'status-text' });
+  /** 3D 문서 동안의 상태 글(형식·단위·크기) */
+  private v3dStatus = h('span', { class: 'status-text v3d-status' });
   /** 주석 축척 항목(annoscale-status.ts) */
   private annoItems: AnnoStatus | null = null;
 
@@ -1482,6 +1614,7 @@ export class Shell implements UiHooks {
     // 넘치면 prio가 낮은 것부터 "⋯" 메뉴로 옮긴다(데스크톱 폭에서는 다 들어간다)
     const items: [HTMLElement | undefined, number][] = [
       [this.coords, 20],
+      [this.v3dStatus, 99],
       [sep(), 0],
       [this.spaceLabel, 10],
       [sep(), 0],
@@ -1641,6 +1774,7 @@ export class Shell implements UiHooks {
       this.selLabel.textContent = '';
       this.coords.textContent = '';
     }
+    this.v3dStatus.textContent = this.mode3d?.active ? this.mode3d.statusText() : '';
     this.annoItems?.refresh();
     this.refreshRibbonState();
     this.scheduleFitStatus();
@@ -1681,6 +1815,8 @@ export class Shell implements UiHooks {
   private recentList = h('div', { class: 'recent' });
 
   showStart(show: boolean): void {
+    // 3D 문서가 활성이면 시작 화면을 덮지 않는다(2D 열기에 실패해도)
+    if (this.mode3d?.active) show = false;
     this.start.hidden = !show;
     if (show) this.refreshRecent();
   }
@@ -1690,7 +1826,7 @@ export class Shell implements UiHooks {
       'div',
       { class: 'dropzone', role: 'button', tabindex: 0, 'aria-label': '도면 파일 열기' },
       iconSpan('folder', 'big'),
-      h('strong', {}, 'DXF·DWG 파일을 여기에 끌어다 놓으십시오'),
+      h('strong', {}, 'DXF·DWG·NC·STEP·SKP 파일을 여기에 끌어다 놓으십시오'),
       h('span', {}, '또는'),
       h('button', { class: 'btn primary', onclick: (ev: Event) => (ev.stopPropagation(), this.pickFiles()) }, iconSpan('open'), '파일 열기'),
     );
@@ -1699,6 +1835,7 @@ export class Shell implements UiHooks {
       if ((ev as KeyboardEvent).key === 'Enter') this.pickFiles();
     });
     const sample = h('button', { class: 'btn', onclick: () => void this.openSample() }, iconSpan('sample'), '예제 도면 열기');
+    const ncSample = h('button', { class: 'btn', onclick: () => void this.mode3d?.openSample() }, iconSpan('sample'), 'NC 예제 열기');
     this.start.append(
       h(
         'div',
@@ -1713,18 +1850,26 @@ export class Shell implements UiHooks {
             'div',
             { class: 'start-side' },
             h('div', { class: 'card' }, h('h3', {}, '최근 문서'), this.recentList),
-            h('div', { class: 'card' }, h('h3', {}, '처음이라면'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '예제 도면으로 기능을 둘러볼 수 있습니다.'), sample),
+            h('div', { class: 'card' }, h('h3', {}, '처음이라면'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '예제 도면으로 기능을 둘러볼 수 있습니다. NC 예제는 공구 경로를 3D로 재생합니다.'), h('div', { class: 'start-samples' }, sample, ncSample)),
             h(
               'div',
               { class: 'card' },
               h('h3', {}, '지원 범위'),
-              h('ul', {}, h('li', {}, 'DXF R12~R2018(ASCII·이진)'), h('li', {}, 'DWG R13~R2018'), h('li', {}, '모형·배치, 도면층, 블록, 치수, 해치, 문자'), h('li', {}, '측정, 객체 스냅, 특성 보기, PNG·SVG·PDF 내보내기')),
+              h(
+                'ul',
+                {},
+                h('li', {}, 'DXF R12~R2018(ASCII·이진)'),
+                h('li', {}, 'DWG R13~R2018'),
+                h('li', {}, '모형·배치, 도면층, 블록, 치수, 해치, 문자'),
+                h('li', {}, '측정, 객체 스냅, 특성 보기, PNG·SVG·PDF 내보내기'),
+                h('li', {}, '3D 보기: NC(G-code·Heidenhain·woodWOP MPR) 공구 경로와 재생, STEP(AP203·214·242), SketchUp(.skp, 2021 이후)'),
+              ),
             ),
           ),
         ),
         h(
           'div',
-          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
+          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D·3D 뷰어입니다(MIT). NC·STEP·SKP는 3D 문서 탭으로 엽니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
         ),
       ),
     );
@@ -1742,7 +1887,7 @@ export class Shell implements UiHooks {
       const b = h('button', {}, h('span', {}, r.name), h('small', {}, `${formatBytes(r.size)} · ${new Date(r.time).toLocaleDateString('ko-KR')}`));
       b.addEventListener('click', async () => {
         const data = await this.recent.get(r.id);
-        if (data) void this.app.openFile(r.name, data);
+        if (data) void this.openData(r.name, data);
         else toast('저장된 파일을 찾지 못했습니다.', 'warn');
       });
       this.recentList.append(b);
