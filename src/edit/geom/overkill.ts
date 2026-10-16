@@ -30,6 +30,17 @@ export interface OverkillOptions {
   combineOverlap?: boolean;
   /** 끝과 끝 결합(기본 참) */
   combineEndToEnd?: boolean;
+  /** 폴리선 세그먼트 폭 무시: 폭 있는 폴리선도 덮기·최적화에 쓴다(기본 거짓) */
+  ignoreWidths?: boolean;
+  /** 폴리선 분할 안 함: 폴리선은 바꾸지 않는다(최적화하지 않는다, 기본 거짓) */
+  noBreakPolylines?: boolean;
+  /** 연관 객체 유지: 반응자가 있는 객체(연관 치수·해치·배열의 형상)는 지우거나 바꾸지 않는다(기본 거짓) */
+  keepAssociative?: boolean;
+}
+
+/** 연관 객체(반응자가 붙은 형상) */
+function isAssociative(e: Entity): boolean {
+  return !!e.reactors?.length;
 }
 
 export interface OverkillResult {
@@ -157,6 +168,8 @@ export function overkill(list: readonly Entity[], opt: OverkillOptions = {}): Ov
   const ignore = new Set(opt.ignore ?? []);
   const combineOverlap = opt.combineOverlap ?? true;
   const combineEnd = opt.combineEndToEnd ?? true;
+  const keep = opt.keepAssociative ? isAssociative : () => false;
+  const wide = !!opt.ignoreWidths;
   const removed = new Set<string>();
   const replaced = new Map<string, Entity>();
   const added: Entity[] = [];
@@ -184,8 +197,11 @@ export function overkill(list: readonly Entity[], opt: OverkillOptions = {}): Ov
         for (let j = i + 1; j < b.length && b[j]!.first - b[i]!.first <= tol; j++) {
           if (gone.has(j)) continue;
           if (!sameTokens(b[i]!.tok, b[j]!.tok, tol)) continue;
-          // 먼저 고른 것이 남는다
-          const drop = b[i]!.it.rank <= b[j]!.it.rank ? j : i;
+          // 먼저 고른 것이 남는다(연관 객체 유지면 연관 객체를 남긴다, 둘 다 연관이면 둘 다)
+          const ki = keep(b[i]!.it.e);
+          const kj = keep(b[j]!.it.e);
+          if (ki && kj) continue;
+          const drop = ki ? j : kj ? i : b[i]!.it.rank <= b[j]!.it.rank ? j : i;
           gone.add(drop);
           removed.add(b[drop]!.it.e.handle);
           duplicates++;
@@ -197,7 +213,7 @@ export function overkill(list: readonly Entity[], opt: OverkillOptions = {}): Ov
   const alive = items.filter((it) => !removed.has(it.e.handle));
 
   // 2. 같은 직선 위의 선
-  overlaps += lineOverlaps(alive, tol, combineOverlap, combineEnd, removed, replaced);
+  overlaps += lineOverlaps(alive, tol, combineOverlap, combineEnd, removed, replaced, keep, wide);
   // 3. 같은 원 위의 호
   overlaps += arcOverlaps(
     alive.filter((it) => !removed.has(it.e.handle)),
@@ -207,12 +223,14 @@ export function overkill(list: readonly Entity[], opt: OverkillOptions = {}): Ov
     removed,
     replaced,
     added,
+    keep,
+    wide,
   );
-  // 4. 폴리선 최적화
-  if (opt.optimizePolylines ?? true) {
+  // 4. 폴리선 최적화(폴리선 분할 안 함이면 건너뛴다)
+  if ((opt.optimizePolylines ?? true) && !opt.noBreakPolylines) {
     for (const it of alive) {
-      if (removed.has(it.e.handle) || it.e.type !== 'LWPOLYLINE') continue;
-      const r = optimizeLw(it.e, tol);
+      if (removed.has(it.e.handle) || it.e.type !== 'LWPOLYLINE' || keep(it.e)) continue;
+      const r = optimizeLw(it.e, tol, wide);
       if (r) {
         replaced.set(it.e.handle, r.e);
         overlaps += r.removed;
@@ -262,18 +280,29 @@ function segOf(a: { x: number; y: number }, b: { x: number; y: number }): { th: 
   return { th, c: ux * a.y - uy * a.x };
 }
 
-function lineOverlaps(items: Item[], tol: number, combineOverlap: boolean, combineEnd: boolean, removed: Set<string>, replaced: Map<string, Entity>): number {
+function lineOverlaps(
+  items: Item[],
+  tol: number,
+  combineOverlap: boolean,
+  combineEnd: boolean,
+  removed: Set<string>,
+  replaced: Map<string, Entity>,
+  keep: (e: Entity) => boolean = () => false,
+  wide = false,
+): number {
   const segs: Seg[] = [];
   for (const it of items) {
     const e = it.e;
     if (e.type === 'LINE') {
       if (Math.abs(e.start.z - e.end.z) > tol) continue;
       const s = segOf(e.start, e.end);
-      if (s) segs.push({ it, fixed: false, a: e.start, b: e.end, z: e.start.z, pk: it.pk, rank: it.rank, ...s });
+      // 연관 객체 유지: 덮기만 하고 바뀌지 않는다
+      const fixed = keep(e);
+      if (s) segs.push({ it: fixed ? null : it, fixed, a: e.start, b: e.end, z: e.start.z, pk: it.pk, rank: it.rank, ...s });
     } else if (e.type === 'LWPOLYLINE' || (e.type === 'POLYLINE' && e.kind === '2d')) {
       const path = entityPath(e);
       if (!path) continue;
-      if (path.pieces.some((p) => (p.w0 ?? 0) > 0 || (p.w1 ?? 0) > 0)) continue;
+      if (!wide && path.pieces.some((p) => (p.w0 ?? 0) > 0 || (p.w1 ?? 0) > 0)) continue;
       for (const p of path.pieces) {
         if (p.k !== 'line') continue;
         const s = segOf(p.a, p.b);
@@ -415,7 +444,17 @@ function planArc(e: ArcEntity | CircleEntity): ArcPiece | null {
   return pc && pc.k === 'arc' ? pc : null;
 }
 
-function arcOverlaps(items: Item[], tol: number, combineOverlap: boolean, combineEnd: boolean, removed: Set<string>, replaced: Map<string, Entity>, added: Entity[]): number {
+function arcOverlaps(
+  items: Item[],
+  tol: number,
+  combineOverlap: boolean,
+  combineEnd: boolean,
+  removed: Set<string>,
+  replaced: Map<string, Entity>,
+  added: Entity[],
+  keep: (e: Entity) => boolean = () => false,
+  wide = false,
+): number {
   const arcs: ArcItem[] = [];
   for (const it of items) {
     const e = it.e;
@@ -423,8 +462,9 @@ function arcOverlaps(items: Item[], tol: number, combineOverlap: boolean, combin
       const pc = planArc(e);
       if (!pc) continue;
       const z = entityPath(e)!.z;
-      arcs.push({ it, fixed: false, full: e.type === 'CIRCLE', c: pc.c, r: pc.r, a0: normAngle(pc.a0), sw: Math.abs(pc.sw), z, pk: it.pk, rank: it.rank });
-    } else if (e.type === 'LWPOLYLINE' && !e.widths?.some((w) => w > 0) && !(e.constantWidth > 0)) {
+      const fixed = keep(e);
+      arcs.push({ it: fixed ? null : it, fixed, full: e.type === 'CIRCLE', c: pc.c, r: pc.r, a0: normAngle(pc.a0), sw: Math.abs(pc.sw), z, pk: it.pk, rank: it.rank });
+    } else if (e.type === 'LWPOLYLINE' && (wide || (!e.widths?.some((w) => w > 0) && !(e.constantWidth > 0)))) {
       for (const p of bulgePieces(lwVerts(e), e.closed, planProj(e.extrusion, e.elevation))) {
         if (p.k !== 'arc') continue;
         const a0 = p.sw >= 0 ? p.a0 : p.a0 + p.sw;
@@ -540,9 +580,10 @@ function cocircular(g: ArcItem[], tol: number, combineOverlap: boolean, combineE
 // 폴리선 최적화
 // ---------------------------------------------------------------------------
 
-function optimizeLw(e: LwPolylineEntity, tol: number): { e: LwPolylineEntity; removed: number } | null {
+function optimizeLw(e: LwPolylineEntity, tol: number, ignoreWidths = false): { e: LwPolylineEntity; removed: number } | null {
   const vs = lwVertices(e);
-  if (vs.some((v) => Math.abs(v.startWidth - vs[0]!.startWidth) > 1e-12 || Math.abs(v.endWidth - vs[0]!.startWidth) > 1e-12)) return null;
+  // 정점마다 폭이 다르면 건드리지 않는다(폭 무시면 합친 세그먼트는 앞 정점의 폭을 잇는다)
+  if (!ignoreWidths && vs.some((v) => Math.abs(v.startWidth - vs[0]!.startWidth) > 1e-12 || Math.abs(v.endWidth - vs[0]!.startWidth) > 1e-12)) return null;
   let removed = 0;
   let changed = true;
   while (changed && vs.length > 2) {

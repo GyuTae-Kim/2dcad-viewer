@@ -1,5 +1,6 @@
 /**
- * OFFSET: 선·호·원·폴리선(볼록도, OFFSETGAPTYPE = 0 — 세그먼트를 연장해 만나게, 만나지 않으면 꼭짓점 둘레 호),
+ * OFFSET: 선·호·원·폴리선(볼록도, OFFSETGAPTYPE = 0 — 세그먼트를 연장해 만나게, 만나지 않으면 꼭짓점 둘레 호.
+ * 1이면 바깥 꼭짓점의 틈을 꼭짓점 중심 호로, 2면 거리만큼 떨어진 모따기 선으로),
  * 타원·스플라인(간격띄운 곡선 위의 점을 지나는 3차 스플라인), 구성선·광선.
  * 원본에서 거리보다 가까워진 부분(자기 교차로 생긴 고리)은 잘라 낸다.
  */
@@ -11,7 +12,12 @@ import { type Nurbs, interpolate, joinNurbs, nurbsPoint, periodicInterpolate } f
 import { entityPath, inherit, makeArc, makePolyline, makeSpline, tinyPiece } from './path';
 import { type EditResult, MSG } from './types';
 
-export function offsetEntity(e: Entity, distance: number, side: Vec2): EditResult {
+/** OFFSET 옵션. gapType = OFFSETGAPTYPE(0 연장해 만나게, 1 모깎기 호, 2 모따기 선 — 닫히거나 꺾인 폴리선의 바깥 꼭짓점 틈) */
+export interface OffsetOptions {
+  gapType?: 0 | 1 | 2;
+}
+
+export function offsetEntity(e: Entity, distance: number, side: Vec2, opts: OffsetOptions = {}): EditResult {
   const d = Math.abs(distance);
   if (!(d > 0) || !Number.isFinite(d)) return { message: MSG.offsetDistance };
   switch (e.type) {
@@ -50,7 +56,7 @@ export function offsetEntity(e: Entity, distance: number, side: Vec2): EditResul
       const path = entityPath(e);
       if (!path) return { message: MSG.cannotOffset };
       if (path.pieces.some((p) => p.k !== 'line' && p.k !== 'arc')) return offsetGeneric(e, path, d, side);
-      return offsetPolyline(e, path, d, side);
+      return offsetPolyline(e, path, d, side, opts.gapType ?? 0);
     }
     default:
       return { message: MSG.cannotOffset };
@@ -140,7 +146,26 @@ function joinPoint(P: Piece, Q: Piece, corner: Vec2, o: number): Vec2 | null {
   return best;
 }
 
-export function offsetPolyline(e: Entity, path: Path, d: number, side: Vec2): EditResult {
+/** 꼭짓점이 바깥쪽(간격띄운 두 조각 사이가 벌어지는 쪽)인지: 꺾이는 방향과 간격띄우는 쪽이 반대 */
+function outerCorner(P: Piece, Q: Piece, o: number): boolean {
+  const c = cross(pieceTangent(P, 1), pieceTangent(Q, 0));
+  return Math.abs(c) > 1e-9 && c * o < 0;
+}
+
+/** 모따기 틈(OFFSETGAPTYPE 2): 꼭짓점에서 거리 d인 선(이등분선에 수직)까지 두 조각을 접선으로 늘인 점 */
+function chamferGap(a: Vec2, ta: Vec2, b: Vec2, tb: Vec2, corner: Vec2, d: number): [Vec2, Vec2] | null {
+  const u = norm(add(sub(a, corner), sub(b, corner)));
+  if (!(Math.hypot(u.x, u.y) > 0)) return null;
+  const da = ta.x * u.x + ta.y * u.y;
+  const db = tb.x * u.x + tb.y * u.y;
+  if (Math.abs(da) < 1e-12 || Math.abs(db) < 1e-12) return null;
+  const t = (d - ((a.x - corner.x) * u.x + (a.y - corner.y) * u.y)) / da;
+  const s = ((b.x - corner.x) * u.x + (b.y - corner.y) * u.y - d) / db;
+  if (t < -1e-12 || s < -1e-12) return null;
+  return [add(a, mul(ta, t)), sub(b, mul(tb, s))];
+}
+
+export function offsetPolyline(e: Entity, path: Path, d: number, side: Vec2, gapType: 0 | 1 | 2 = 0): EditResult {
   const o = sideOf(path, side) * d;
   const src = path.pieces;
   const raw: Raw[] = [];
@@ -155,13 +180,43 @@ export function offsetPolyline(e: Entity, path: Path, d: number, side: Vec2): Ed
   const joined: Raw[] = [];
   const starts: Vec2[] = raw.map((r) => pieceAt(r.p, 0));
   const ends: Vec2[] = raw.map((r) => pieceAt(r.p, 1));
-  const bridges: (Piece | null)[] = new Array(n).fill(null);
+  const bridges: (Piece | Piece[] | null)[] = new Array(n).fill(null);
   const joins = closed ? n : n - 1;
   for (let k = 0; k < joins; k++) {
     const P = raw[k]!;
     const Q = raw[(k + 1) % n]!;
     // 원래 꼭짓점: Q 원본 세그먼트의 시작
     const corner = pieceAt(src[Q.src]!, 0);
+    const pe = pieceAt(P.p, 1);
+    const qs = pieceAt(Q.p, 0);
+    // OFFSETGAPTYPE 1·2: 바깥 꼭짓점의 틈을 호(꼭짓점 중심, 반지름 = 거리)나 모따기 선으로 잇는다
+    if (gapType !== 0 && dist(pe, qs) > 1e-9 * Math.max(1, d) && outerCorner(src[P.src]!, src[Q.src]!, o)) {
+      if (gapType === 1) {
+        const a0 = angleOf(sub(pe, corner));
+        const sw = wrapPi(angleOf(sub(qs, corner)) - a0);
+        const br: ArcPiece = { k: 'arc', c: corner, r: dist(pe, corner), a0, sw };
+        if (P.p.w1 !== undefined || Q.p.w0 !== undefined) {
+          br.w0 = P.p.w1 ?? 0;
+          br.w1 = Q.p.w0 ?? 0;
+        }
+        bridges[k] = br;
+        continue;
+      }
+      const cg = chamferGap(pe, pieceTangent(P.p, 1), qs, pieceTangent(Q.p, 0), corner, d);
+      if (cg) {
+        const [A, B] = cg;
+        const wide = P.p.w1 !== undefined || Q.p.w0 !== undefined ? { w0: P.p.w1 ?? 0, w1: Q.p.w0 ?? 0 } : {};
+        // 선은 그대로 늘이고, 호는 접선 방향 선을 덧붙인다
+        const list: Piece[] = [];
+        if (P.p.k === 'line') ends[k] = A;
+        else list.push({ k: 'line', a: pe, b: A, ...wide });
+        list.push({ k: 'line', a: A, b: B, ...wide });
+        if (Q.p.k === 'line') starts[(k + 1) % n] = B;
+        else list.push({ k: 'line', a: B, b: qs, ...wide });
+        bridges[k] = list;
+        continue;
+      }
+    }
     const x = joinPoint(P.p, Q.p, corner, o);
     if (x) {
       ends[k] = x;
@@ -184,7 +239,8 @@ export function offsetPolyline(e: Entity, path: Path, d: number, side: Vec2): Ed
     const r = raw[k]!;
     joined.push({ p: withEnds(r.p, starts[k]!, ends[k]!), src: r.src });
     const br = bridges[k];
-    if (br) joined.push({ p: br, src: -1 });
+    if (Array.isArray(br)) for (const b of br) joined.push({ p: b, src: -1 });
+    else if (br) joined.push({ p: br, src: -1 });
   }
   const pieces = joined.map((r) => r.p).filter((p) => !tinyPiece(p));
   const chains = pruneOffset(pieces, closed, path, d);

@@ -483,14 +483,16 @@ function thomas(n: number, a: number, b: number[], c: number, r: number[]): numb
  * 점들을 지나는 p차 B 스플라인(현 길이 매개변수, 평균 매듭 — NURBS Book 9.2.1).
  * 행렬이 띠 모양이라 피벗 없이 띠 안에서만 소거한다(점 수에 비례).
  */
-export function interpolate(Q: readonly Vec3[], degree = 3): Nurbs | null {
+export function interpolate(Q: readonly Vec3[], degree = 3, param: 'chord' | 'sqrt' | 'uniform' = 'chord'): Nurbs | null {
   const n = Q.length;
   if (n < 2) return null;
   const p = Math.max(1, Math.min(degree, n - 1));
   const t: number[] = [0];
   let total = 0;
+  // 매개변수(SPLINE 매듭(K)): 현 길이, 제곱근(구심), 균일
   for (let i = 1; i < n; i++) {
-    total += Math.hypot(Q[i]!.x - Q[i - 1]!.x, Q[i]!.y - Q[i - 1]!.y, Q[i]!.z - Q[i - 1]!.z);
+    const d = Math.hypot(Q[i]!.x - Q[i - 1]!.x, Q[i]!.y - Q[i - 1]!.y, Q[i]!.z - Q[i - 1]!.z);
+    total += param === 'uniform' ? (d > 0 ? 1 : 0) : param === 'sqrt' ? Math.sqrt(d) : d;
     t.push(total);
   }
   if (!(total > 0)) return null;

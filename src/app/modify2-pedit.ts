@@ -8,6 +8,7 @@ import { entityPath } from '../edit/geom/path';
 import { pathEnd, pathStart } from '../edit/geom/curve';
 import {
   type PolyEntity,
+  breakAtVertices,
   decurve,
   fitKind,
   fitPolyline,
@@ -22,8 +23,10 @@ import {
   setClosed,
   setLinetypeGen,
   setSegmentWidth,
+  setVertexTangent,
   setWidth,
   splinePolyline,
+  straightenBetween,
   splineToPolyline,
   toOcs,
   toPolyline,
@@ -33,10 +36,13 @@ import {
   closeSpline,
   cvAdd,
   cvCount,
+  cvDelete,
   cvMove,
   cvWeight,
+  elevateOrder,
   fitAdd,
   fitDelete,
+  fitKink,
   fitMove,
   fitTangents,
   fitTolerance,
@@ -331,30 +337,95 @@ async function vertexEdit(app: App, ctx: CommandContext, t: Tools, h: string): P
     t.mark([{ p: vertexPoint(e, vs[i]!), text: `${i + 1}` }]);
   };
   const segs = Math.round(hnum(app.active!.doc, '$SPLINESEGS', 8)) || 8;
+  // 기본값은 마지막으로 고른 다음(N)·이전(P) — AutoCAD와 같다
+  let dflt: 'N' | 'P' = 'N';
+  const step = (e: PolyEntity, k: 'N' | 'P', at: number) => {
+    const n = frameVerts(e).length;
+    if (isClosed(e)) return k === 'N' ? (at + 1) % n : (at - 1 + n) % n;
+    return k === 'N' ? Math.min(n - 1, at + 1) : Math.max(0, at - 1);
+  };
+  /** 끊기(B)·직선화(S): 표시한 정점에서 두 번째 정점으로 옮긴 뒤 실행(G) */
+  const twoMarks = async (e: PolyEntity, first: number): Promise<number | null> => {
+    let j = first;
+    let d2: 'N' | 'P' = 'N';
+    for (;;) {
+      const vs = frameVerts(e);
+      t.mark([
+        { p: vertexPoint(e, vs[first]!), text: `${first + 1}` },
+        ...(j !== first ? [{ p: vertexPoint(e, vs[j]!), text: `${j + 1}` }] : []),
+      ]);
+      const r = await ctx.getPoint(`옵션 입력 [다음(N)/이전(P)/실행(G)/종료(X)] <${d2}>:`, {
+        keywords: kwsOf([
+          ['N', '다음'],
+          ['P', '이전'],
+          ['G', '실행'],
+          ['X', '종료'],
+        ]),
+      });
+      const k: string | null = 'keyword' in r ? r.keyword : 'enter' in r ? d2 : null;
+      if (!k || k === 'X') return null;
+      if (k === 'G') return j;
+      if (k === 'N' || k === 'P') {
+        d2 = k;
+        j = step(e, k, j);
+      }
+    }
+  };
   try {
     for (;;) {
       const e = t.get(h);
       if (!e || !isPolyline(e)) return;
       const vs = frameVerts(e);
       show(e);
-      const r = await ctx.getPoint('정점 편집 옵션 입력 [다음(N)/이전(P)/삽입(I)/이동(M)/삭제(D)/폭(W)/종료(X)] <N>:', {
+      const r = await ctx.getPoint(`정점 편집 옵션 입력 [다음(N)/이전(P)/끊기(B)/삽입(I)/이동(M)/재생성(R)/직선화(S)/접선(T)/폭(W)/종료(X)] <${dflt}>:`, {
         keywords: kwsOf([
           ['N', '다음'],
           ['P', '이전'],
+          ['B', '끊기'],
           ['I', '삽입'],
           ['M', '이동'],
-          ['D', '삭제'],
+          ['R', '재생성'],
+          ['S', '직선화'],
+          ['T', '접선'],
           ['W', '폭'],
           ['X', '종료'],
         ]),
       });
-      const k = 'keyword' in r ? r.keyword : 'enter' in r ? 'N' : null;
+      const k: string | null = 'keyword' in r ? r.keyword : 'enter' in r ? dflt : null;
       if (!k || k === 'X') return;
       const cur = vertexPoint(e, vs[i]!);
-      const closed = isClosed(e);
-      if (k === 'N') i = closed ? (i + 1) % vs.length : Math.min(vs.length - 1, i + 1);
-      else if (k === 'P') i = closed ? (i - 1 + vs.length) % vs.length : Math.max(0, i - 1);
-      else if (k === 'I') {
+      if (k === 'N' || k === 'P') {
+        dflt = k;
+        i = step(e, k, i);
+      } else if (k === 'R') {
+        // 재생성: 화면을 다시 그린다(이 앱은 늘 최신이라 표시만 맞춘다)
+        app.view.requestRender();
+      } else if (k === 'B') {
+        const j = await twoMarks(e, i);
+        if (j === null) continue;
+        const res = breakAtVertices(e, i, j, segs);
+        if (!res) {
+          ctx.print(i === j ? '끝 정점에서는 끊을 수 없습니다.' : '폴리선을 끊을 수 없습니다.', 'err');
+          continue;
+        }
+        const after = { ...res.first, handle: e.handle } as Entity;
+        t.commit([{ replace: [after], ...(res.second ? { add: [res.second as Entity] } : {}) }], [h]);
+        i = Math.min(i, j);
+      } else if (k === 'S') {
+        const j = await twoMarks(e, i);
+        if (j === null) continue;
+        if (t.apply(e, straightenBetween(e, i, j, segs), [h], '직선화할 세그먼트가 없습니다.')) i = Math.min(i, j);
+      } else if (k === 'T') {
+        if (is3d(e)) {
+          ctx.print('3D 폴리선에는 접선을 붙일 수 없습니다.', 'err');
+          continue;
+        }
+        const q = await ctx.getPoint('접선 방향 지정:', { base: cur, preferNumber: true });
+        let a: number | null = null;
+        if ('point' in q && Math.hypot(q.point.x - cur.x, q.point.y - cur.y) > 1e-12) a = Math.atan2(q.point.y - cur.y, q.point.x - cur.x);
+        else if ('text' in q && Number.isFinite(parseFloat(q.text))) a = (parseFloat(q.text) * Math.PI) / 180;
+        if (a !== null) t.apply(e, setVertexTangent(e, i, a, segs));
+      } else if (k === 'I') {
         const q = await ctx.getPoint('새 정점 위치 지정:', { base: cur, ghost: (p) => previewOf(app, [insertVertex(e, i, toOcs(e, p), segs)]) });
         if ('point' in q && t.apply(e, insertVertex(e, i, toOcs(e, q.point), segs))) i++;
       } else if (k === 'M') {
@@ -618,7 +689,7 @@ async function fitData(app: App, ctx: CommandContext, t: Tools, h: string): Prom
       if (!e || e.type !== 'SPLINE' || !isFitSpline(e)) return;
       t.mark(fitPts(e).map((p) => ({ p })));
       const closed = isSplineClosed(e);
-      const list: [string, string][] = [['A', '추가'], [closed ? 'O' : 'C', closed ? '열기' : '닫기'], ['D', '삭제'], ['M', '이동'], ['P', '소거'], ['T', '접선'], ['L', '공차'], ['X', '종료']];
+      const list: [string, string][] = [['A', '추가'], [closed ? 'O' : 'C', closed ? '열기' : '닫기'], ['D', '삭제'], ['K', '꼬임'], ['M', '이동'], ['P', '소거'], ['T', '접선'], ['L', '공차'], ['X', '종료']];
       const r = await ctx.getPoint(`맞춤 데이터 옵션 입력 [${textOf(list)}] <종료>:`, { keywords: kwsOf(list) });
       if (!('keyword' in r) || r.keyword === 'X') return;
       switch (r.keyword) {
@@ -661,6 +732,17 @@ async function fitData(app: App, ctx: CommandContext, t: Tools, h: string): Prom
             t.apply(cur, fitDelete(cur, nearestIndex(fitPts(cur), q.point)), [h], `맞춤점이 ${isSplineClosed(cur) ? 3 : 2}개보다 적어질 수 없습니다.`);
           }
           break;
+        case 'K': {
+          // 꼬임: 그 점에 맞춤점을 넣고 접선을 끊는다(맞춤 데이터는 꼬임을 담지 못해 조정점 정의가 된다)
+          if (closed) {
+            ctx.print('닫힌 스플라인에는 꼬임을 넣을 수 없습니다.', 'err');
+            break;
+          }
+          const q = await ctx.getPoint('스플라인에 점 지정 <종료>:', { ghost: (p) => previewOf(app, [fitKink(e, p)]) });
+          if (!('point' in q)) break;
+          if (t.apply(e, fitKink(e, q.point), [h], '그 점에는 꼬임을 넣을 수 없습니다.')) ctx.print('꼬임을 넣었습니다. 맞춤 데이터는 조정점 정의로 바뀌었습니다.');
+          break;
+        }
         case 'M':
           await walkPoints(ctx, t, h, fitPts, () => '새 위치 지정', (x, i, rr) => ('point' in rr ? fitMove(x, i, rr.point) : null), { ghost: (x, i, p) => previewOf(app, [fitMove(x, i, p)]) });
           break;
@@ -706,10 +788,22 @@ async function cvEdit(app: App, ctx: CommandContext, t: Tools, h: string): Promi
       const e = t.get(h) as SplineEntity | undefined;
       if (!e || e.type !== 'SPLINE') return;
       t.mark(cvPts(e).map((p) => ({ p })));
-      const list: [string, string][] = [['A', '추가'], ['M', '이동'], ['W', '가중치'], ['X', '종료']];
+      const list: [string, string][] = [['A', '추가'], ['D', '삭제'], ['E', '순서 올리기'], ['M', '이동'], ['W', '가중치'], ['X', '종료']];
       const r = await ctx.getPoint(`정점 편집 옵션 입력 [${textOf(list)}] <종료>:`, { keywords: kwsOf(list) });
       if (!('keyword' in r) || r.keyword === 'X') return;
-      if (r.keyword === 'A') {
+      if (r.keyword === 'D') {
+        for (;;) {
+          const cur = t.get(h) as SplineEntity;
+          t.mark(cvPts(cur).map((p) => ({ p })));
+          const q = await ctx.getPoint('스플라인에서 점 지정 <종료>:');
+          if (!('point' in q)) break;
+          t.apply(cur, cvDelete(cur, nearestIndex(cvPts(cur), q.point)), [h], '정점이 너무 적어 더 지울 수 없습니다.');
+        }
+      } else if (r.keyword === 'E') {
+        const order = e.degree + 1;
+        const v = await askNumber(ctx, '새 순서 입력', Math.min(26, order + 1), { int: true, min: order, max: 26, distance: false });
+        if (typeof v === 'number' && v > order) t.apply(e, elevateOrder(e, v), [h], '순서를 올릴 수 없습니다.');
+      } else if (r.keyword === 'A') {
         if (isPeriodicForm(e)) {
           ctx.print('닫힌(주기) 스플라인에는 정점을 추가할 수 없습니다.', 'err');
           continue;
