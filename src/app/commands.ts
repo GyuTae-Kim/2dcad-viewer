@@ -9,6 +9,7 @@ import { entityLength, entityProperties, hatchArea, polyArea, ringArea, ringPeri
 import type { Pt } from './view';
 import { h } from './ui/dom';
 import { lwVertices } from '../core/lwpoly';
+import { updateFieldsOn } from './fieldcmds';
 
 function pointOf(r: PointResult): Pt | null {
   return 'point' in r ? r.point : null;
@@ -112,6 +113,8 @@ export function registerCommands(app: App): void {
     aliases: ['RE', 'REGENALL', 'REA'],
     title: '재생성',
     run: () => {
+      // FIELDEVAL 재생성 비트
+      updateFieldsOn(app, 'regen');
       app.active?.touchLayers();
       app.view.requestRender();
     },

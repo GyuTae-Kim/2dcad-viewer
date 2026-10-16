@@ -14,6 +14,7 @@ import type { DocState } from './docstate';
 import { baseName, download } from './export';
 import { form } from './ui/dom';
 import { prefGet } from './mgr-ui';
+import { updateFieldsOn } from './fieldcmds';
 
 interface SaveTarget {
   format: SaveFormat;
@@ -177,10 +178,20 @@ export function registerSaveCommands(app: App): void {
     name: 'QSAVE',
     title: '저장',
     async run(ctx) {
+      // FIELDEVAL 저장 비트: 저장하기 전에 필드를 다시 계산한다
+      updateFieldsOn(app, 'save', { fileName: app.active!.saveName });
       await quickSave(app, ctx, app.active!);
     },
   });
-  app.register({ name: 'SAVEAS', aliases: ['SAVE', 'DXFOUT'], title: '다른 이름으로 저장', run: (ctx) => saveAs(app, ctx) });
+  app.register({
+    name: 'SAVEAS',
+    aliases: ['SAVE', 'DXFOUT'],
+    title: '다른 이름으로 저장',
+    run: (ctx) => {
+      updateFieldsOn(app, 'save', { fileName: app.active!.saveName });
+      return saveAs(app, ctx);
+    },
+  });
 
   app.register({
     name: 'NEW',

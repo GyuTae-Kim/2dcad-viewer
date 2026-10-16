@@ -396,7 +396,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         cols: [
           [
             { cmd: 'TEXT', label: '단일 행', icon: 'text', tip: '단일 행 문자 (DT)' },
-            { cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' },
+            { cmd: 'FIND', label: '찾기 및 대치', icon: 'find', tip: '도면 안의 문자를 찾아 이동하거나 바꿉니다 (FIND)' },
             { cmd: 'STYLE', label: '문자 스타일', icon: 'text', tip: '문자 스타일 (ST)' },
           ],
           [
@@ -588,7 +588,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DIMLIST', label: '치수 목록', icon: 'dimlist' },
           ],
           [
-            { cmd: 'FIND', label: '문자 찾기', icon: 'find' },
+            { cmd: 'FIND', label: '찾기 및 대치', icon: 'find' },
             { cmd: 'DWGINFO', label: '도면 정보', icon: 'info' },
             { cmd: 'UNITS', label: '도면 단위', icon: 'coord' },
           ],
