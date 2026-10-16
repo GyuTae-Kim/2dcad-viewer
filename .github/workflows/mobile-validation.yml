@@ -1,0 +1,79 @@
+name: Mobile validation
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:seo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: content-history
+          path: site/content-history.json
+      - run: npm run build
+      - name: Build comparison baseline in the same CI checkout
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p .runtime/performance
+          mv dist .runtime/performance/candidate
+          git restore site/content-history.json
+          git fetch --no-tags origin "$BASE_SHA"
+          git checkout --detach "$BASE_SHA"
+          npm ci
+          npm run build
+          mv dist .runtime/performance/baseline
+          git checkout --detach "$GITHUB_SHA"
+      - name: Install Korean glyphs for representative browser rendering
+        run: sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+      - name: Compare cold mobile loads
+        timeout-minutes: 8
+        run: |
+          npm install --prefix "$RUNNER_TEMP/mobile-audit" --no-package-lock --no-audit --no-fund lighthouse@13.5.0 @playwright/cli
+          node tools/serve-performance.mjs .runtime/performance/baseline 4320 > "$RUNNER_TEMP/mobile-baseline.log" 2>&1 &
+          baseline_pid=$!
+          node tools/serve-performance.mjs .runtime/performance/candidate 4321 > "$RUNNER_TEMP/mobile-candidate.log" 2>&1 &
+          candidate_pid=$!
+          trap 'kill "$baseline_pid" "$candidate_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4320/ > /dev/null && curl --fail --silent http://127.0.0.1:4321/ > /dev/null; then break; fi
+            sleep 0.2
+          done
+          for round in 1 2 3; do
+            for variant in baseline candidate; do
+              port=4320
+              if [ "$variant" = candidate ]; then port=4321; fi
+              "$RUNNER_TEMP/mobile-audit/node_modules/.bin/lighthouse" "http://127.0.0.1:$port/" --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader" --only-categories=performance,accessibility,best-practices,seo --output=json --output=html --output-path=".runtime/performance/$variant-$round" --quiet
+            done
+          done
+          node tools/performance-summary.mjs .runtime/performance >> "$GITHUB_STEP_SUMMARY"
+          cli="$RUNNER_TEMP/mobile-audit/node_modules/.bin/playwright-cli"
+          session="mobile-$GITHUB_RUN_ID"
+          trap '"$cli" -s="$session" close || true; kill "$baseline_pid" "$candidate_pid" 2>/dev/null || true' EXIT
+          "$cli" -s="$session" open http://127.0.0.1:4321/ --config=tools/mobile-browser.json
+          "$cli" -s="$session" run-code "async (page) => { await page.getByRole('button', {name:'파일 열기',exact:true}).click(); }"
+          "$cli" -s="$session" upload public/samples/opencad-sample.dxf
+          "$cli" -s="$session" run-code "$(cat tools/mobile-browser-check.js)" | tee .runtime/performance/browser.txt
+          node tools/check-browser-result.mjs .runtime/performance/browser.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-validation
+          include-hidden-files: true
+          path: |
+            .runtime/performance/*.json
+            .runtime/performance/*.html
+            .runtime/performance/*.png
+            .runtime/performance/*.txt
