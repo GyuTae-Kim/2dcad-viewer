@@ -3,6 +3,8 @@
  * 직접 조작 입력(AutoCAD 2026 기본 설정과 같게): 동적 입력 칸·상대 좌표(dyninput.ts), 객체 스냅 재지정(osnap-override.ts),
  * 연장선·평행 획득(snap.ts), 선택한 객체 끌어 옮기기(dragmove.ts), 올가미(lasso.ts), 오른쪽 클릭 메뉴(ctxmenu.ts),
  * Ctrl 단축키(keys.ts), 다기능 그립 메뉴·여러 핫 그립, Shift 임시 직교. 화면 이벤트는 view.ts가 넘긴다.
+ * OPTIONS·시스템 변수(GRIPS·GRIPSIZE·APERTURE·AUTOSNAP·PICKFIRST·PICKADD·PICKAUTO·SELECTIONPREVIEW·SHORTCUTMENU …)는
+ * settings에 읽어 두고 바뀌면 바로 다시 읽는다(settings.ts, sysvars.ts onSysvarChange). 화면은 view.prefs로 같은 값을 본다.
  */
 import { currentUcs, dirToUcs, isWorld, toUcs, toWcs } from './ucs';
 import { viewportModel } from './psltscale';
@@ -44,6 +46,9 @@ import { Lasso } from './lasso';
 import { ctrlAction } from './keys';
 import { commandLineMenu, commandMenu, idleMenu, osnapItems, showContextMenu } from './ctxmenu';
 import { listGroups } from '../edit/util/groups';
+import { type PickMode, type Settings, autoWindow, contextAction, gripPickRadius, gripsOn, pickMode, previewOn, readSettings, showSnapTip, showTrackTip, usePickfirst } from './settings';
+import { onSysvarChange } from './sysvars';
+import { optionValue } from './options';
 
 export class CancelError extends Error {
   constructor() {
@@ -107,10 +112,11 @@ interface EntityRequest {
   reject: (e: unknown) => void;
 }
 
-/** 객체 선택 중 한 번의 고르기(명령 취소 U가 되돌린다) */
+/** 객체 선택 중 한 번의 고르기(명령 취소 U가 되돌린다). removed: 바꾸기(PICKADD 0)로 빠진 것 */
 interface SelectStep {
   handles: string[];
   mode: 'add' | 'remove';
+  removed?: string[];
 }
 
 interface SelectRequest {
@@ -261,6 +267,8 @@ export class App {
   private hoverHandle: string | null = null;
   private hoverTimer = 0;
   private readonly fontsReady = new WeakMap<DocState, Promise<void>>();
+  /** OPTIONS·시스템 변수에서 읽은 화면·입력 설정(바뀌면 onSysvarChange로 다시 읽는다) */
+  settings: Settings = readSettings(optionValue);
 
   constructor(drawingParent: HTMLElement) {
     const fontBase = new URL('fonts/noto-sans-kr/', document.baseURI).href;
@@ -283,7 +291,7 @@ export class App {
       down: (w, s, ev) => this.onDown(w, s, ev),
       click: (w, s, ev) => this.onClick(w, s, ev),
       drag: (a, b, done, ev) => this.onDrag(a, b, done, ev),
-      context: (w, s, ev) => this.onContext(w, s, ev),
+      context: (w, s, ev, held) => this.onContext(w, s, ev, held),
       dblclick: (w, s) => this.onDblClick(w, s),
       leave: () => {
         this.ui.setCoords('');
@@ -310,6 +318,9 @@ export class App {
       }
     };
     this.view.viewportModel = (st, vx) => viewportModel(this, st, vx);
+    // 설정: 화면이 같은 값을 보게 넣고, OPTIONS·SYSVDLG·변수 이름 입력·setvar로 바뀌면 바로 다시 읽는다
+    this.applySettings();
+    onSysvarChange((name) => this.applySettings(name));
     this.view.gridInfo = () => {
       const st = this.active;
       if (!this.gridOn || !st) return null;
@@ -576,9 +587,13 @@ export class App {
     const st = this.active;
     if (!st) return [];
     if (st.selection.size && !opt.noPickfirst) {
-      const hs = [...st.selection];
-      this.lastSelection = hs;
-      return hs;
+      if (usePickfirst(this.settings.pickfirst)) {
+        const hs = [...st.selection];
+        this.lastSelection = hs;
+        return hs;
+      }
+      // PICKFIRST 0(명사/동사 선택 끄기): 명령 전에 고른 것은 쓰지 않고 풀고 새로 묻는다(AutoCAD와 같다)
+      this.clearSelection();
     }
     const kws: Keyword[] = [
       { key: 'ALL', label: '전체' },
@@ -663,7 +678,9 @@ export class App {
         if (!last) this.cmd.print('되돌릴 선택이 없습니다.');
         else {
           this.setSelection(last.handles, last.mode === 'add' ? 'remove' : 'add');
-          this.cmd.print(`${last.handles.length}개를 되돌림, 총 ${st.selection.size}개`);
+          // 바꾸기(PICKADD 0)로 빠졌던 것은 되살린다
+          if (last.removed?.length) this.setSelection(last.removed, 'add');
+          this.cmd.print(`${last.handles.length + (last.removed?.length ?? 0)}개를 되돌림, 총 ${st.selection.size}개`);
         }
       } else if (k === 'G') {
         const g = await this.requestPoint('그룹 이름 입력:', { allowText: true }, signal);
@@ -695,13 +712,19 @@ export class App {
     }
   }
 
-  /** 객체 선택 중 한 번의 고르기: 실제로 바뀐 것만 단계로 남긴다(U) */
-  private selectStep(history: SelectStep[], hs: string[], mode: 'add' | 'remove'): void {
+  /** 객체 선택 중 한 번의 고르기: 실제로 바뀐 것만 단계로 남긴다(U). replace(PICKADD 0)는 더한 것과 뺀 것을 한 단계로 */
+  private selectStep(history: SelectStep[], hs: string[], mode: PickMode): void {
     const st = this.active;
     if (!st) return;
     const before = new Set(st.selection);
     this.setSelection(hs, mode);
-    const changed = mode === 'add' ? [...st.selection].filter((h) => !before.has(h)) : [...before].filter((h) => !st.selection.has(h));
+    const added = [...st.selection].filter((h) => !before.has(h));
+    const removed = [...before].filter((h) => !st.selection.has(h));
+    if (mode === 'replace') {
+      if (added.length || removed.length) history.push({ handles: added, mode: 'add', removed });
+      return;
+    }
+    const changed = mode === 'add' ? added : removed;
     if (changed.length) history.push({ handles: changed, mode });
   }
 
@@ -1432,6 +1455,30 @@ export class App {
     this.setSelection([], 'replace');
   }
 
+  /**
+   * 설정을 다시 읽어 화면(view.prefs·선택 상자)에 넣는다. name: 바뀐 변수 — 지금 보이는 그립·미리보기를 그에 맞게 고친다
+   * (없으면 처음 읽기)
+   */
+  applySettings(name?: string): void {
+    this.settings = readSettings(optionValue);
+    const v = this.view;
+    v.prefs = this.settings;
+    if (!name || name === 'PICKBOX') v.overlay.pickbox = this.settings.pickbox;
+    if (!name) return;
+    if (name === 'GRIPS' || name === 'GRIPSIZE') {
+      this.clearGripHover();
+      if (!gripsOn(this.settings.grips)) {
+        this.hotGrips = [];
+        v.overlay.hotGrips = [];
+      }
+      this.refreshSelectionOverlay();
+    } else if (name === 'SELECTIONPREVIEW') {
+      this.clearHover();
+      v.overlay.preview = [];
+    }
+    v.requestOverlay();
+  }
+
   refreshSelectionOverlay(): void {
     const st = this.active;
     const o = this.view.overlay;
@@ -1446,7 +1493,8 @@ export class App {
           if (n++ > 3000) break;
           o.selection.push(p.geometry(h));
         }
-        if (st.selection.size <= 200) {
+        // 그립(GRIPS 0이면 보이지도, 누르지도 않는다)
+        if (st.selection.size <= 200 && gripsOn(this.settings.grips)) {
           // 객체별 그립(편집 커널): 누르면 그립 편집(신축·이동·회전·축척·대칭)
           for (const h of st.selection) {
             const e = st.doc.entityIndex.get(h);
@@ -1503,7 +1551,8 @@ export class App {
     const pk = this.picker();
     const modes = this.snapModesFor(r);
     if (pk && modes?.size) {
-      const aperture = 10 * this.view.pixelSize();
+      // 조준창(APERTURE, 픽셀)
+      const aperture = this.settings.aperture * this.view.pixelSize();
       const s = findSnap(st.doc, pk, w, aperture, modes, r.base, { ext: this.extAnchors, par: this.parDirs.map((d) => d.dir) });
       if (s) {
         const p = { x: s.x, y: s.y };
@@ -1596,7 +1645,7 @@ export class App {
     const wantExt = !!modes?.has('ext');
     const wantPar = !!modes?.has('par') && r?.kind === 'point' && !!r.base;
     if (!pk || (!wantExt && !wantPar)) return this.dropExtCandidate();
-    const ap = 10 * this.view.pixelSize();
+    const ap = this.settings.aperture * this.view.pixelSize();
     const a = wantExt ? findExtAnchor(pk, w, ap) : null;
     const d = !a && wantPar ? segmentDirAt(pk, w, ap * 0.6) : null;
     const key = a ? `e${a.p.x},${a.p.y}` : d ? `p${d.dir.x.toFixed(9)},${d.dir.y.toFixed(9)}` : '';
@@ -1689,8 +1738,10 @@ export class App {
       o.rubber = r.rubber && drag ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
       o.ghost = r.ghost && drag ? r.ghost(p) : [];
       this.updateDynFields(p);
-      if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
-      else if (track) o.tip = track.tip;
+      // 툴팁: 객체 스냅 이름(AUTOSNAP 4), 추적 거리·각도(AUTOSNAP 32). 끄면 그 자리에 보통 문구
+      const as = this.settings.autosnap;
+      if (snap && showSnapTip(as)) o.tip = SNAP_NAMES[snap.kind] ?? null;
+      else if (track && !snap && showTrackTip(as)) o.tip = track.tip;
       else if (!this.dynOn) o.tip = null;
       else if (r.base && !o.dynFields) {
         const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);
@@ -1720,10 +1771,10 @@ export class App {
 
   // ------------------------------------------------------------------------- 다기능 그립
 
-  /** 커서 근처(6픽셀)의 그립 */
+  /** 커서 근처의 그립(그립 상자보다 2픽셀 넉넉히 — GRIPSIZE 5에서 6픽셀, 터치는 두 배) */
   private gripAt(w: Pt, touch = false): { handle: string; id: string; point: Pt } | null {
     if (!this.gripList.length) return null;
-    const gt = 6 * this.view.pixelSize() * (touch ? 2 : 1);
+    const gt = gripPickRadius(this.settings.gripSize, touch) * this.view.pixelSize();
     let best: { handle: string; id: string; point: Pt } | null = null;
     let bd = Infinity;
     for (const g of this.gripList) {
@@ -1815,7 +1866,9 @@ export class App {
     const h = pk.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
     if (h === this.hoverHandle) return;
     this.hoverHandle = h;
-    this.view.overlay.hover = h && !this.active?.selection.has(h) ? pk.geometry(h) : null;
+    // 호버 강조는 선택 미리보기(SELECTIONPREVIEW)가 켜져 있을 때만(하이퍼링크 툴팁은 그대로)
+    const show = previewOn(this.settings.selectionPreview, !!this.request || !!this.running);
+    this.view.overlay.hover = show && h && !this.active?.selection.has(h) ? pk.geometry(h) : null;
     this.view.el.title = h && this.hoverTip && !this.request ? (this.hoverTip(h) ?? '') : '';
     this.view.requestOverlay();
   }
@@ -1893,12 +1946,18 @@ export class App {
           this.cmd.print('1개를 찾음');
           return;
         }
-        this.pickedInSelect(r, this.expandPick([h]), r.remove || ev.shiftKey ? 'remove' : 'add');
+        // PICKADD: 1·2 더하기(Shift 빼기), 0 바꾸기(Shift 더하기)
+        this.pickedInSelect(r, this.expandPick([h]), pickMode(this.settings.pickadd, { shift: ev.shiftKey, removing: r.remove }));
       };
       if (this.cycleMenu(pk, w, tol, ev, pickIt)) return;
       const h = pk.pick(w.x, w.y, tol);
       if (h) {
         pickIt(h);
+        return;
+      }
+      // 빈 곳: 창 선택 시작(PICKAUTO 1). 끄면 W·C 같은 선택 방식을 쳐야 한다
+      if (!autoWindow(this.settings.pickauto, true)) {
+        this.cmd.print(`*잘못된 선택* ${SELECT_HELP}`, 'err');
         return;
       }
       this.windowStart = { screen: s, world: w, viaClick: true };
@@ -1925,8 +1984,8 @@ export class App {
     if (h && (ev.ctrlKey || ev.metaKey) && !r && (this.entityClickHandlers.some((f) => f.click(h, w)) || this.linkClick?.(h))) return;
     const pickIt = (h: string) => {
       const hs = this.expandPick([h]);
-      if (ev.shiftKey) this.setSelection(hs, st.selection.has(h) ? 'remove' : 'add');
-      else this.setSelection(hs, 'add');
+      // PICKADD 1·2: 더하기(Shift로 누르면 고른 것은 빼고 아니면 더한다), 0: 바꾸기(Shift 더하기·빼기)
+      this.setSelection(hs, pickMode(this.settings.pickadd, { shift: ev.shiftKey, selected: st.selection.has(h) }));
       this.clearHover();
     };
     if (h && this.cycleMenu(pk, w, tol, ev, pickIt)) return;
@@ -1938,7 +1997,8 @@ export class App {
       this.clearSelection();
       return;
     }
-    // 빈 곳: 창 선택 시작(클릭-클릭)
+    // 빈 곳: 창 선택 시작(클릭-클릭, PICKAUTO 4)
+    if (!autoWindow(this.settings.pickauto, false)) return;
     this.windowStart = { screen: s, world: w, viaClick: true };
     this.previewAt = 0;
     this.view.overlay.windowRect = { a: s, b: s };
@@ -1970,7 +2030,7 @@ export class App {
   }
 
   /** 객체 선택 프롬프트에서 고른 것(단계로 남기고, 단일이면 끝) */
-  private pickedInSelect(r: SelectRequest, hs: string[], mode: 'add' | 'remove'): void {
+  private pickedInSelect(r: SelectRequest, hs: string[], mode: PickMode): void {
     this.selectStep(r.history, hs, mode);
     if (r.single && this.request === r) r.resolve({ handles: [...(this.active?.selection ?? [])] });
   }
@@ -2015,6 +2075,11 @@ export class App {
       return;
     }
     const remove = this.request?.kind === 'select' ? this.request.remove : false;
+    // 빈 곳을 누른 채 끌어 고르기는 PICKAUTO(객체 선택 프롬프트 1, 명령 프롬프트 4)가 켜져 있을 때만
+    if (!this.windowStart && !autoWindow(this.settings.pickauto, this.request?.kind === 'select')) {
+      if (done) this.press = null;
+      return;
+    }
     // 누른 채 끌기: 올가미(AutoCAD 기본), 끄면 직사각형 창
     if (this.lassoOn && !this.windowStart) {
       const lasso = pr.lasso ?? (pr.lasso = new Lasso(pr.screen));
@@ -2037,7 +2102,7 @@ export class App {
         return;
       }
       const pk = this.picker();
-      if (pk) this.applyPicked(this.expandPick(lasso.select(pk, (p) => this.view.screenToWorld(p.x, p.y))), ev.shiftKey || remove ? 'remove' : 'add');
+      if (pk) this.applyPicked(this.expandPick(lasso.select(pk, (p) => this.view.screenToWorld(p.x, p.y))), pickMode(this.settings.pickadd, { shift: ev.shiftKey, removing: remove }));
       this.view.requestOverlay();
       return;
     }
@@ -2083,8 +2148,8 @@ export class App {
     void commitDrag(this, [...st.selection], d, copy);
   }
 
-  /** 창·올가미로 고른 것을 선택에 더하거나 뺀다(객체 선택 중이면 단계로 남기고 단일이면 끝) */
-  private applyPicked(hits: string[], mode: 'add' | 'remove'): void {
+  /** 창·올가미로 고른 것을 선택에 더하거나 빼거나 바꾼다(객체 선택 중이면 단계로 남기고 단일이면 끝) */
+  private applyPicked(hits: string[], mode: PickMode): void {
     const r = this.request;
     if (r?.kind === 'select') this.pickedInSelect(r, hits, mode);
     else this.setSelection(hits, mode);
@@ -2101,11 +2166,12 @@ export class App {
     const crossing = b.x < a.x;
     const rect: [number, number, number, number] = [Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)];
     const hits = this.expandPick(pk.select(rect, crossing));
-    this.applyPicked(hits, ev.shiftKey || remove ? 'remove' : 'add');
+    // PICKADD: 1·2 더하기(Shift 빼기), 0 바꾸기(Shift 더하기)
+    this.applyPicked(hits, pickMode(this.settings.pickadd, { shift: ev.shiftKey, removing: remove }));
     this.view.requestOverlay();
   }
 
-  /** 창·올가미를 끄는 동안 걸릴 객체를 강조(선택 미리보기). 0.1초에 한 번, 300개까지 */
+  /** 창·올가미를 끄는 동안 걸릴 객체를 강조(선택 미리보기 — SELECTIONPREVIEW가 켜져 있을 때). 0.1초에 한 번, 300개까지 */
   private updateSelectPreview(): void {
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (now < this.previewAt) return;
@@ -2113,6 +2179,10 @@ export class App {
     const pk = this.picker();
     const o = this.view.overlay;
     if (!pk) return;
+    if (!previewOn(this.settings.selectionPreview, !!this.request || !!this.running)) {
+      o.preview = [];
+      return;
+    }
     let hits: string[] = [];
     if (o.lasso && this.press?.lasso?.usable) hits = this.press.lasso.select(pk, (p) => this.view.screenToWorld(p.x, p.y));
     else if (o.windowRect) {
@@ -2245,10 +2315,11 @@ export class App {
   }
 
   /**
-   * 오른쪽 클릭(AutoCAD 2026 기본 SHORTCUTMENU 11): 명령 중 옵션이 없는 프롬프트·객체 선택은 바로 Enter, 옵션이 있으면 명령 모드 메뉴,
-   * Shift·Ctrl+오른쪽 클릭(점 프롬프트)은 객체 스냅 재지정 메뉴. 명령이 없으면 그립 위는 다기능 그립 메뉴, 그 밖은 편집·기본 모드 메뉴
+   * 오른쪽 클릭(SHORTCUTMENU, AutoCAD 2026 기본 11): 명령 중 옵션이 없는 프롬프트·객체 선택은 바로 Enter, 옵션이 있으면 명령 모드 메뉴,
+   * Shift·Ctrl+오른쪽 클릭(점 프롬프트)은 객체 스냅 재지정 메뉴. 명령이 없으면 그립 위는 다기능 그립 메뉴, 그 밖은 편집·기본 모드 메뉴.
+   * 모드 메뉴를 끄면 Enter(명령이 없으면 직전 명령 반복), 시간에 민감한 오른쪽 클릭(16)은 held(누른 시간)가 짧으면 Enter·길면 메뉴
    */
-  private onContext(w: Pt, _s: Pt, ev: MouseEvent): void {
+  private onContext(w: Pt, _s: Pt, ev: MouseEvent, held?: number): void {
     void _s;
     closeMenu();
     if (this.windowStart) {
@@ -2271,8 +2342,10 @@ export class App {
       showContextMenu(ev.clientX, ev.clientY, [{ heading: '객체 스냅 재지정' }, ...osnapItems(this)]);
       return;
     }
+    const sm = this.settings.shortcutMenu;
+    const dur = this.settings.shortcutMenuDuration;
     if (r) {
-      if (r.kind === 'select' || !r.keywords.length) {
+      if (contextAction(sm, 'command', r.kind !== 'select' && r.keywords.length > 0, held, dur) === 'enter') {
         this.onInput('', true);
         return;
       }
@@ -2289,6 +2362,11 @@ export class App {
       }
     }
     const sel = st ? [...st.selection] : [];
+    // 기본·편집 모드 메뉴를 껐으면(또는 짧게 눌렀으면) 직전 명령 반복
+    if (contextAction(sm, sel.length ? 'edit' : 'default', true, held, dur) === 'enter') {
+      if (this.lastCommand && !this.running) void this.run(this.lastCommand);
+      return;
+    }
     const extra: ContextMenuItem[] = [];
     if (st && sel.length === 1 && isDynamicReference(st.doc, st.doc.entityIndex.get(sel[0]!))) {
       extra.push({ label: '동적 블록 특성', run: () => void this.run('DYNPROPS') }, { label: '블록 재설정', run: () => void this.run('RESETBLOCK') });

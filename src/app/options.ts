@@ -2,8 +2,8 @@
  * OPTIONS(옵션 대화상자): 열기 및 저장·화면표시·선택·제도·사용자 기본 설정 탭. AutoCAD 2026의 같은 칸만 둔다.
  * 값은 시스템 변수(sysvars.ts의 이 브라우저 변수 — PICKBOX·GRIPSIZE·CURSORSIZE·APERTURE·AUTOSNAP·PICKFIRST·PICKADD·
  * SELECTIONPREVIEW·SHORTCUTMENU·SHORTCUTMENUDURATION)와 이 브라우저 보관 값(SAVETIME·COLORTHEME·기본 저장 형식·도면 영역 배경색·
- * AutoSnap 표식기 크기)으로 저장한다. 화면이 지금 바로 읽는 것은 선택 상자(PICKBOX)·도면 영역 배경색·색 테마이고,
- * 나머지는 onSysvarChange·optionValue로 읽게 열어 둔다.
+ * AutoSnap 표식기 크기)으로 저장한다. 화면·입력은 App.settings(settings.ts)가 optionValue로 읽고, 값이 바뀌면
+ * onSysvarChange로 바로 다시 읽는다(표식기 크기는 저장 뒤 이어지는 변수 저장의 알림 때 함께 읽힌다).
  */
 import type { App, CommandContext } from './app';
 import { SAVE_TYPES } from './save';

@@ -18,6 +18,7 @@ import { addEntities, currentProps } from './draw';
 import { commitResults } from './modify';
 import { previewOf } from './modify2-util';
 import { askAngleDeg, askLine, askOption, askReal, askWord, askYN, fmt4, matchKeyword } from './dashcmds-ask';
+import { attReq } from './sysvars';
 import type { Pt } from './view';
 
 /** 문서별 직전 블록 이름 */
@@ -216,11 +217,11 @@ export function registerDashInsertCommands(app: App): void {
       const ux = sx ?? sy ?? 1;
       const scale: Vec3 = { x: ux * f, y: (sy ?? ux) * f, z: (sz ?? Math.abs(ux)) * f };
       const rot = pre.rot ?? (await askAngleDeg(ctx, '회전 각도 지정 <0>:', at, 0));
-      // 속성 값(ATTREQ 0이면 기본값)
+      // 속성 값(ATTREQ 0이면 기본값 — 이 브라우저 값을 정했으면 그것, 아니면 도면 머리말. INSERT와 같다)
       const values = new Map<string, string>();
       const attdefs = def.entities.filter((e): e is AttribEntity => e.type === 'ATTDEF' && !((e as AttribEntity).attFlags & 2));
       const askThese = attdefs.filter((d) => !(d.attFlags & 8));
-      if (!explode && askThese.length && Number(doc.header.get('$ATTREQ') ?? 1) !== 0) {
+      if (!explode && askThese.length && attReq(app)) {
         ctx.print('속성 값 입력');
         const ask = (d: AttribEntity, cur: string) => askLine(ctx, `${d.prompt || d.tag}${cur ? ` <${cur}>` : ''}:`, cur);
         for (const d of askThese) values.set(d.tag, await ask(d, d.text));

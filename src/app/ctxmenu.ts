@@ -5,6 +5,8 @@
  *  - Shift(또는 Ctrl)+오른쪽 클릭(명령 중): 객체 스냅 재지정 메뉴
  *  - 명령이 없고 선택이 있으면 편집 모드, 없으면 기본 모드 메뉴. 고리(App.contextMenuProviders)의 항목은 특성 앞에 붙는다
  *  - 명령행(기록·프롬프트): 최근 명령·복사·기록 복사·붙여넣기
+ * 메뉴를 띄울지 Enter로 볼지는 SHORTCUTMENU·SHORTCUTMENUDURATION을 따라 app.ts onContext가 정한다(settings.ts contextAction):
+ * 모드별 메뉴를 끄면 Enter(명령이 없으면 직전 명령 반복), 시간에 민감한 오른쪽 클릭은 짧게 = Enter·길게 = 메뉴.
  * 하위 메뉴는 항목을 누르면 같은 자리에 그 목록을 다시 펼친다(ui/dom.ts showMenu를 그대로 쓴다).
  * 등록되지 않은 명령의 항목은 빼고, 명령 중에는 투명 명령만 넣는다.
  */
