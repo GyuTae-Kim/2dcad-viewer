@@ -15,7 +15,6 @@ import { checkIn, fail, group, numIn, numOf, resultDialog, row, selectIn } from 
 import { inScript } from './script';
 import { ctbByName, pickCtbFiles } from './ctblib';
 import { plotStampOn, setPlotStampOn, stampPages } from './filecmds-stamp';
-import { updateFieldsOn } from './fieldcmds';
 
 /** 용지(mm, 세로 방향 폭 × 높이) */
 export const PAPERS: { key: string; label: string; w: number; h: number }[] = [
@@ -226,10 +225,10 @@ export function registerPlotCommands(app: App): void {
     name: 'PLOT',
     aliases: ['PRINT', 'EXPORTPDF'],
     title: '플롯(PDF로 출력)',
-    run: (ctx) => {
-      // FIELDEVAL 플롯 비트: 출력하기 전에 필드를 다시 계산한다
-      updateFieldsOn(app, 'plot');
-      return runPlot(app, ctx);
+    async run(ctx) {
+      // FIELDEVAL 플롯 비트: 출력하기 전에 필드를 다시 계산한다(fieldcmds는 app.ts와 순환하므로 동적으로)
+      (await import('./fieldcmds')).updateFieldsOn(app, 'plot');
+      await runPlot(app, ctx);
     },
   });
 
@@ -251,7 +250,7 @@ export function registerPlotCommands(app: App): void {
     name: 'PUBLISH',
     title: '배치를 PDF 하나로 게시',
     async run(ctx) {
-      updateFieldsOn(app, 'plot');
+      (await import('./fieldcmds')).updateFieldsOn(app, 'plot');
       const st = app.active!;
       const lays = st.layouts.filter((l) => tableKey(l.blockName) !== MODEL_SPACE).sort((a, b) => a.tabOrder - b.tabOrder);
       if (!lays.length) {

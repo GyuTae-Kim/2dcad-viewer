@@ -9,7 +9,6 @@ import { entityLength, entityProperties, hatchArea, polyArea, ringArea, ringPeri
 import type { Pt } from './view';
 import { h } from './ui/dom';
 import { lwVertices } from '../core/lwpoly';
-import { updateFieldsOn } from './fieldcmds';
 
 function pointOf(r: PointResult): Pt | null {
   return 'point' in r ? r.point : null;
@@ -112,9 +111,9 @@ export function registerCommands(app: App): void {
     name: 'REGEN',
     aliases: ['RE', 'REGENALL', 'REA'],
     title: '재생성',
-    run: () => {
-      // FIELDEVAL 재생성 비트
-      updateFieldsOn(app, 'regen');
+    async run() {
+      // FIELDEVAL 재생성 비트(fieldcmds는 app.ts와 순환하므로 동적으로)
+      (await import('./fieldcmds')).updateFieldsOn(app, 'regen');
       app.active?.touchLayers();
       app.view.requestRender();
     },
