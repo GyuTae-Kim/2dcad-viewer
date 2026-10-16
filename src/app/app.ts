@@ -30,7 +30,7 @@ import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 import { isEditableTable } from '../edit/table/entity';
-import { type CommitHook, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
+import { type CommandFallback, type CommitHook, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
 import { cycleIsoPlane } from './viewtools-iso';
 import { maximized } from './viewtools-vpmax';
 
@@ -173,6 +173,8 @@ export class App {
   readonly dblClickHandlers: DblClickHandler[] = [];
   /** 확장 지점: 다기능 그립 메뉴 항목(그립 위에 커서를 올리거나 오른쪽 클릭) */
   readonly gripMenuProviders: GripMenuProvider[] = [];
+  /** 확장 지점: 등록되지 않은 이름을 쳤을 때(알 수 없는 명령 안내보다 먼저) — 시스템 변수 이름 바로 입력 */
+  readonly commandFallbacks: CommandFallback[] = [];
   /** 확장 지점: 편집 확정 고리(문서를 열 때 편집 세션에 잇는다) — 주석 축척·도면층 이전·연관 배열 경로 따라가기 */
   readonly commitHooks: CommitHook[] = [];
   /** 마지막 점 요청과 DRAG로 끌기 미리보기를 켠 점 요청(DRAGMODE 켜기) */
@@ -260,6 +262,19 @@ export class App {
     for (const a of c.aliases ?? []) this.aliases.set(a.toUpperCase(), c.name.toUpperCase());
   }
 
+  /** 별칭을 더하거나(name) 지운다(null) — ALIASEDIT·사용자 별칭 */
+  setAlias(alias: string, name: string | null): void {
+    const a = alias.trim().toUpperCase();
+    if (!a) return;
+    if (name === null) this.aliases.delete(a);
+    else this.aliases.set(a, name.trim().toUpperCase());
+  }
+
+  /** 지금 등록된 별칭 [별칭, 명령 이름] 목록 */
+  aliasEntries(): [string, string][] {
+    return [...this.aliases.entries()];
+  }
+
   findCommand(name: string): Command | undefined {
     // 명령행판(-VIEW 등)이 따로 있으면 그것, 없으면 앞의 -를 떼고 찾는다
     const raw = name.trim().toUpperCase().replace(/^[_.']+/, '');
@@ -293,6 +308,8 @@ export class App {
   async run(name: string, arg?: string): Promise<void> {
     const c = this.findCommand(name);
     if (!c) {
+      const raw = name.trim().toUpperCase().replace(/^[_.']+/, '');
+      for (const f of this.commandFallbacks) if (await f.run(raw, arg)) return;
       this.cmd.print(`알 수 없는 명령 "${name}". 도움말은 F1을 누르십시오.`, 'err');
       return;
     }

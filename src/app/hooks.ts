@@ -8,6 +8,7 @@
  *  - App.entityClickHandlers 명령 없이 Ctrl+클릭한 객체(하이퍼링크 linkClick보다 먼저) — 연관 배열 항목 고르기
  *  - App.dblClickHandlers   명령 없이 두 번 누른 객체(앱의 종류별 기본 편집보다 먼저) — 문자·다중 지시선·공차 편집기
  *  - App.gripMenuProviders  다기능 그립: 커서를 올리거나 오른쪽 클릭한 그립의 메뉴 항목 — 정점 추가·제거, 호로 변환, 길이 조정
+ *  - App.commandFallbacks   등록되지 않은 이름을 명령행에 쳤을 때(알 수 없는 명령 안내보다 먼저) — 시스템 변수 이름 바로 입력
  *  - App.commitHooks        편집 확정 직전(before)·직후(after) — 주석 축척(before), 도면층 이전·연관 배열 경로 따라가기(after)
  *
  * 이 모듈은 형식과 작은 도우미만 두고 app.ts를 값으로 가져오지 않는다(기능 모듈과 app.ts 사이의 순환을 만들지 않는다).
@@ -80,6 +81,13 @@ export interface GripMenuProvider {
    * 맡지 않으면 null(다음 고리). 여러 고리의 항목은 등록 순서대로 이어 붙인다
    */
   items(grip: { readonly handle: string; readonly id: string; readonly point: Pt }, entity: Entity, st: DocState): GripMenuItem[] | null;
+}
+
+/** 알 수 없는 명령 고리(App.commandFallbacks) */
+export interface CommandFallback {
+  readonly name: string;
+  /** 등록된 명령·별칭이 아닌 이름(대문자, 앞의 _ . ' 는 뗀 것)과 인자. 맡았으면 true(실행이 끝날 때까지 기다린다) */
+  run(name: string, arg?: string): boolean | Promise<boolean>;
 }
 
 /** 편집 확정 고리(App.commitHooks). 문서를 열 때 App이 편집 세션에 잇는다(bindCommitHooks) */
