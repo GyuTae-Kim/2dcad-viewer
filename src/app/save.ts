@@ -4,6 +4,7 @@
  * 아니면 내려받기로 저장한다.
  */
 import { syncActiveVports } from './vports';
+import { trackExport } from './analytics';
 import { forgetRecovery } from './autosave';
 import { createNewDocument } from '../core/newdoc';
 import type { CadDocument } from '../core/model';
@@ -95,6 +96,7 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
       const w = await t.handle.createWritable();
       await w.write(blob);
       await w.close();
+      trackExport(t.format);
     } catch (e) {
       ctx.print(`파일에 쓰지 못해 내려받기로 저장합니다: ${e instanceof Error ? e.message : String(e)}`, 'err');
       t.handle = undefined;

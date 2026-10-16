@@ -7,6 +7,7 @@
  * settings에 읽어 두고 바뀌면 바로 다시 읽는다(settings.ts, sysvars.ts onSysvarChange). 화면은 view.prefs로 같은 값을 본다.
  */
 import { currentUcs, dirToUcs, isWorld, toUcs, toWcs } from './ucs';
+import { beginOpen, type InputKind } from './analytics';
 import { viewportModel } from './psltscale';
 import type { Entity, ViewportEntity } from '../core/model';
 import { MODEL_SPACE, normalizeHandle, tableKey } from '../core/model';
@@ -998,7 +999,7 @@ export class App {
   // 문서
   // -------------------------------------------------------------------------
 
-  async openFile(name: string, data: ArrayBuffer): Promise<DocState | null> {
+  async openFile(name: string, data: ArrayBuffer, input: InputKind = 'local', attempt = beginOpen(input, name.split('.').pop() ?? 'other')): Promise<DocState | null> {
     const size = data.byteLength;
     this.ui.setBusy(`${name} 여는 중…`, 0);
     // 점진 빌드: 장면을 만드는 동안 오는 조각을 먼저 그린다(문서·장면이 다 오면 탭을 연다)
@@ -1031,12 +1032,14 @@ export class App {
       this.cmd.print(`${name}: ${res.doc.format.toUpperCase()} ${res.doc.version}, 객체 ${res.doc.entityIndex.size.toLocaleString()}개, 읽기 ${Math.round(res.readMs)}ms, 그리기 ${Math.round(res.model.ms)}ms`);
       for (const x of w.slice(0, 6)) this.cmd.print(`참고: ${x.message}${x.count ? ` (${x.count})` : ''}`);
       this.onOpened?.(st);
+      attempt.success();
       return st;
     } catch (e) {
       const code = e instanceof EngineError ? e.code : 'internal';
       const msg = e instanceof EngineError && code !== 'internal' ? errorMessage(code as CadErrorCode) : `파일을 열지 못했습니다: ${e instanceof Error ? e.message : String(e)}`;
       toast(`${name}: ${msg}`, 'error', 7000);
       this.cmd.print(`${name}: ${msg}`, 'err');
+      attempt.error('parse_error');
       return null;
     } finally {
       this.view.setLoadPreview(null);

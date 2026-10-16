@@ -4,6 +4,7 @@
  */
 import { ensureLayoutVariants, viewportModel } from './psltscale';
 import { MODEL_SPACE } from '../core/model';
+import { trackExport, type ExportFormat } from './analytics';
 import { imageDataUrl, imagePixels, xrefPlacements } from './refs';
 import type { CtbTable } from '../render/ctb';
 import type { DisplayList } from '../render/displaylist';
@@ -621,6 +622,8 @@ export function download(blob: Blob, name: string): void {
   a.download = name;
   document.body.append(a);
   a.click();
+  const format = name.split('.').pop()?.toLowerCase();
+  if (format && ['png', 'jpg', 'bmp', 'pdf', 'svg', 'dxf', 'dwg'].includes(format)) trackExport(format as ExportFormat);
   setTimeout(() => {
     URL.revokeObjectURL(a.href);
     a.remove();

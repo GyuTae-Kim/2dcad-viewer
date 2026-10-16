@@ -2,7 +2,7 @@
 /**
  * 대화상자 흐름 연기 시험(jsdom): 열리고, 칸을 고치고, 확인하면 도면이 바뀌는지.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DictionaryObject } from '../../src/core/model';
 import { MODEL_SPACE } from '../../src/core/model';
 import { registerBlockCommands } from '../../src/app/blocks';
@@ -20,6 +20,8 @@ HTMLCanvasElement.prototype.getContext = (() => null) as never;
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const dlg = () => document.querySelector('.dialog') as HTMLElement;
+// Commands can await dynamically imported modules before opening their dialog.
+const dialogReady = (label: string) => vi.waitFor(() => expect(dlg()?.getAttribute('aria-label')).toBe(label));
 const input = (aria: string) => dlg().querySelector(`[aria-label="${aria}"]`) as HTMLInputElement;
 const ok = () => (dlg().querySelector('footer .btn.primary') as HTMLButtonElement).click();
 const button = (label: string) => [...dlg().querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement;
@@ -152,13 +154,14 @@ describe('PLOT 대화상자 연기 시험', () => {
     const h = makeHarness((d) => Object.assign(d, createNewDocument('metric')));
     registerPlotCommands(h.app);
     const run = h.run('PLOT', []);
-    await tick();
+    await dialogReady('플롯');
     expect(dlg().getAttribute('aria-label')).toBe('플롯');
     (input('용지 크기') as unknown as HTMLSelectElement).value = 'A2';
     input('매수').value = '2';
+    const previousDialog = dlg();
     button('배치에 적용(U)').click();
-    await tick();
-    await tick();
+    await vi.waitFor(() => expect(dlg()).not.toBe(previousDialog));
+    await dialogReady('플롯');
     expect(dlg().getAttribute('aria-label')).toBe('플롯');
     const model = h.doc.layouts.find((l) => l.blockName.toUpperCase() === MODEL_SPACE)!;
     expect(Math.max(model.plot.paperWidth, model.plot.paperHeight)).toBe(594);
@@ -176,7 +179,7 @@ describe('INSERT·ATTDEF·EATTEDIT 연기 시험', () => {
     registerBlockCommands(h.app);
     // ATTDEF: 태그·기본값, 화면에서 시작점
     let run = h.run('ATTDEF', [{ click: [0, 0] }]);
-    await tick();
+    await dialogReady('속성 정의');
     expect(dlg().getAttribute('aria-label')).toBe('속성 정의');
     input('태그').value = 'no';
     input('기본값').value = '1';
@@ -186,7 +189,7 @@ describe('INSERT·ATTDEF·EATTEDIT 연기 시험', () => {
     expect((att as { tag: string }).tag).toBe('NO');
     // 두 번째 ATTDEF는 이전 속성 정의 아래(점을 묻지 않는다)
     run = h.run('ATTDEF', []);
-    await tick();
+    await dialogReady('속성 정의');
     expect(input('이전 속성 정의 아래에 정렬').checked).toBe(true);
     input('태그').value = 'name';
     ok();
@@ -196,17 +199,16 @@ describe('INSERT·ATTDEF·EATTEDIT 연기 시험', () => {
     // BLOCK
     for (const a of h.doc.blocks.get(MODEL_SPACE)!.entities) h.st.selection.add(a.handle);
     run = h.run('BLOCK', []);
-    await tick();
+    await dialogReady('블록 정의');
     input('이름').value = 'TAG';
     ok();
     await run;
     // INSERT: 대화상자 확인 → 삽입점 → 속성 대화상자
     run = h.run('INSERT', [{ click: [50, 50] }]);
-    await tick();
+    await dialogReady('삽입');
     expect(dlg().getAttribute('aria-label')).toBe('삽입');
     ok();
-    await tick();
-    await tick();
+    await dialogReady('속성 편집');
     expect(dlg().getAttribute('aria-label')).toBe('속성 편집');
     input('NO').value = '7';
     ok();
