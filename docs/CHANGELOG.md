@@ -27,7 +27,7 @@ OpenCAD DWG·DXF(2026-10-16까지 이름은 2D 뷰어, 저장소 `2dcad-viewer`)
 - TEXT·MTEXT·ATTDEF는 범위 상자 안을 눌러도 고릅니다(윤곽 글꼴 조각을 받기 전에는 여러 줄 문자를 고를 수 없던 것).
 
 ### 확인
-- 시험 217개 파일 3,531개가 통과합니다(이번에 더한 시험: tests/direct·grips·drawmod·annotedit·manage·settings).
+- 시험 218개 파일 3,541개가 통과합니다(이번에 더한 시험: tests/direct·grips·drawmod·annotedit·manage·settings). 같은 날 들어온 편집기 지연 로딩(#11)과 합쳐, 시작 화면 문구와 등록(`src/editor.ts`)을 맞췄습니다.
 - 브라우저에서 새 도면·상대 좌표 입력, 여러 줄 문자 제자리 편집과 명령 취소, 끌어 옮기기, 다기능 그립 메뉴(호로 변환), 두 번 눌러 빠른 특성을 확인했습니다.
 - 남은 일은 [ROADMAP.md](ROADMAP.md)의 5단계에 적었습니다.
 
