@@ -30,7 +30,7 @@ import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 import { isEditableTable } from '../edit/table/entity';
-import { type CommitHook, type EntityClickHandler, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
+import { type CommitHook, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
 import { cycleIsoPlane } from './viewtools-iso';
 import { maximized } from './viewtools-vpmax';
 
@@ -169,6 +169,10 @@ export class App {
   dragPreviewMode: (() => number) | null = null;
   /** 확장 지점: 명령 없이 Ctrl+클릭한 객체(하이퍼링크 linkClick보다 먼저) — 연관 배열 항목 고르기 */
   readonly entityClickHandlers: EntityClickHandler[] = [];
+  /** 확장 지점: 명령 없이 두 번 누른 객체(종류별 기본 편집보다 먼저) */
+  readonly dblClickHandlers: DblClickHandler[] = [];
+  /** 확장 지점: 다기능 그립 메뉴 항목(그립 위에 커서를 올리거나 오른쪽 클릭) */
+  readonly gripMenuProviders: GripMenuProvider[] = [];
   /** 확장 지점: 편집 확정 고리(문서를 열 때 편집 세션에 잇는다) — 주석 축척·도면층 이전·연관 배열 경로 따라가기 */
   readonly commitHooks: CommitHook[] = [];
   /** 마지막 점 요청과 DRAG로 끌기 미리보기를 켠 점 요청(DRAGMODE 켜기) */
@@ -1509,6 +1513,7 @@ export class App {
     const h = pk?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize());
     if (!h) return;
     const e = st.doc.entityIndex.get(h);
+    if (e && this.dblClickHandlers.some((f) => f.dblclick(h, e, w))) return;
     // 표는 셀 편집, 여러 줄은 여러 줄 편집 도구
     const tableLike = (x: Entity | undefined): boolean => isEditableTable(x);
     if (tableLike(e)) {

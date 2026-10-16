@@ -6,10 +6,13 @@
  *  - App.inputFilters       명령행 입력을 요청보다 먼저 본다 — 점 프롬프트의 DRAG
  *  - App.dragPreviewMode    끌기 미리보기 모드(DRAGMODE)와 App.dragPreviewNow() — DRAGMODE·DRAG
  *  - App.entityClickHandlers 명령 없이 Ctrl+클릭한 객체(하이퍼링크 linkClick보다 먼저) — 연관 배열 항목 고르기
+ *  - App.dblClickHandlers   명령 없이 두 번 누른 객체(앱의 종류별 기본 편집보다 먼저) — 문자·다중 지시선·공차 편집기
+ *  - App.gripMenuProviders  다기능 그립: 커서를 올리거나 오른쪽 클릭한 그립의 메뉴 항목 — 정점 추가·제거, 호로 변환, 길이 조정
  *  - App.commitHooks        편집 확정 직전(before)·직후(after) — 주석 축척(before), 도면층 이전·연관 배열 경로 따라가기(after)
  *
  * 이 모듈은 형식과 작은 도우미만 두고 app.ts를 값으로 가져오지 않는다(기능 모듈과 app.ts 사이의 순환을 만들지 않는다).
  */
+import type { Entity } from '../core/model';
 import type { Transaction } from '../edit/session';
 import type { DocState } from './docstate';
 import type { Acquired, TrackResult } from './tracking';
@@ -51,6 +54,32 @@ export interface EntityClickHandler {
   readonly name: string;
   /** 명령 없이 Ctrl(⌘)+클릭한 객체와 누른 점(도면 좌표). 처리했으면 true(선택·하이퍼링크로 넘기지 않는다) */
   click(handle: string, point: Pt): boolean;
+}
+
+/** 두 번 누르기 고리(App.dblClickHandlers) */
+export interface DblClickHandler {
+  readonly name: string;
+  /**
+   * 명령 없이 두 번 누른 객체(배치 뷰포트 드나들기는 먼저 처리된다)와 누른 점(도면 좌표).
+   * 처리했으면 true — 앱의 기본 편집(표·참조·해치·문자 편집, 그 밖은 특성 팔레트)으로 넘기지 않는다
+   */
+  dblclick(handle: string, entity: Entity, point: Pt): boolean;
+}
+
+/** 다기능 그립 메뉴 항목 */
+export interface GripMenuItem {
+  readonly label: string;
+  run(): void | Promise<void>;
+}
+
+/** 다기능 그립 고리(App.gripMenuProviders) */
+export interface GripMenuProvider {
+  readonly name: string;
+  /**
+   * 선택된 객체의 그립(App.gripList의 한 항목) 위에 커서를 올리거나 그립을 오른쪽 클릭했을 때 붙일 항목.
+   * 맡지 않으면 null(다음 고리). 여러 고리의 항목은 등록 순서대로 이어 붙인다
+   */
+  items(grip: { readonly handle: string; readonly id: string; readonly point: Pt }, entity: Entity, st: DocState): GripMenuItem[] | null;
 }
 
 /** 편집 확정 고리(App.commitHooks). 문서를 열 때 App이 편집 세션에 잇는다(bindCommitHooks) */
