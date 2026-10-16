@@ -6,16 +6,21 @@
 import { syncActiveVports } from './vports';
 import { forgetRecovery } from './autosave';
 import { createNewDocument } from '../core/newdoc';
+import type { CadDocument } from '../core/model';
+import { pickFiles, readDrawingFile } from './drawingfiles';
 import type { SaveFormat } from '../worker/protocol';
 import type { App, CommandContext } from './app';
 import type { DocState } from './docstate';
 import { baseName, download } from './export';
 import { form } from './ui/dom';
+import { prefGet } from './mgr-ui';
 
 interface SaveTarget {
   format: SaveFormat;
   version: string;
   binary: boolean;
+  /** 파일 확장자가 형식과 다를 때(도면 템플릿 .dwt) */
+  ext?: 'dwt';
   /** 파일 시스템 접근 API로 고른 파일(있으면 QSAVE가 그 파일에 바로 쓴다) */
   handle?: FileSystemFileHandleLike;
 }
@@ -42,6 +47,9 @@ export const SAVE_TYPES: { value: string; label: string; format: SaveFormat; ver
   { value: 'dxf-AC1009', label: 'AutoCAD R12/LT2 DXF (*.dxf)', format: 'dxf', version: 'AC1009' },
 ];
 
+/** 다른 이름으로 저장의 도면 템플릿(DWG 2018 내용, 확장자 .dwt). 다른 명령의 형식 목록에는 넣지 않는다 */
+const TEMPLATE_TYPE = { value: 'dwt-AC1032', label: 'AutoCAD 도면 템플릿 (*.dwt)', format: 'dwg' as SaveFormat, version: 'AC1032' };
+
 const targets = new WeakMap<DocState, SaveTarget>();
 
 /** 저장한 뒤 알림(REVERT가 마지막으로 저장한 내용을 기억한다) */
@@ -62,7 +70,7 @@ export function sameFormat(st: DocState): SaveTarget | null {
 }
 
 function fileName(st: DocState, t: SaveTarget): string {
-  return `${baseName(st.saveName)}.${t.format}`;
+  return `${baseName(st.saveName)}.${t.ext ?? t.format}`;
 }
 
 /** 실제로 쓰기 */
@@ -100,8 +108,8 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
   forgetRecovery(st);
   targets.set(st, t);
   app.ui.refreshTabs();
-  document.title = `${st.saveName} - OpenCAD 2D 뷰어`;
-  const label = SAVE_TYPES.find((x) => x.format === t.format && x.version === t.version)?.label ?? t.version;
+  document.title = `${st.saveName} - OpenCAD DWG·DXF`;
+  const label = t.ext === 'dwt' ? TEMPLATE_TYPE.label : (SAVE_TYPES.find((x) => x.format === t.format && x.version === t.version)?.label ?? t.version);
   ctx.print(`${name}을(를) ${label}${t.binary ? ' 이진' : ''} 형식으로 저장했습니다(${(res.data.byteLength / 1024).toFixed(0)} KB, ${Math.round(res.ms)}ms).`);
   for (const w of res.warnings.slice(0, 5)) ctx.print(`참고: ${w.message}${w.count ? ` (${w.count})` : ''}`);
   return true;
@@ -109,13 +117,15 @@ async function write(app: App, ctx: CommandContext, st: DocState, t: SaveTarget,
 
 async function saveAs(app: App, ctx: CommandContext): Promise<void> {
   const st = app.active!;
-  const prev = targets.get(st) ?? sameFormat(st);
+  // OPTIONS › 열기 및 저장 › 다른 이름으로 저장 형식을 정했으면 그것이 기본(이 도면을 이미 저장한 형식이 먼저)
+  const opt = SAVE_TYPES.find((x) => x.value === prefGet('opencad.options.saveType'));
+  const prev = targets.get(st) ?? (opt ? { format: opt.format, version: opt.version, binary: false } : sameFormat(st));
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
   const v = await form(
     '다른 이름으로 저장',
     [
       ...(picker ? [] : [{ key: 'name', label: '파일 이름', type: 'text' as const, value: baseName(st.saveName), wide: true }]),
-      { key: 'type', label: '파일 유형', type: 'select', value: prev ? `${prev.format}-${prev.version}` : 'dwg-AC1032', options: SAVE_TYPES.map((x) => ({ value: x.value, label: x.label })) },
+      { key: 'type', label: '파일 유형', type: 'select', value: prev ? (prev.ext === 'dwt' ? TEMPLATE_TYPE.value : `${prev.format}-${prev.version}`) : 'dwg-AC1032', options: [...SAVE_TYPES, TEMPLATE_TYPE].map((x) => ({ value: x.value, label: x.label })) },
       { key: 'binary', label: '이진 DXF(DXF일 때)', type: 'check', value: prev?.binary ?? false },
     ],
     {
@@ -125,12 +135,12 @@ async function saveAs(app: App, ctx: CommandContext): Promise<void> {
     },
   );
   if (!v) return;
-  const type = SAVE_TYPES.find((x) => x.value === v.type) ?? SAVE_TYPES[0]!;
-  const t: SaveTarget = { format: type.format, version: type.version, binary: !!v.binary && type.format === 'dxf' };
-  let name = picker ? fileName(st, t) : `${String(v.name).trim().replace(/\.(dxf|dwg)$/i, '')}.${t.format}`;
+  const type = [...SAVE_TYPES, TEMPLATE_TYPE].find((x) => x.value === v.type) ?? SAVE_TYPES[0]!;
+  const t: SaveTarget = { format: type.format, version: type.version, binary: !!v.binary && type.format === 'dxf', ext: type === TEMPLATE_TYPE ? 'dwt' : undefined };
+  let name = picker ? fileName(st, t) : `${String(v.name).trim().replace(/\.(dxf|dwg|dwt)$/i, '')}.${t.ext ?? t.format}`;
   if (picker) {
     try {
-      const handle = await picker({ suggestedName: name, types: [{ description: type.label, accept: type.format === 'dwg' ? { 'application/acad': ['.dwg'] } : { 'application/dxf': ['.dxf'] } }] });
+      const handle = await picker({ suggestedName: name, types: [{ description: type.label, accept: t.ext === 'dwt' ? { 'application/acad': ['.dwt'] } : type.format === 'dwg' ? { 'application/acad': ['.dwg'] } : { 'application/dxf': ['.dxf'] } }] });
       t.handle = handle;
       name = handle.name;
     } catch {
@@ -167,18 +177,30 @@ export function registerSaveCommands(app: App): void {
     name: 'QSAVE',
     title: '저장',
     async run(ctx) {
+      // FIELDEVAL 저장 비트: 저장하기 전에 필드를 다시 계산한다(fieldcmds는 app.ts와 순환하므로 동적으로)
+      (await import('./fieldcmds')).updateFieldsOn(app, 'save', { fileName: app.active!.saveName });
       await quickSave(app, ctx, app.active!);
     },
   });
-  app.register({ name: 'SAVEAS', aliases: ['SAVE', 'DXFOUT'], title: '다른 이름으로 저장', run: (ctx) => saveAs(app, ctx) });
+  app.register({
+    name: 'SAVEAS',
+    aliases: ['SAVE', 'DXFOUT'],
+    title: '다른 이름으로 저장',
+    async run(ctx) {
+      (await import('./fieldcmds')).updateFieldsOn(app, 'save', { fileName: app.active!.saveName });
+      await saveAs(app, ctx);
+    },
+  });
 
   app.register({
     name: 'NEW',
     aliases: ['QNEW'],
     title: '새 도면',
     noDoc: true,
-    async run(ctx) {
-      const v = await form(
+    async run(ctx, arg) {
+      // 시작 화면 단추·스크립트는 서식을 인자로 넘겨 대화상자 없이 만든다(NEW metric · NEW imperial)
+      const given = arg?.trim().toLowerCase();
+      const v = given === 'metric' || given === 'imperial' ? { units: given } : await form(
         '새 도면',
         [
           {
@@ -189,21 +211,45 @@ export function registerSaveCommands(app: App): void {
             options: [
               { value: 'metric', label: 'acadiso (미터법, 밀리미터)' },
               { value: 'imperial', label: 'acad (영국식, 인치)' },
+              { value: 'file', label: '템플릿 파일 찾아보기… (*.dwt, *.dwg, *.dxf)' },
             ],
           },
         ],
         { ok: '만들기' },
       );
       if (!v) return;
+      let name: string;
+      do name = `Drawing${drawingSerial++}.dwg`;
+      while (app.docs.some((d) => d.saveName === name));
+      // 템플릿 파일: 그 도면의 내용·설정으로 이름 없는 새 도면을 만든다(저장하면 이름을 묻는다)
+      if (v.units === 'file') {
+        const [f] = await pickFiles('.dwt,.dwg,.dxf,.DWT,.DWG,.DXF', false);
+        if (!f) return;
+        let doc: CadDocument;
+        try {
+          doc = (await readDrawingFile(app, f)).doc;
+        } catch (e) {
+          ctx.print(`${f.name}을(를) 읽지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, 'err');
+          return;
+        } finally {
+          app.ui.setBusy(null);
+        }
+        const fresh = structuredClone(doc);
+        fresh.format = 'new';
+        const now = Date.now() / 86400000 + 2440587.5;
+        for (const k of ['$TDCREATE', '$TDUCREATE', '$TDUPDATE', '$TDUUPDATE']) fresh.header.set(k, now);
+        fresh.header.set('$TDINDWG', 0);
+        const res = await app.engine.adopt(name, fresh);
+        app.addDocument(res, name, 0);
+        ctx.print(`템플릿 ${f.name}(으)로 새 도면 ${name}을(를) 만들었습니다.`);
+        return;
+      }
       const units = v.units === 'imperial' ? 'imperial' : 'metric';
       try {
         localStorage.setItem('opencad.newUnits', units);
       } catch {
         /* 저장소를 못 쓰면 기억하지 않는다 */
       }
-      let name: string;
-      do name = `Drawing${drawingSerial++}.dwg`;
-      while (app.docs.some((d) => d.saveName === name));
       const doc = createNewDocument(units);
       const res = await app.engine.adopt(name, doc);
       app.addDocument(res, name, 0);

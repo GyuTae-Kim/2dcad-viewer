@@ -1,14 +1,16 @@
 /**
  * 편집 명령: MATCHPROP(특성 일치), DRAWORDER(그리기 순서), TEXTEDIT(문자 고치기), PURGE(안 쓰는 항목 지우기)
+ * TEXTEDIT와 문자·치수·다중 지시선·공차·지시선의 두 번 누르기는 제자리 문자 편집기(src/app/textedit)로 고친다.
  */
 import type { DimensionEntity, Entity, LwPolylineEntity } from '../core/model';
 import { tableKey } from '../core/model';
 import type { EditOp } from '../edit/session';
 import { cloneEntity, isLayoutBlock } from '../edit/session';
-import type { App } from './app';
-import { editAttributes } from './blocks';
-import { textDialog } from './draw';
+import type { App, CommandContext } from './app';
+import type { Pt } from './view';
+import { addHook } from './hooks';
 import { unlockedOnly } from './layers';
+import { editEntityText, isTextEditable } from './textedit/entity';
 import { form } from './ui/dom';
 import { lwCount, tidyWidths, zeros } from '../core/lwpoly';
 
@@ -132,12 +134,61 @@ export function registerEditCommands(app: App): void {
     name: 'TEXTEDIT',
     aliases: ['ED', 'DDEDIT'],
     title: '문자 편집',
-    async run(ctx) {
-      for (;;) {
-        const r = await ctx.getEntity('주석 객체 선택:');
-        if (!('handle' in r)) return;
-        await editText(app, r.handle);
+    async run(ctx, arg) {
+      const st = app.active!;
+      // 두 번 누르기: 핸들(@점)을 받아 그 객체 하나만 고친다
+      if (arg) {
+        const [hd, at] = arg.split('@');
+        const m = at ? /^(-?[\d.e+-]+),(-?[\d.e+-]+)$/i.exec(at) : null;
+        if (st.doc.entityIndex.has(hd!.toUpperCase())) {
+          await editText(app, hd!.toUpperCase(), ctx, m ? { x: Number(m[1]), y: Number(m[2]) } : null);
+          app.clearSelection();
+          return;
+        }
       }
+      // 이 명령 안에서 고친 것들(명령 취소(U)로 하나씩 되돌린다)
+      const done: number[] = [];
+      for (;;) {
+        const mode = textEditMode(st.doc);
+        const r = await ctx.getEntity('주석 객체 선택 또는 [명령 취소(U)/모드(M)]:', [
+          { key: 'U', label: '명령 취소' },
+          { key: 'M', label: '모드' },
+        ]);
+        if ('keyword' in r) {
+          if (r.keyword === 'U') {
+            const n = done.pop();
+            if (n === undefined) ctx.print('명령 취소할 것이 없습니다.');
+            else st.session.undoLastStep(ctx.group, n);
+            continue;
+          }
+          const k = await ctx.getPoint(`문자 편집 모드 옵션 입력 [단일(S)/다중(M)] <${mode === 0 ? '단일' : '다중'}>:`, {
+            keywords: [
+              { key: 'S', label: '단일' },
+              { key: 'M', label: '다중' },
+            ],
+          });
+          if ('keyword' in k) setTextEditMode(st.doc, k.keyword === 'S' ? 0 : 1);
+          continue;
+        }
+        if (!('handle' in r)) return;
+        const before = st.session.opsInGroup(ctx.group);
+        await editText(app, r.handle, ctx, r.point);
+        const added = st.session.opsInGroup(ctx.group) - before;
+        if (added > 0) done.push(added);
+        app.clearSelection();
+        if (textEditMode(st.doc) === 0) return;
+      }
+    },
+  });
+
+  // 문자·여러 줄 문자·속성 정의·치수·다중 지시선·공차·지시선을 두 번 누르면 TEXTEDIT(AutoCAD와 같다)
+  addHook(app.dblClickHandlers, {
+    name: 'textedit',
+    dblclick(handle, entity, point) {
+      if (!isTextEditable(entity) || app.busyCommand) return false;
+      app.setSelection([handle], 'replace');
+      void app.run('TEXTEDIT', `${handle}@${point.x},${point.y}`);
+      return true;
     },
   });
 
@@ -228,44 +279,21 @@ export function reorder(app: App, handles: string[], mode: 'A' | 'U' | 'F' | 'B'
   return moved;
 }
 
-/** 문자·여러 줄 문자·속성 정의·치수 문자·블록 속성을 고친다 */
-export async function editText(app: App, handle: string): Promise<boolean> {
-  const st = app.active!;
-  const e = st.doc.entityIndex.get(handle);
-  if (!e) return false;
-  if (e.type === 'INSERT') return editAttributes(app, null, handle);
-  if (!unlockedOnly(app, [handle]).length) return false;
-  const block = st.session.ownerOf(handle);
-  if (!block) return false;
-  let after: Entity | null = null;
-  if (e.type === 'TEXT') {
-    const v = await form('문자 편집', [{ key: 't', label: '문자', type: 'text', value: e.text }]);
-    if (!v) return false;
-    after = { ...cloneEntity(e), text: String(v.t) };
-  } else if (e.type === 'ATTDEF' && 'tag' in e) {
-    const v = await form('속성 정의 편집', [
-      { key: 'tag', label: '태그', type: 'text', value: e.tag },
-      { key: 'prompt', label: '프롬프트', type: 'text', value: e.prompt ?? '' },
-      { key: 'value', label: '기본값', type: 'text', value: e.text },
-    ]);
-    if (!v) return false;
-    after = { ...cloneEntity(e), tag: String(v.tag).trim().toUpperCase() || e.tag, prompt: String(v.prompt) || undefined, text: String(v.value) };
-  } else if (e.type === 'MTEXT') {
-    const v = await textDialog('여러 줄 문자 편집', e.text.replace(/\\P/g, '\n'), e.height);
-    if (!v) return false;
-    after = { ...cloneEntity(e), text: v.text.replace(/\r?\n/g, '\\P'), height: v.height };
-  } else if (e.type === 'DIMENSION') {
-    const v = await form('치수 문자 편집', [{ key: 't', label: '문자', type: 'text', value: e.text || '<>' }], { note: '<>는 측정값입니다. 비우면 측정값만 보입니다.' });
-    if (!v) return false;
-    const t = String(v.t);
-    after = { ...cloneEntity(e), text: t === '<>' ? '' : t };
-  } else {
-    app.cmd.print('문자나 치수, 속성이 있는 블록을 고르십시오.', 'err');
-    return false;
-  }
-  if (!after || JSON.stringify(after) === JSON.stringify(e)) return false;
-  st.session.commit({ label: 'TEXTEDIT', ops: [{ kind: 'modify', block, before: e, after }] });
-  return true;
+/** TEXTEDITMODE(0 단일, 1 다중 — 기본). 도면마다 여는 동안 */
+const editModes = new WeakMap<object, number>();
+export function textEditMode(doc: object): number {
+  return editModes.get(doc) ?? 1;
+}
+export function setTextEditMode(doc: object, v: number): void {
+  editModes.set(doc, v ? 1 : 0);
+}
+
+/**
+ * 문자·여러 줄 문자·속성 정의·치수 문자·다중 지시선 문자·공차·지시선 주석·블록 속성을 고친다(제자리 편집기).
+ * 바꿨으면 true. ctx가 있으면 그 명령의 묶음으로 확정한다.
+ */
+export async function editText(app: App, handle: string, ctx?: CommandContext, point?: Pt | null): Promise<boolean> {
+  return editEntityText(app, handle, ctx, point);
 }
 
 /** 쓰이지 않는 표 항목과 블록 */

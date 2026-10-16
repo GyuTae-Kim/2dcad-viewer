@@ -588,7 +588,7 @@ interface WizardState {
 const PRINTERS = [
   { value: 'none_device', label: '없음' },
   { value: 'DWG To PDF.pc3', label: 'DWG To PDF.pc3 (PDF)' },
-  { value: 'SVG', label: 'SVG (이 뷰어의 벡터 출력)' },
+  { value: 'SVG', label: 'SVG (이 프로그램의 벡터 출력)' },
 ];
 const VP_SCALES = ['fit', '1:1', '1:2', '1:5', '1:10', '1:20', '1:50', '1:100', '1:200', '1:500', '1:1000', '2:1', '5:1', '10:1'];
 const STEPS = ['시작', '프린터', '용지 크기', '방향', '제목 블록', '뷰포트 정의', '위치 선택', '마침'];

@@ -28,6 +28,8 @@ export interface PV {
   bulge: number;
   sw: number;
   ew: number;
+  /** 곡선 맞춤 접선 방향(라디안, PEDIT 정점 편집 접선(T)). 2D POLYLINE 정점의 70 비트 2 */
+  tan?: number;
 }
 
 export type FitKind = 'none' | 'fit' | 'spline';
@@ -60,7 +62,11 @@ export function frameVerts(e: PolyEntity): PV[] {
   else if (fk === 'fit') vs = e.vertices.filter((v) => !(v.flags & 1) && !(v.flags & 16));
   else vs = e.vertices.filter((v) => !(v.flags & 16));
   if (fk === 'spline' && vs.length < 2) vs = e.vertices.filter((v) => !(v.flags & 8));
-  return vs.map((v) => ({ x: v.location.x, y: v.location.y, z: v.location.z, bulge: fk === 'none' ? v.bulge : 0, sw: v.startWidth, ew: v.endWidth }));
+  return vs.map((v) => {
+    const pv: PV = { x: v.location.x, y: v.location.y, z: v.location.z, bulge: fk === 'none' ? v.bulge : 0, sw: v.startWidth, ew: v.endWidth };
+    if (v.flags & 2 && typeof v.tangent === 'number' && e.kind === '2d') pv.tan = v.tangent;
+    return pv;
+  });
 }
 
 /** 정점으로 같은 종류의 폴리선을 다시 만든다(맞춤 정보는 지운다) */
@@ -77,7 +83,15 @@ export function withVerts(e: PolyEntity, verts: readonly PV[], closed: boolean):
     ...e,
     flags: (e.flags & ~(1 | 2 | 4)) | (closed ? 1 : 0),
     smoothType: 0,
-    vertices: verts.map((v): PolyVertex => ({ location: { x: v.x, y: v.y, z: d3 ? v.z : e.elevation }, bulge: d3 ? 0 : v.bulge, startWidth: v.sw, endWidth: v.ew, flags: d3 ? 32 : 0 })),
+    vertices: verts.map((v): PolyVertex => {
+      const pv: PolyVertex = { location: { x: v.x, y: v.y, z: d3 ? v.z : e.elevation }, bulge: d3 ? 0 : v.bulge, startWidth: v.sw, endWidth: v.ew, flags: d3 ? 32 : 0 };
+      // 접선(T)을 붙인 정점은 70 비트 2와 접선 방향을 지닌다
+      if (!d3 && typeof v.tan === 'number') {
+        pv.flags |= 2;
+        pv.tangent = v.tan;
+      }
+      return pv;
+    }),
   };
 }
 
@@ -165,6 +179,69 @@ export function removeVertex(e: PolyEntity, i: number, splinesegs = 8): PolyEnti
   if (prev >= 0) out[prev] = { ...out[prev]!, bulge: 0, ew: out[i]!.ew };
   out.splice(i, 1);
   return editFrame(e, out, closed, splinesegs);
+}
+
+/**
+ * 정점 편집 끊기(B): 표시한 두 정점 i·j 사이 세그먼트를 지운다. i = j면 그 정점에서 나눈다(닫힌 폴리선은 그 정점에서 연다).
+ * 결과: 첫 조각(원본 핸들로 바꾼다)과 둘째 조각(새 객체, 없으면 null). 남는 조각이 없으면 null.
+ */
+export function breakAtVertices(e: PolyEntity, i0: number, j0: number, splinesegs = 8): { first: PolyEntity; second: PolyEntity | null } | null {
+  const vs = frameVerts(e);
+  const n = vs.length;
+  if (i0 < 0 || j0 < 0 || i0 >= n || j0 >= n) return null;
+  const closed = isClosed(e);
+  const i = Math.min(i0, j0);
+  const j = Math.max(i0, j0);
+  const piece = (list: PV[]) => (list.length >= 2 ? editFrame(e, list.map((v, k) => (k === list.length - 1 ? { ...v, bulge: 0 } : { ...v })), false, splinesegs) : null);
+  if (closed) {
+    // 닫힌 폴리선: j에서 시작해 한 바퀴 돌아 i까지(i = j면 그 정점에서 연 폴리선 전체)
+    const list: PV[] = [];
+    const count = i === j ? n + 1 : n - j + i + 1;
+    for (let k = 0; k < count; k++) list.push({ ...vs[(j + k) % n]! });
+    const first = piece(list);
+    return first ? { first, second: null } : null;
+  }
+  if (i === j) {
+    if (i === 0 || i === n - 1) return null;
+    const a = piece(vs.slice(0, i + 1));
+    const b = piece(vs.slice(i));
+    return a ? { first: a, second: b } : null;
+  }
+  const a = piece(vs.slice(0, i + 1));
+  const b = piece(vs.slice(j));
+  if (a) return { first: a, second: b };
+  if (b) return { first: b, second: null };
+  return null;
+}
+
+/** 정점 편집 직선화(S): 표시한 두 정점 사이 정점을 지우고 직선으로. i = j면 그 정점에서 나가는 세그먼트를 직선으로 */
+export function straightenBetween(e: PolyEntity, i0: number, j0: number, splinesegs = 8): PolyEntity | null {
+  const vs = frameVerts(e);
+  const n = vs.length;
+  if (i0 < 0 || j0 < 0 || i0 >= n || j0 >= n) return null;
+  const i = Math.min(i0, j0);
+  const j = Math.max(i0, j0);
+  const out = vs.map((v) => ({ ...v }));
+  if (i === j) {
+    if (!isClosed(e) && i === n - 1) return null;
+    out[i] = { ...out[i]!, bulge: 0 };
+    return editFrame(e, out, isClosed(e), splinesegs);
+  }
+  out[i] = { ...out[i]!, bulge: 0, ew: out[j - 1]!.ew };
+  out.splice(i + 1, j - i - 1);
+  return editFrame(e, out, isClosed(e), splinesegs);
+}
+
+/** 정점 편집 접선(T): 정점 i에 곡선 맞춤 접선 방향(라디안, null이면 지움). 경량 폴리선은 2D 폴리선이 된다(접선을 담을 수 있게) */
+export function setVertexTangent(e: PolyEntity, i: number, angle: number | null, splinesegs = 8): PolyEntity | null {
+  if (is3d(e)) return null;
+  const pl = toPolyline2d(e);
+  const vs = frameVerts(pl);
+  if (i < 0 || i >= vs.length) return null;
+  const out = vs.map((v) => ({ ...v }));
+  if (angle === null) delete out[i]!.tan;
+  else out[i]!.tan = angle;
+  return editFrame(pl, out, isClosed(pl), splinesegs);
 }
 
 /** i 정점에서 나가는 세그먼트의 시작·끝 폭 */
@@ -283,6 +360,11 @@ function toPolyline2d(e: PolyEntity): PolylineEntity {
   } as PolylineEntity;
 }
 
+/** 틀 정점의 접선(T) 표시: 70 비트 2와 접선 방향 */
+function tanOf(v: PV): { flags: number; tangent?: number } {
+  return typeof v.tan === 'number' ? { flags: 2, tangent: v.tan } : { flags: 0 };
+}
+
 /** 맞춤(이중 호) — 3D 폴리선은 그대로 돌려준다 */
 export function fitPolyline(e0: PolyEntity): PolyEntity {
   if (is3d(e0)) return e0;
@@ -292,18 +374,19 @@ export function fitPolyline(e0: PolyEntity): PolyEntity {
   const n = vs.length;
   if (n < 2) return e;
   const pts = vs.map((v) => ({ x: v.x, y: v.y }));
-  const tans = fitTangents(pts, closed);
+  // 정점 편집 접선(T)으로 정한 방향이 있으면 그것을 쓴다
+  const tans = fitTangents(pts, closed).map((t, i) => (typeof vs[i]!.tan === 'number' ? { x: Math.cos(vs[i]!.tan!), y: Math.sin(vs[i]!.tan!) } : t));
   const out: PolyVertex[] = [];
   const segs = closed ? n : n - 1;
   for (let i = 0; i < n; i++) {
     const v = vs[i]!;
     if (i >= segs) {
-      out.push({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: 0, startWidth: v.sw, endWidth: v.ew, flags: 0 });
+      out.push({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: 0, startWidth: v.sw, endWidth: v.ew, ...tanOf(v) });
       continue;
     }
     const r = biarc(pts[i]!, tans[i]!, pts[(i + 1) % n]!, tans[(i + 1) % n]!);
     const wm = (v.sw + v.ew) / 2;
-    out.push({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: r.b0, startWidth: v.sw, endWidth: wm, flags: 0 });
+    out.push({ location: { x: v.x, y: v.y, z: e.elevation }, bulge: r.b0, startWidth: v.sw, endWidth: wm, ...tanOf(v) });
     out.push({ location: { x: r.j.x, y: r.j.y, z: e.elevation }, bulge: r.b1, startWidth: wm, endWidth: v.ew, flags: 1 });
   }
   return { ...e, flags: (e.flags & ~4) | 2, smoothType: 0, vertices: out };

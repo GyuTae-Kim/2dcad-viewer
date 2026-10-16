@@ -1,6 +1,7 @@
 /**
  * 제도 설정: GRID, SNAP, DSETTINGS(DS·SE, 제도 설정 대화상자), OSNAP(대화상자)·-OSNAP(명령행)
  * 격자·스냅 간격은 문서마다 둔다(저장하지 않음). 프롬프트는 AutoCAD 2026 한국어판을 따른다.
+ * 객체 스냅 14종(끝점·중간점·중심·기하학적 중심·노드·사분점·교차점·연장선·삽입·수직·접점·근처점·가상 교차점·평행)을 켜고 끈다.
  */
 import { formatLength } from '../core/units';
 import type { App } from './app';
@@ -9,8 +10,23 @@ import type { SnapKind } from './view';
 import { form } from './ui/dom';
 import { isoState, setIso } from './viewtools-iso';
 
-/** -OSNAP·명령행에서 쓰는 영문 약어 */
-const SNAP_ABBR: Record<string, SnapKind> = { END: 'end', MID: 'mid', CEN: 'cen', QUA: 'qua', INT: 'int', INS: 'ins', NOD: 'nod', PER: 'per', NEA: 'nea' };
+/** -OSNAP·명령행에서 쓰는 영문 약어(이름 앞 세 글자) */
+const SNAP_ABBR: Record<string, SnapKind> = {
+  END: 'end',
+  MID: 'mid',
+  CEN: 'cen',
+  GCE: 'gcen',
+  NOD: 'nod',
+  QUA: 'qua',
+  INT: 'int',
+  EXT: 'ext',
+  INS: 'ins',
+  PER: 'per',
+  TAN: 'tan',
+  NEA: 'nea',
+  APP: 'app',
+  PAR: 'par',
+};
 
 export function registerDraftingCommands(app: App): void {
   app.register({

@@ -2,7 +2,7 @@
  * 특성 팔레트에서 고칠 수 있는 항목.
  * 항목마다 값을 읽고(get) 복사본에 쓰는(set) 함수를 가진다. 여러 객체에 한 번에 적용한다.
  */
-import type { AttribEntity, CadColor, CadDocument, Entity, InsertEntity, LwPolylineEntity, Vec3 } from '../core/model';
+import type { AttribEntity, CadColor, CadDocument, DimensionEntity, Entity, InsertEntity, LwPolylineEntity, MLeaderEntity, MLeaderStyleObject, ToleranceEntity, Vec3 } from '../core/model';
 import { tableKey } from '../core/model';
 import { formatAngle, formatLength, parseAngle, parseLength, type UnitSettings } from '../core/units';
 import type { EditOp } from '../edit/session';
@@ -12,6 +12,9 @@ import { colorText, lineweightText } from './inquiry';
 import { followOps } from './dimassoc';
 import { afterEditSolve } from './constraints-hook';
 import { lwCount, lwVertices, tidyWidths, zeros } from '../core/lwpoly';
+import { rawDimVars } from '../edit/dim';
+import { DIM_VAR_BY_NAME, applyOverrides } from '../edit/annot/override';
+import { dimensionBlockOps } from './dimcmds';
 
 export type FieldKind = 'length' | 'angle' | 'number' | 'text' | 'multiline' | 'select' | 'color' | 'bool';
 
@@ -20,10 +23,15 @@ export interface Field {
   kind: FieldKind;
   /** select 항목 */
   options?: (doc: CadDocument) => { value: string; label: string }[];
-  get(e: Entity): unknown;
-  set(e: Entity, v: unknown): void;
+  /** 값 읽기(doc이 있으면 스타일 값까지: 치수 재지정 항목) */
+  get(e: Entity, doc?: CadDocument): unknown;
+  set(e: Entity, v: unknown, doc?: CadDocument): void;
   /** 0보다 커야 하는 값 */
   positive?: boolean;
+  /** 바꾸면 치수 블록을 치수 생성기로 다시 만든다 */
+  regen?: boolean;
+  /** 읽기 전용(측정값 등) */
+  readonly?: boolean;
 }
 
 export const LINEWEIGHTS = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
@@ -318,10 +326,157 @@ export function geometryFields(type: string): Field[] {
         insertField('축척 Z', 'number', (e) => e.scale.z, (e, v) => ({ ins: e.insert, scale: { ...e.scale, z: v || e.scale.z }, rot: e.rotation })),
         insertField('회전', 'angle', (e) => e.rotation, (e, v) => ({ ins: e.insert, scale: e.scale, rot: v })),
       ];
+    case 'DIMENSION':
+      return DIMENSION_FIELDS;
+    case 'MULTILEADER':
+      return MLEADER_FIELDS;
+    case 'TOLERANCE':
+      return TOLERANCE_FIELDS;
     default:
       return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// 치수·다중 지시선·공차(AutoCAD 특성 팔레트의 기타·선 및 화살표·문자·맞춤 범주에서 자주 쓰는 것)
+// ---------------------------------------------------------------------------
+
+const dimStyleOptions = (doc: CadDocument) => [...doc.dimStyles.values()].filter((s) => s.name && !s.name.includes('|')).sort((a, b) => a.name.localeCompare(b.name)).map((s) => ({ value: s.name, label: s.name }));
+
+/** 치수 변수 재지정 항목(값은 스타일 값 + 재지정) */
+function dimVarField(label: string, name: string, kind: FieldKind = 'length'): Field {
+  const code = DIM_VAR_BY_NAME.get(name)!;
+  return {
+    label,
+    kind,
+    positive: true,
+    regen: true,
+    get: (e, doc) => {
+      const ov = (e as DimensionEntity).overrides?.[code];
+      if (ov !== undefined) return Number(ov);
+      if (!doc) return undefined;
+      try {
+        return Number(rawDimVars(doc, e as DimensionEntity)[name]);
+      } catch {
+        return undefined;
+      }
+    },
+    set: (e, v) => {
+      Object.assign(e, applyOverrides(e as DimensionEntity, { [code]: num(v) }));
+    },
+  };
+}
+
+export const DIMENSION_FIELDS: Field[] = [
+  { label: '치수 스타일', kind: 'select', regen: true, options: dimStyleOptions, get: (e) => (e as DimensionEntity).dimStyle, set: (e, v) => ((e as DimensionEntity).dimStyle = String(v)) },
+  {
+    label: '문자 재지정',
+    kind: 'text',
+    regen: true,
+    get: (e) => (e as DimensionEntity).text,
+    set: (e, v) => {
+      const t = String(v);
+      (e as DimensionEntity).text = t === '<>' ? '' : t;
+    },
+  },
+  { label: '측정값', kind: 'number', readonly: true, get: (e) => (e as DimensionEntity).measurement, set: () => undefined },
+  dimVarField('문자 높이', 'DIMTXT'),
+  dimVarField('화살표 크기', 'DIMASZ'),
+  dimVarField('치수 축척 전체', 'DIMSCALE', 'number'),
+  { label: '문자 회전', kind: 'angle', regen: true, get: (e) => (e as DimensionEntity).textRotation || 0, set: (e, v) => ((e as DimensionEntity).textRotation = num(v)) },
+];
+
+const mleaderStyles = (doc: CadDocument) => [...doc.objects.values()].filter((o): o is MLeaderStyleObject => o.type === 'MLEADERSTYLE');
+
+/** 연결선 길이를 바꾸고 내용을 그만큼 옮긴다(연결 점은 그대로) */
+function setDogleg(e: MLeaderEntity, len: number, on: boolean): void {
+  const ctx = e.context;
+  const first = ctx.leaders[0];
+  const old = e.landing && first?.hasDogleg ? (first.doglegLength ?? e.doglegLength) : 0;
+  const next = on ? Math.max(0, len) : 0;
+  const dv = first?.doglegVector ?? { x: 1, y: 0, z: 0 };
+  const d = next - old;
+  const mv = (p: Vec3): Vec3 => ({ x: p.x + dv.x * d, y: p.y + dv.y * d, z: p.z });
+  if (ctx.leaders.length <= 1 && d) {
+    ctx.contentBase = mv(ctx.contentBase);
+    ctx.basePoint = mv(ctx.basePoint);
+    if (ctx.text) ctx.text.location = mv(ctx.text.location);
+    if (ctx.block) ctx.block.location = mv(ctx.block.location);
+  }
+  e.landing = on;
+  e.dogleg = on;
+  e.doglegLength = on ? len : e.doglegLength;
+  for (const ld of ctx.leaders) {
+    ld.hasDogleg = on;
+    ld.doglegLength = next;
+  }
+}
+
+export const MLEADER_FIELDS: Field[] = [
+  {
+    label: '다중 지시선 스타일',
+    kind: 'select',
+    options: (doc) => mleaderStyles(doc).map((s) => ({ value: s.handle, label: s.name })),
+    get: (e) => (e as MLeaderEntity).styleHandle ?? '',
+    set: (e, v) => ((e as MLeaderEntity).styleHandle = String(v)),
+  },
+  {
+    label: '내용',
+    kind: 'multiline',
+    get: (e) => {
+      const m = e as MLeaderEntity;
+      return m.contentType === 2 && m.context.text ? m.context.text.text.replace(/\\P/g, '\n') : undefined;
+    },
+    set: (e, v) => {
+      const m = e as MLeaderEntity;
+      if (m.contentType === 2 && m.context.text) m.context.text.text = String(v).replace(/\r?\n/g, '\\P');
+    },
+  },
+  {
+    label: '문자 높이',
+    kind: 'length',
+    positive: true,
+    get: (e) => ((e as MLeaderEntity).contentType === 2 ? (e as MLeaderEntity).context.textHeight : undefined),
+    set: (e, v) => {
+      const m = e as MLeaderEntity;
+      if (m.contentType === 2) m.context.textHeight = num(v);
+    },
+  },
+  {
+    label: '화살촉 크기',
+    kind: 'length',
+    positive: true,
+    get: (e) => (e as MLeaderEntity).arrowSize,
+    set: (e, v) => {
+      const m = e as MLeaderEntity;
+      m.arrowSize = num(v);
+      m.context.arrowSize = num(v);
+    },
+  },
+  {
+    label: '연결선',
+    kind: 'bool',
+    get: (e) => (e as MLeaderEntity).landing,
+    set: (e, v) => {
+      const m = e as MLeaderEntity;
+      setDogleg(m, m.doglegLength > 0 ? m.doglegLength : m.context.textHeight * 2, !!v);
+    },
+  },
+  {
+    label: '연결선 거리',
+    kind: 'length',
+    get: (e) => ((e as MLeaderEntity).landing ? ((e as MLeaderEntity).context.leaders[0]?.doglegLength ?? (e as MLeaderEntity).doglegLength) : undefined),
+    set: (e, v) => {
+      const m = e as MLeaderEntity;
+      setDogleg(m, num(v), true);
+    },
+  },
+];
+
+export const TOLERANCE_FIELDS: Field[] = [
+  { label: '치수 스타일', kind: 'select', options: dimStyleOptions, get: (e) => (e as ToleranceEntity).dimStyle, set: (e, v) => ((e as ToleranceEntity).dimStyle = String(v)) },
+  { label: '공차 문자', kind: 'text', get: (e) => (e as ToleranceEntity).text, set: (e, v) => ((e as ToleranceEntity).text = String(v)) },
+];
 
 /** 블록 참조의 속성 값 항목(태그별) */
 export function attribFields(e: InsertEntity): Field[] {
@@ -353,11 +508,11 @@ function findAttrib(e: InsertEntity, tag: string, i: number): AttribEntity | und
 // ---------------------------------------------------------------------------
 
 /** 객체들의 값(모두 같으면 그 값, 다르면 undefined, 해당 없음이면 null) */
-export function commonValue(field: Field, list: Entity[]): { value: unknown; varies: boolean } {
+export function commonValue(field: Field, list: Entity[], doc?: CadDocument): { value: unknown; varies: boolean } {
   let first: unknown;
   let has = false;
   for (const e of list) {
-    const v = field.get(e);
+    const v = field.get(e, doc);
     if (!has) {
       first = v;
       has = true;
@@ -420,8 +575,9 @@ export function applyField(app: App, handles: string[], field: Field, value: unk
     }
     const block = st.session.ownerOf(h);
     if (!block) continue;
+    if (field.readonly) continue;
     const c = cloneEntity(e);
-    field.set(c, value);
+    field.set(c, value, st.doc);
     if (JSON.stringify(c) === JSON.stringify(e)) continue;
     ops.push({ kind: 'modify', block, before: e, after: c });
   }
@@ -438,6 +594,20 @@ export function applyField(app: App, handles: string[], field: Field, value: unk
     const f = followOps(st, new Map(ops.flatMap((o) => (o.kind === 'modify' ? [[o.before.handle, o.after] as const] : []))));
     for (const o of ops) if (o.kind === 'modify') o.after = f.patched.get(o.before.handle) ?? o.after;
     ops.push(...f.ops);
+    // 치수 모양을 바꾸는 값: 치수 블록을 치수 생성기로 다시 만든다(블록 작업이 먼저)
+    if (field.regen) {
+      const extra = new Set<string>();
+      const blockOps: EditOp[] = [];
+      for (const o of ops) {
+        if (o.kind !== 'modify' || o.after.type !== 'DIMENSION') continue;
+        try {
+          blockOps.push(...dimensionBlockOps(st, o.after, true, extra));
+        } catch {
+          /* 생성기가 못 다루는 치수는 정의만 바꾼다 */
+        }
+      }
+      ops.unshift(...blockOps);
+    }
     st.session.commit({ label: 'PROPERTIES', ops });
   }
   return ops.length;

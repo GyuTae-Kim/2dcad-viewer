@@ -10,7 +10,7 @@ function siteMetadata(): Plugin {
     transformIndexHtml: { order: 'pre', handler: (html) => html.replace('<!-- site-metadata -->', renderMetadata()) },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (!/^\/(?:2dcad-viewer\/)?sitemap\.xml(?:\?|$)/.test(req.url ?? '')) return next();
+        if (!/^\/(?:opencad-dwgdxf\/)?sitemap\.xml(?:\?|$)/.test(req.url ?? '')) return next();
         res.setHeader('Content-Type', 'application/xml'); res.end(sitemapXml());
       });
     },
@@ -53,7 +53,7 @@ function pdfjsAssets(): Plugin {
 }
 
 export default defineConfig({
-  // GitHub Pages 프로젝트 사이트 경로(https://gyutae-kim.github.io/2dcad-viewer/)
+  // GitHub Pages 프로젝트 사이트 경로(https://gyutae-kim.github.io/opencad-dwgdxf/)
   base: './',
   plugins: [siteMetadata(), pdfjsAssets()],
   build: {

@@ -291,7 +291,8 @@ export function makeScriptApp(setup?: (doc: CadDocument) => void): ScriptApp {
           resolve,
           reject,
         })),
-      getEntity: (prompt, kws) => ask((resolve, reject) => ({ kind: 'entity', prompt, keywords: kws ?? [], resolve, reject })),
+      // 빈 곳 고르기(emptyPick)는 스크립트에서 쓰지 않는다 — 객체 결과만 돌려준다
+      getEntity: ((prompt: string, kws?: Keyword[]) => ask((resolve, reject) => ({ kind: 'entity', prompt, keywords: kws ?? [], resolve, reject }))) as CommandContext['getEntity'],
       getSelection: (prompt, opt) => requestSelection(prompt ?? '객체 선택:', opt ?? {}),
     };
     try {

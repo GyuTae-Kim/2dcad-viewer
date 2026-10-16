@@ -108,7 +108,7 @@ export function registerFileCommands(app: App): void {
         if (await quickSave(app, ctx, st)) saved++;
       }
       // 저장이 창 제목을 저장한 도면 이름으로 바꾸므로 보고 있는 도면으로 되돌린다
-      if (app.active) document.title = `${app.active.saveName} - OpenCAD 2D 뷰어`;
+      if (app.active) document.title = `${app.active.saveName} - OpenCAD DWG·DXF`;
       ctx.print(`바뀐 도면 ${dirty.length}개 중 ${saved}개를 저장했습니다.`);
     },
   });

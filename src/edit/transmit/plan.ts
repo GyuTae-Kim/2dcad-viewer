@@ -265,7 +265,7 @@ export function transmitReport(o: {
   const L: string[] = [];
   L.push('전송 보고서', '');
   L.push(`만든 날짜: ${stamp(o.date)}`);
-  L.push(`만든 프로그램: OpenCAD 2D 뷰어(브라우저 — 파일은 이 컴퓨터에서 묶었습니다)`);
+  L.push(`만든 프로그램: OpenCAD DWG·DXF(브라우저 — 파일은 이 컴퓨터에서 묶었습니다)`);
   L.push(`주 도면: ${root?.name ?? ''}`);
   L.push(`전송 패키지: ${o.zipName}`);
   L.push('');

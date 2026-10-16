@@ -13,7 +13,7 @@ import { entityPath } from '../../src/edit/geom/path';
 import { pathNearest } from '../../src/edit/geom/curve';
 import { boundsOf } from '../../src/edit/geom/query';
 import { newDoc } from '../edit/make';
-import { type CommitHook, type EntityClickHandler, type InputFilter, type PointFilter, bindCommitHooks } from '../../src/app/hooks';
+import { type CommandFallback, type CommitHook, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PointFilter, bindCommitHooks } from '../../src/app/hooks';
 
 export type Input = string | { click: [number, number]; snap?: string } | { pick: string; at: [number, number] } | { sel: string[] };
 
@@ -103,6 +103,9 @@ export function makeHarness(setup?: (doc: CadDocument) => void): Harness {
     pointFilters: [] as PointFilter[],
     inputFilters: [] as InputFilter[],
     entityClickHandlers: [] as EntityClickHandler[],
+    dblClickHandlers: [] as DblClickHandler[],
+    gripMenuProviders: [] as GripMenuProvider[],
+    commandFallbacks: [] as CommandFallback[],
     commitHooks: [] as CommitHook[],
     dragPreviewMode: null,
   } as unknown as App;

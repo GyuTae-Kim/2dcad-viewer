@@ -33,7 +33,7 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
     if (!editor) {
       busy(true);
       status.setAttribute('role', 'status');
-      status.textContent = '뷰어를 준비하고 있습니다…';
+      status.textContent = '편집기를 준비하고 있습니다…';
       editor = Promise.resolve().then(load).then((ready) => {
         events.abort();
         return ready;
@@ -42,7 +42,7 @@ export function mountWelcome(root: HTMLElement, load: () => Promise<EditorAction
         if (!root.contains(intro)) events.abort(); // Preserve the editor's WebGL fallback.
         else {
           busy(false);
-          report('뷰어를 준비하지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.');
+          report('편집기를 준비하지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.');
           status.append(button('새로고침', () => location.reload()));
         }
         throw error;

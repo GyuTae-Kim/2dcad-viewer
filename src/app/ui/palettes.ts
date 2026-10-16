@@ -4,7 +4,7 @@ import type { CadColor, CadDocument, DimensionEntity, Entity, InsertEntity } fro
 import { tableKey } from '../../core/model';
 import { aciToRgb, nearestAci, rgbToCss } from '../../core/color';
 import { formatLength } from '../../core/units';
-import { colorText, dimDisplayText, dimTypeName, entityLength, entityProperties, lineweightText, plainText, typeName } from '../inquiry';
+import { colorText, dimDisplayText, dimTypeName, entityLength, entityProperties, lineweightText, typeName } from '../inquiry';
 import { zoomToHandles } from '../commands';
 import { type Field, GENERAL_FIELDS, LINEWEIGHTS, applyField, attribFields, commonValue, formatValue, geometryFields, parseValue } from '../propedit';
 import { type LayerPatch, cannotDeleteLayer, createLayer, currentLayer, deleteLayer, layerUsage, newLayerName, patchLayers, renameLayer, setCurrentLayer } from '../layers';
@@ -16,6 +16,8 @@ import { dynPaletteGroup } from '../dynblock';
 import { arrayPaletteGroup } from '../assocarray-ui';
 import { annoCurrentRow, annoPaletteGroup } from '../annoscale-palette';
 import { layerFilterPanel } from '../layerfilter-ui';
+import { isTextEditable } from '../textedit/entity';
+import { findPanel, newFindState, tableCellGroup } from '../textedit/palette';
 
 type Tab = 'props' | 'layers' | 'dims' | 'find';
 
@@ -32,7 +34,7 @@ export class Palette {
   private readonly body: HTMLDivElement;
   private tab: Tab = 'props';
   private layerFilter = '';
-  private findQuery = '';
+  private readonly findState = newFindState();
   private dimFilter: 'all' | 'mismatch' = 'all';
   private width = 320;
 
@@ -164,7 +166,13 @@ export class Palette {
     if (types.size === 1) {
       const t = sel[0]!.type;
       const fields = geometryFields(t);
-      if (fields.length) this.editGroup(t === 'TEXT' || t === 'MTEXT' || t === 'ATTDEF' ? '문자' : '형상', fields, sel, handles);
+      const title = t === 'TEXT' || t === 'MTEXT' || t === 'ATTDEF' ? '문자' : t === 'DIMENSION' ? '치수' : t === 'MULTILEADER' ? '다중 지시선' : t === 'TOLERANCE' ? '공차' : '형상';
+      if (fields.length) this.editGroup(title, fields, sel, handles);
+      if (sel.length === 1 && isTextEditable(sel[0])) this.body.append(this.textEditButton(sel[0]!.handle));
+      if (sel.length === 1 && t === 'ACAD_TABLE') {
+        const tg = tableCellGroup(app, sel[0]!.handle);
+        if (tg) this.body.append(tg);
+      }
       if (sel.length === 1 && t === 'INSERT') {
         const dyn = dynPaletteGroup(app, sel[0]!.handle);
         if (dyn) this.body.append(dyn);
@@ -244,7 +252,7 @@ export class Palette {
   /** 항목 하나의 편집 줄 */
   private editor(f: Field, sel: Entity[], commit: (v: unknown) => void): HTMLElement {
     const st = this.app.active!;
-    const { value, varies } = commonValue(f, sel);
+    const { value, varies } = commonValue(f, sel, st.doc);
     const id = `pf-${f.label}`;
     let ctl: HTMLElement;
     switch (f.kind) {
@@ -294,8 +302,12 @@ export class Palette {
         break;
       }
       default: {
-        const el = h('input', { 'data-field': id, 'aria-label': f.label, placeholder: varies ? '*여러 개*' : '' }) as HTMLInputElement;
+        const el = h('input', { 'data-field': id, 'aria-label': f.label, placeholder: varies ? '*여러 개*' : '', readonly: !!f.readonly }) as HTMLInputElement;
         el.value = varies ? '' : formatValue(f, value, st.units);
+        if (f.readonly) {
+          ctl = el;
+          break;
+        }
         const orig = el.value;
         el.addEventListener('keydown', (ev) => {
           if ((ev as KeyboardEvent).key === 'Enter') el.blur();
@@ -318,6 +330,16 @@ export class Palette {
       }
     }
     return h('label', { class: 'prop-row edit' }, h('span', { class: 'k' }, f.label), ctl);
+  }
+
+  /** 문자 편집 단추(제자리 편집기로 TEXTEDIT) */
+  private textEditButton(handle: string): HTMLElement {
+    const b = h('button', { class: 'btn', type: 'button' }, '문자 편집...');
+    b.addEventListener('click', () => {
+      this.app.setSelection([handle], 'replace');
+      void this.app.run('TEXTEDIT', handle);
+    });
+    return h('div', { class: 'prop-group', style: 'display:flex;justify-content:flex-end;padding:4px 8px' }, b);
   }
 
   private group(title: string, rows: { k: string; v: string }[]): void {
@@ -564,54 +586,9 @@ export class Palette {
     );
   }
 
+  /** 찾기 및 대치(FIND): src/app/textedit/palette.ts */
   private find(): void {
-    const app = this.app;
-    const st = app.active!;
-    const input = h('input', { class: 'search', placeholder: '찾을 문자 (Enter)', value: this.findQuery, 'aria-label': '찾을 문자' });
-    const results = h('div');
-    const run = () => {
-      this.findQuery = (input as HTMLInputElement).value;
-      results.innerHTML = '';
-      const q = this.findQuery.trim().toLowerCase();
-      if (!q) return;
-      const scene = st.scenes.get(st.space);
-      const hits: { handle: string; text: string; type: string }[] = [];
-      const check = (handle: string, e: Entity, owner: string) => {
-        let t = '';
-        if (e.type === 'TEXT' || e.type === 'ATTRIB' || e.type === 'MTEXT') t = plainText(e.text);
-        else if (e.type === 'DIMENSION') t = dimDisplayText(st.doc, e).text;
-        else if (e.type === 'MULTILEADER') t = plainText(e.context.text?.text ?? '');
-        if (t && t.toLowerCase().includes(q)) hits.push({ handle: owner, text: t, type: typeName(e) });
-        void handle;
-      };
-      for (const b of scene?.entities ?? []) {
-        const e = st.doc.entityIndex.get(b.handle);
-        if (!e) continue;
-        check(b.handle, e, b.handle);
-        if (e.type === 'INSERT') for (const a of e.attribs) check(a.handle, a, b.handle);
-        if (hits.length > 500) break;
-      }
-      if (!hits.length) {
-        results.append(h('div', { class: 'empty' }, '찾은 문자가 없습니다.'));
-        return;
-      }
-      results.append(h('div', { style: 'margin:4px 0;color:var(--text-dim)' }, `${hits.length}개${hits.length > 500 ? ' 이상' : ''}`));
-      const tbody = h('tbody');
-      for (const x of hits) {
-        const tr = h('tr', { class: 'clickable' }, h('td', { style: 'color:var(--text-dim)' }, x.type), h('td', { style: 'white-space:normal' }, x.text.slice(0, 200)));
-        tr.addEventListener('click', () => {
-          app.setSelection([x.handle]);
-          zoomToHandles(app, [x.handle]);
-        });
-        tbody.append(tr);
-      }
-      results.append(h('table', { class: 'grid' }, tbody));
-    };
-    input.addEventListener('keydown', (ev) => {
-      if ((ev as KeyboardEvent).key === 'Enter') run();
-    });
-    this.body.append(input, results);
-    if (this.findQuery) run();
+    this.body.append(findPanel(this.app, this.findState));
   }
 }
 

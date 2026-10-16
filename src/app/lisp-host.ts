@@ -25,6 +25,7 @@ import { sessionFile } from './sessionfiles';
 import { findSnap } from './snap';
 import { grClear, grDraw } from './lisp-gr';
 import { affApply } from '../text/layout';
+import { browserSysvar, setSysvarText, sysvarInfo } from './sysvars';
 
 type Pt = { x: number; y: number };
 
@@ -229,6 +230,7 @@ const OSNAP_BITS: [number, SnapKind][] = [
   [1024, 'gcen'],
   [2048, 'app'],
   [4096, 'ext'],
+  [8192, 'par'],
 ];
 
 const headerCodes = new Map(HEADER_VARS.map(([n, code]) => [n, code]));
@@ -313,10 +315,18 @@ function headerToValue(name: string, v: HeaderValue): Value {
   return null;
 }
 
+/** 이 브라우저 변수(PICKBOX·GRIPSIZE·ATTREQ …, sysvars.ts)인지 — 모르는 이름이면 browserSysvar가 NaN */
+const isBrowserVar = (n: string): boolean => !Number.isNaN(browserSysvar(n));
+
 export function getSysVar(app: App, name: string): Value | undefined {
   const n = name.trim().toUpperCase().replace(/^\$/, '');
   const sv = sessionVar(app, n);
   if (sv !== undefined) return sv;
+  // 이 브라우저 변수는 SYSVDLG·OPTIONS와 같은 값(ATTREQ는 정하지 않았으면 도면 머리말)
+  if (isBrowserVar(n)) {
+    const bv = sysvarInfo(app, n)?.value;
+    return typeof bv === 'number' ? bv : undefined;
+  }
   const v = app.active?.doc.header.get(`$${n}`);
   return v === undefined ? undefined : headerToValue(`$${n}`, v);
 }
@@ -364,6 +374,13 @@ export function setSysVar(app: App, name: string, v: Value): string | null {
     }
     default:
       break;
+  }
+  // 이 브라우저 변수: SYSVDLG·변수 이름 입력과 같은 검사·적용(바뀌면 화면이 onSysvarChange로 다시 읽는다)
+  if (isBrowserVar(n)) {
+    const num = typeof v === 'number' ? v : v instanceof Real ? v.v : NaN;
+    if (!Number.isInteger(num)) return '정수가 필요합니다';
+    const err = setSysvarText(app, n, String(num));
+    return err === null ? null : err.replace(/\.$/, '');
   }
   const st = app.active;
   const key = `$${n}`;
@@ -568,7 +585,8 @@ export function makeHost(app: App, s: HostState): LispHost {
       if (!st || !pk) return null;
       const u = ucs();
       try {
-        const sp = findSnap(st.doc, pk, toWcs(u, p), 10 * (app.view?.pixelSize?.() ?? 1), new Set(modes as SnapKind[]));
+        // (osnap)도 조준창(APERTURE) 안에서 찾는다
+        const sp = findSnap(st.doc, pk, toWcs(u, p), (app.settings?.aperture ?? 10) * (app.view?.pixelSize?.() ?? 1), new Set(modes as SnapKind[]));
         return sp ? toUcs(u, { x: sp.x, y: sp.y }) : null;
       } catch {
         return null;

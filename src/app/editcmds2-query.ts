@@ -279,7 +279,7 @@ export function registerEditCmds2Query(app: App): void {
       }
       ctx.print(`${st.isModel ? '모형' : '배치'} 재생성 중.`);
       app.view.zoomExtents();
-      if (Math.abs(angle) > 1e-9) ctx.print('참고: 이 뷰어는 화면을 돌리지 않으므로 UCS가 돌아가 있어도 표준 방향으로 범위를 보여 줍니다.');
+      if (Math.abs(angle) > 1e-9) ctx.print('참고: 이 프로그램은 화면을 돌리지 않으므로 UCS가 돌아가 있어도 표준 방향으로 범위를 보여 줍니다.');
     },
   });
 

@@ -110,6 +110,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'HELIX', label: '나선', icon: 'spline', tip: '나선 (HELIX)' },
             { cmd: 'SKETCH', label: '스케치', icon: 'pline', tip: '마우스로 그리는 자유 곡선 (SKETCH)' },
+            {
+              cmd: '3DPOLY',
+              label: '3D 폴리선',
+              icon: 'pline',
+              tip: '3D 폴리선 (3P)',
+              menu: [
+                { label: '3D 폴리선', cmd: '3DPOLY', icon: 'pline' },
+                { label: '3D 면', cmd: '3DFACE', icon: 'polygon' },
+                { label: '트레이스', cmd: 'TRACE', icon: 'pline' },
+              ],
+            },
           ],
           [
             { cmd: 'REVCLOUD', label: '구름형 수정 기호', icon: 'polygon', tip: '구름형 수정 기호 (REVCLOUD)' },
@@ -141,6 +152,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
               menu: [
                 { label: '복사', cmd: 'COPY', icon: 'copy' },
                 { label: '여러 번 복사', cmd: 'COPYM', icon: 'copy' },
+                { label: '이동·복사·회전·축척', cmd: 'MOCORO', icon: 'move' },
               ],
             },
             { cmd: 'STRETCH', label: '신축', icon: 'stretch', tip: '신축 (S)' },
@@ -176,6 +188,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
                 { label: '직사각형 배열', cmd: 'ARRAYRECT', icon: 'arrayRect' },
                 { label: '원형 배열', cmd: 'ARRAYPOLAR', icon: 'arrayPolar' },
                 { label: '경로 배열', cmd: 'ARRAYPATH', icon: 'spline' },
+                { label: '배열 대화상자', cmd: 'ARRAYCLASSIC', icon: 'settings' },
                 { label: '배열 편집', cmd: 'ARRAYEDIT', icon: 'arrayRect' },
                 { label: '배열 원본 편집 저장', cmd: 'ARRAYCLOSE S', icon: 'save' },
                 { label: '배열 원본 편집 취소', cmd: 'ARRAYCLOSE D', icon: 'close' },
@@ -383,7 +396,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         cols: [
           [
             { cmd: 'TEXT', label: '단일 행', icon: 'text', tip: '단일 행 문자 (DT)' },
-            { cmd: 'FIND', label: '문자 찾기', icon: 'find', tip: '도면 안의 문자를 찾아 이동합니다' },
+            { cmd: 'FIND', label: '찾기 및 대치', icon: 'find', tip: '도면 안의 문자를 찾아 이동하거나 바꿉니다 (FIND)' },
             { cmd: 'STYLE', label: '문자 스타일', icon: 'text', tip: '문자 스타일 (ST)' },
           ],
           [
@@ -575,7 +588,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
             { cmd: 'DIMLIST', label: '치수 목록', icon: 'dimlist' },
           ],
           [
-            { cmd: 'FIND', label: '문자 찾기', icon: 'find' },
+            { cmd: 'FIND', label: '찾기 및 대치', icon: 'find' },
             { cmd: 'DWGINFO', label: '도면 정보', icon: 'info' },
             { cmd: 'UNITS', label: '도면 단위', icon: 'coord' },
           ],
@@ -700,7 +713,18 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           ],
           [
             { cmd: 'UNITS', label: '단위', icon: 'coord' },
+            { cmd: 'DWGPROPS', label: '도면 특성', icon: 'props', tip: '제목·작성자·키워드·사용자 특성 (DWGPROPS)' },
             { cmd: 'DWGINFO', label: '도면 정보', icon: 'info' },
+          ],
+        ],
+      },
+      {
+        title: '사용자화',
+        cols: [
+          [
+            { cmd: 'OPTIONS', label: '옵션', icon: 'settings', noDoc: true, tip: '열기 및 저장·화면표시·선택·제도 설정 (OP)' },
+            { cmd: 'SYSVDLG', label: '시스템 변수', icon: 'list', noDoc: true, tip: '시스템 변수 찾기·편집 (SYSVDLG)' },
+            { cmd: 'ALIASEDIT', label: '별칭 편집', icon: 'text', noDoc: true, tip: '명령 별칭 추가·편집 (ALIASEDIT)' },
           ],
         ],
       },
@@ -713,11 +737,12 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         title: '플롯',
         large: [
           { cmd: 'PLOT', label: '플롯', icon: 'print', tip: '용지·축척·플롯 스타일을 골라 PDF로 출력 (Ctrl+P)' },
-          { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
+          { cmd: 'PUBLISH', label: '게시', icon: 'exportPdf', tip: '고른 배치를 PDF 하나로 (PUBLISH)' },
           { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
         cols: [
           [
+            { cmd: 'PAGESETUP', label: '페이지 설정 관리자', icon: 'paper', tip: '명명된 페이지 설정 만들기·고치기·현재로 설정 (PAGESETUP)' },
             { cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' },
             { cmd: 'PLOTSTAMP', label: '플롯 스탬프', icon: 'settings', tip: '출력에 도면 이름·날짜 등을 찍기 (PLOTSTAMP)' },
             { cmd: 'PLOTSTYLE', label: '플롯 스타일', icon: 'props', tip: '객체의 이름 있는 플롯 스타일 (PLOTSTYLE)' },
@@ -984,15 +1009,17 @@ export class Shell implements UiHooks {
         { label: 'PNG로 내보내기', icon: 'exportPng', disabled: !app.active, run: () => void app.run('PNGOUT') },
         { label: 'SVG로 내보내기', icon: 'exportSvg', disabled: !app.active, run: () => void app.run('SVGOUT') },
         { label: '플롯(PDF)…', icon: 'print', kbd: 'Ctrl+P', disabled: !app.active, run: () => void app.run('PLOT') },
-        { label: '모든 배치를 PDF로', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
+        { label: '게시(배치를 PDF로)…', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
         { separator: true },
+        { label: '도면 특성…', icon: 'props', disabled: !app.active, run: () => void app.run('DWGPROPS') },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
         { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },
         { label: '모두 닫기', icon: 'close', disabled: !app.active, run: () => void app.run('CLOSEALL') },
         { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
+        { label: '옵션…', icon: 'settings', run: () => void app.run('OPTIONS') },
         { label: '단축키·도움말', icon: 'help', kbd: 'F1', run: () => void app.run('HELP') },
-        { label: '이 뷰어에 대하여', icon: 'info', run: () => void app.run('ABOUT') },
+        { label: 'OpenCAD 정보', icon: 'info', run: () => void app.run('ABOUT') },
       ]);
     });
     const qat = h(
@@ -1005,7 +1032,7 @@ export class Shell implements UiHooks {
       this.iconBtn('redo', '다시 실행 (Ctrl+Y)', () => void app.run('REDO')),
       this.iconBtn('print', 'PDF로 인쇄 (Ctrl+P)', () => void app.run('PLOT')),
     );
-    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' 2D 뷰어');
+    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' DWG·DXF');
     const right = h(
       'div',
       { class: 'title-right' },
@@ -1391,7 +1418,7 @@ export class Shell implements UiHooks {
           if (paper && st.displaySpace !== key) await app.setSpace(l.blockName);
           void app.run(cmd, arg);
         };
-        showMenu(ev.clientX, ev.clientY - (paper ? 190 : 80), [
+        showMenu(ev.clientX, ev.clientY - (paper ? 214 : 80), [
           { label: '새 배치', run: () => void app.run('LAYOUT', 'N') },
           ...(paper
             ? [
@@ -1399,6 +1426,7 @@ export class Shell implements UiHooks {
                 { label: '이름 바꾸기…', run: () => void go('LAYOUT', 'R') },
                 { label: '삭제', run: () => void go('LAYOUT', 'D') },
                 { label: '다른 이름으로 저장…', run: () => void go('LAYOUT', 'SA') },
+                { label: '이동 또는 복사…', run: () => void app.run('LAYOUTMOVE', label) },
               ]
             : []),
           { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
@@ -1699,12 +1727,18 @@ export class Shell implements UiHooks {
       if ((ev as KeyboardEvent).key === 'Enter') this.pickFiles();
     });
     const sample = h('button', { class: 'btn', onclick: () => void this.openSample() }, iconSpan('sample'), '예제 도면 열기');
+    const newDrawing = h(
+      'div',
+      { class: 'start-new' },
+      h('button', { class: 'btn primary', onclick: () => void this.app.run('NEW', 'metric') }, iconSpan('new'), '새 도면 (mm)'),
+      h('button', { class: 'btn', title: 'acad 서식(영국식, 인치)', onclick: () => void this.app.run('NEW', 'imperial') }, '인치'),
+    );
     this.start.append(
       h(
         'div',
         { class: 'start-inner' },
-        h('h1', {}, 'OpenCAD 무료 캐드 뷰어'),
-        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열고, 치수를 재고, 고쳐서 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
+        h('h1', {}, 'OpenCAD 무료 DWG·DXF 캐드'),
+        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열거나 새로 만들어 그리고, 고치고, 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
         h(
           'div',
           { class: 'start-grid' },
@@ -1712,19 +1746,20 @@ export class Shell implements UiHooks {
           h(
             'div',
             { class: 'start-side' },
+            h('div', { class: 'card' }, h('h3', {}, '새로 그리기'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '빈 도면을 만들어 바로 그리기를 시작합니다(Ctrl+N).'), newDrawing),
             h('div', { class: 'card' }, h('h3', {}, '최근 문서'), this.recentList),
             h('div', { class: 'card' }, h('h3', {}, '처음이라면'), h('div', { style: 'margin-bottom:8px;color:var(--text-dim)' }, '예제 도면으로 기능을 둘러볼 수 있습니다.'), sample),
             h(
               'div',
               { class: 'card' },
               h('h3', {}, '지원 범위'),
-              h('ul', {}, h('li', {}, 'DXF R12~R2018(ASCII·이진)'), h('li', {}, 'DWG R13~R2018'), h('li', {}, '모형·배치, 도면층, 블록, 치수, 해치, 문자'), h('li', {}, '측정, 객체 스냅, 특성 보기, PNG·SVG·PDF 내보내기')),
+              h('ul', {}, h('li', {}, 'DXF R12~R2018(ASCII·이진) 열기·저장'), h('li', {}, 'DWG R13~R2018 열기, R2000~R2018 저장'), h('li', {}, '그리기·수정·그립, 치수·해치·문자·표, 블록·도면층·배치 편집'), h('li', {}, '측정, 객체 스냅, PNG·SVG·PDF 출력')),
             ),
           ),
         ),
         h(
           'div',
-          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
+          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 DWG·DXF 2D 캐드입니다(MIT). SKP·STEP·NC는 OpenCAD의 다른 도구로 엽니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf" target="_blank" rel="noopener">GitHub</a>' },
         ),
       ),
     );

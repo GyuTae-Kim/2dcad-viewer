@@ -40,6 +40,8 @@ export interface RectRequest {
   columnSpacing: number;
   /** 행 축 각도(라디안) */
   angle: number;
+  /** 기준점(도면 좌표, 없으면 선택 범위의 중심) */
+  base?: Pt;
 }
 
 export interface PolarRequest {
@@ -50,6 +52,8 @@ export interface PolarRequest {
   /** 채울 각도(라디안, 음수 = 시계) */
   fill: number;
   rotate: boolean;
+  /** 기준점(도면 좌표, 없으면 선택 범위의 중심) */
+  base?: Pt;
 }
 
 export interface PathRequest {
@@ -82,13 +86,13 @@ function extentsCenter(app: App, handles: readonly string[], list: readonly Enti
   return r ? { x: (r[0] + r[2]) / 2, y: (r[1] + r[3]) / 2 } : null;
 }
 
-/** 연관 배열을 만든다. 만들었으면 true */
-export function createAssocArray(app: App, ctx: CommandContext, req: AssocRequest, label: string): boolean {
+/** 연관 배열을 만든다. 만든 배열 참조의 핸들(못 만들었으면 null) */
+export function createAssocArray(app: App, ctx: CommandContext, req: AssocRequest, label: string, opt: { quiet?: boolean } = {}): string | null {
   const st = app.active!;
   const doc = st.doc;
   const sources = req.handles.map((h) => doc.entityIndex.get(h)).filter((e): e is Entity => !!e);
-  if (!sources.length) return false;
-  const c = extentsCenter(app, req.handles, sources) ?? { x: 0, y: 0 };
+  if (!sources.length) return null;
+  const c = (req.kind !== 'path' ? req.base : undefined) ?? extentsCenter(app, req.handles, sources) ?? { x: 0, y: 0 };
   const props = { ...currentProps(app), paperSpace: /^\*PAPER_SPACE/i.test(st.space) ? true : undefined };
   let input: CreateInput;
   if (req.kind === 'rect') {
@@ -181,13 +185,13 @@ export function createAssocArray(app: App, ctx: CommandContext, req: AssocReques
   const r = createArrayOps(buildEnv(st), input);
   if ('error' in r) {
     ctx.print(r.error, 'err');
-    return false;
+    return null;
   }
   st.selection.clear();
   st.session.commit({ label, ops: r.ops, group: ctx.group, rebuildNow: true });
   app.refreshSelectionOverlay();
-  ctx.print(`항목 ${r.items.toLocaleString()}개의 연관 배열(${KIND_LABEL[req.kind]})을 만들었습니다.`);
-  return true;
+  if (!opt.quiet) ctx.print(`항목 ${r.items.toLocaleString()}개의 연관 배열(${KIND_LABEL[req.kind]})을 만들었습니다.`);
+  return r.insert.handle;
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +491,11 @@ async function replaceItems(app: App, ctx: CommandContext, handle: string): Prom
     }
     if ('keyword' in q) return;
   }
+}
+
+/** ARRAYEDIT 옵션 하나(ARRAYRECT·ARRAYPOLAR 명령행 흐름도 같은 옵션을 쓴다 — src/app/arraycmd.ts) */
+export async function arrayEditOption(app: App, ctx: CommandContext, handle: string, info: ArrayInfo, k: string): Promise<'exit' | void> {
+  return editOption(app, ctx, handle, info, k);
 }
 
 async function editOption(app: App, ctx: CommandContext, handle: string, info: ArrayInfo, k: string): Promise<'exit' | void> {

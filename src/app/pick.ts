@@ -69,6 +69,9 @@ export function expandDisplayList(dl: DisplayList): OverlayGeom {
   return { segs, tris };
 }
 
+/** 범위 상자 안을 눌러도 고르는 문자 종류 */
+const TEXT_PICK_BY_BOX = new Set(['TEXT', 'MTEXT', 'ATTDEF']);
+
 function distSeg(px: number, py: number, x0: number, y0: number, x1: number, y1: number): number {
   const dx = x1 - x0;
   const dy = y1 - y0;
@@ -238,6 +241,11 @@ export class Picker {
   }
 
   distance(handle: string, x: number, y: number): number {
+    // 문자는 글자 획 사이·윤곽 글꼴 조각을 받기 전에도 고를 수 있게 범위 상자 안이면 거리 0(AutoCAD처럼 글자 상자를 누르면 잡힌다)
+    if (TEXT_PICK_BY_BOX.has(this.doc.entityIndex.get(handle)?.type ?? '')) {
+      const b = this.box(handle);
+      if (b && x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY) return 0;
+    }
     const g = this.geometry(handle);
     let best = Infinity;
     const s = g.segs;

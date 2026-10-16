@@ -175,9 +175,10 @@ export function registerAnnot2Leader(app: App): void {
           }
           text = lines.join('\\P');
         } else if ('enter' in r) {
-          const t = await textDialog('지시선 주석', '', dv.txt);
-          if (!t || !t.text.trim()) return;
-          text = t.text.replace(/\r?\n/g, '\\P');
+          const t = await textDialog('지시선 주석', '', dv.txt, { app, ctx, at: { x: last.x + (right ? 1 : -1) * dv.gap, y: last.y + dv.txt / 2 }, attachment: right ? 1 : 3, width, style: dv.txsty });
+          if (!t || !t.plain.trim()) return;
+          text = t.text;
+          if (t.width !== width) width = t.width;
         } else return;
         const m: MTextEntity = {
           ...entityDefaults(),

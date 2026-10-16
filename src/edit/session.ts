@@ -309,6 +309,25 @@ export class EditSession {
     return k ?? null;
   }
 
+  /** UNDO 조정(C): 전체(기본)·하나·없음 */
+  undoControl: 'all' | 'one' | 'none' = 'all';
+
+  /** 명령 취소 목록의 맨 위 항목(UNDO 표식·그룹이 자리를 기억한다). 없으면 null */
+  undoTop(): Transaction | null {
+    return this.undoStack[this.undoStack.length - 1] ?? null;
+  }
+
+  /** 명령 취소 목록에서 그 항목의 자리(0부터). 이미 취소했거나 밀려났으면 -1 */
+  undoIndex(tx: Transaction): number {
+    return this.undoStack.lastIndexOf(tx);
+  }
+
+  /** 맨 위 항목이 이 묶음 번호이면 그 작업 수(명령 안에서 되돌릴 작업 수를 셀 때), 아니면 0 */
+  opsInGroup(group: number): number {
+    const top = this.undoStack[this.undoStack.length - 1];
+    return top && top.group === group ? top.ops.length : 0;
+  }
+
   /** 커밋 직전에 트랜잭션을 고치는 고리(주석 축척: 새 주석 객체에 축척 레코드 붙이기 등) */
   beforeCommit: ((tx: Transaction) => Transaction) | null = null;
   /** 커밋 뒤(적용·알림 다음) 부르는 고리(도면층 이전 기록, 연관 배열 경로 따라가기 등). 여기서 다시 커밋해도 된다 */
@@ -322,7 +341,14 @@ export class EditSession {
     for (const op of tx.ops) if ((op.kind === 'add' || op.kind === 'modify') && this.ownerCache) this.ownerCache.set(op.kind === 'add' ? op.entity.handle : op.after.handle, op.block);
     const top = this.undoStack[this.undoStack.length - 1];
     if (tx.group !== undefined && top && top.group === tx.group) top.ops.push(...tx.ops);
-    else this.undoStack.push({ ...tx, ops: [...tx.ops] });
+    else {
+      this.undoStack.push({ ...tx, ops: [...tx.ops] });
+      // UNDO 조정(C) 하나·없음: 마지막 명령만 남긴다(없음은 명령 안의 단계 취소만 되고 U·UNDO는 거절한다)
+      if (this.undoControl !== 'all' && this.undoStack.length > 1) {
+        this.undoStack.splice(0, this.undoStack.length - 1);
+        this.savedDepth = -1;
+      }
+    }
     if (this.undoStack.length > 500) this.undoStack.shift();
     this.redoStack.length = 0;
     this.dirty = true;

@@ -20,6 +20,7 @@ import type { App, CommandContext, Keyword } from './app';
 import { toleranceDialog } from './annot2-misc';
 import { currentProps, textDialog } from './draw';
 import { askText } from './util2-ui';
+import { registerLeaderAssoc } from './leaderassoc';
 import type { Pt } from './view';
 
 const v3 = (p: Pt, z = 0): Vec3 => ({ x: p.x, y: p.y, z });
@@ -58,6 +59,8 @@ export function leaderCreationType(annotation: Entity | null): number {
 const linkable = (e: Entity | null): boolean => !!e && (e.type === 'MTEXT' || e.type === 'TOLERANCE' || e.type === 'INSERT');
 
 export function registerLeaderCommand(app: App): void {
+  // 주석을 옮기면 지시선 끝이 따라간다(src/app/leaderassoc.ts)
+  registerLeaderAssoc(app);
   app.register({
     name: 'LEADER',
     aliases: ['LEAD'],
@@ -160,9 +163,13 @@ async function askAnnotation(app: App, ctx: CommandContext, pts: Pt[]): Promise<
   if (!k) return undefined;
   if (k === 'N') return null;
   if (k === 'M') {
-    const t = await textDialog('지시선 주석', '', dv.txt);
-    if (!t || !t.text.trim()) return null;
-    return mtext(t.text.replace(/\r?\n/g, '\\P'), t.height > 0 ? t.height : dv.txt);
+    const t = await textDialog('지시선 주석', '', dv.txt, { app, ctx, at: { x: last.x + (right ? 1 : -1) * dv.gap, y: last.y + dv.txt / 2 }, attachment: right ? 1 : 3, style: dv.txsty });
+    if (!t || !t.plain.trim()) return null;
+    const m = mtext(t.text, t.height > 0 ? t.height : dv.txt);
+    m.width = t.width;
+    m.lineSpacingFactor = t.lineSpacingFactor;
+    m.lineSpacingStyle = t.lineSpacingStyle;
+    return m;
   }
   if (k === 'T') {
     const spec = await toleranceDialog();

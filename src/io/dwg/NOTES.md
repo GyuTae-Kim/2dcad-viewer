@@ -133,7 +133,8 @@ DXF와 같은 원본 태그(`GenericObject.raw`, ACAD_TABLE은 `TableEntity.raw`
 - OLE2FRAME의 위치(10·11)는 OLE 이진 자료 안에 있어 읽지 않는다.
 - R2007 Reed–Solomon 오류 정정은 하지 않는다(손상된 페이지는 경고 후 건너뜀).
 - 암호가 걸린 파일(보안 플래그 1, 암호화 섹션)은 `dwg.encrypted`.
-- AcDb:SummaryInfo는 `$LASTSAVEDBY`만 읽는다(R2004+). 미리보기 그림은 읽지 않는다.
+- AcDb:SummaryInfo(R2004+)는 모두 읽어 DXF처럼 이름 있는 객체 사전의 `DWGPROPS` XRECORD로 옮기고(내용이 있을 때만, 새 핸들 = `$HANDSEED`),
+  `$LASTSAVEDBY`도 둔다. 쓸 때는 그 XRECORD(없으면 머리말의 예전 자리)로 구역을 만든다 — `../dwgprops.ts`. 미리보기 그림은 읽지 않는다.
 - `$ACADMAINTVER`는 파일 머리 값이 AutoCAD DXF 값과 맞지 않아 두지 않는다. `$TDUCREATE`·`$TDUUPDATE`는 DWG 헤더에 없다.
 - 스플라인의 맞춤점만 있는 경우(맞춤 방식) 조정점을 계산하지 않는다(DXF 리더와 같은 모양으로 맞춤점·접선만 담는다).
 

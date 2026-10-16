@@ -1,4 +1,4 @@
-/* OpenCAD 2D 뷰어 — 어두운 CAD 작업공간 */
+/* OpenCAD DWG·DXF — 어두운 CAD 작업공간 */
 :root {
   --bg-app: #2a3039;
   --bg-title: #232830;
@@ -1768,6 +1768,11 @@ button.aci.on {
 /* 활성 파일 탭은 도면 영역 색(어두움)에 붙으므로 글자는 밝게 */
 :root[data-theme='light'] .filetab.active {
   color: #e8ebf0;
+}
+.start-new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 /* Lightweight welcome page; CAD is loaded after an open/create action. */
 .site-intro.boot-start { width: min(928px, 100%); max-height: 100%; margin: 0 auto; }

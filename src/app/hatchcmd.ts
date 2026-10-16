@@ -176,6 +176,30 @@ async function editGradient(g: HatchGradient): Promise<boolean> {
   return true;
 }
 
+/** 내부 점 미리보기를 하는 경계 후보 수 상한(넘으면 고른 뒤에만 찾는다) */
+const HOVER_LIMIT = 20000;
+/** 미리보기 무늬 선 수 상한(넘으면 채우기로 보여 준다) */
+const HOVER_LINE_LIMIT = 20000;
+
+/** 점이 삼각형들(평탄 [x0, y0, x1, y1, x2, y2, …]) 안에 있는지 */
+function insideTris(tris: readonly number[], p: { x: number; y: number }): boolean {
+  for (let i = 0; i + 5 < tris.length; i += 6) {
+    const ax = tris[i]!;
+    const ay = tris[i + 1]!;
+    const bx = tris[i + 2]!;
+    const by = tris[i + 3]!;
+    const cx = tris[i + 4]!;
+    const cy = tris[i + 5]!;
+    const d1 = (p.x - bx) * (ay - by) - (ax - bx) * (p.y - by);
+    const d2 = (p.x - cx) * (by - cy) - (bx - cx) * (p.y - cy);
+    const d3 = (p.x - ax) * (cy - ay) - (cx - ax) * (p.y - ay);
+    const neg = d1 < 0 || d2 < 0 || d3 < 0;
+    const pos = d1 > 0 || d2 > 0 || d3 > 0;
+    if (!(neg && pos)) return true;
+  }
+  return false;
+}
+
 export function registerHatchCommands(app: App): void {
   app.register({ name: 'HATCH', aliases: ['H', 'BHATCH', 'BH'], title: '해치', run: (ctx) => runHatch(app, ctx, false) });
   app.register({ name: 'GRADIENT', aliases: ['GD'], title: '그라데이션', run: (ctx) => runHatch(app, ctx, true) });
@@ -197,6 +221,40 @@ async function runHatch(app: App, ctx: CommandContext, gradient: boolean): Promi
       return [];
     }
   };
+  // 내부 점 미리보기: 커서가 놓인 영역의 경계를 찾아 지금 무늬로 보여 준다(AutoCAD처럼).
+  // 같은 영역 안에서는 다시 찾지 않고, 찾기가 느렸으면 잠깐 쉬었다가 찾는다(큰 도면에서 커서가 끊기지 않게)
+  let hover: { at: { x: number; y: number }; paths: HatchPath[] | null; tris: number[]; geom: OverlayGeom[]; t: number; ms: number } | null = null;
+  const hoverPreview = (p: { x: number; y: number }): OverlayGeom[] => {
+    const pk = app.picker();
+    if (!pk) return [];
+    if (hover?.paths && insideTris(hover.tris, p)) return hover.geom;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (hover && hover.ms > 15 && now - hover.t < 150) return hover.paths && insideTris(hover.tris, p) ? hover.geom : [];
+    const cands = candidates(st);
+    if (cands.length > HOVER_LIMIT) return [];
+    let paths: HatchPath[] | null = null;
+    try {
+      paths = detectBoundary(doc, cands, p, { islands: s.islands, gapTolerance: s.gap })?.paths ?? null;
+    } catch {
+      paths = null;
+    }
+    let tris: number[] = [];
+    let geom: OverlayGeom[] = [];
+    if (paths?.length) {
+      try {
+        const solid = pk.geometryOf([createHatch(doc, paths, { pattern: 'SOLID', associative: false })]);
+        tris = solid.tris ?? [];
+        const user = s.pattern === '_USER';
+        const look = gradient ? null : createHatch(doc, paths, { pattern: user ? '_USER' : s.pattern, scale: s.scale, angle: s.angle, double: user && s.double, userSpacing: user ? s.userSpacing : undefined, associative: false });
+        geom = look && !look.solid && estimatePatternLines(look) <= HOVER_LINE_LIMIT ? [pk.geometryOf([look])] : [solid];
+      } catch {
+        geom = [];
+      }
+    }
+    const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    hover = { at: p, paths, tris, geom, t: end, ms: end - now };
+    return geom;
+  };
   const status = () =>
     ctx.print(
       gradient
@@ -211,7 +269,7 @@ async function runHatch(app: App, ctx: CommandContext, gradient: boolean): Promi
         { key: 'U', label: '명령 취소' },
         { key: 'T', label: '설정' },
       ],
-      ghost: () => preview(),
+      ghost: (p) => [...preview(), ...hoverPreview(p)],
     });
     if ('enter' in r) break;
     if ('point' in r) {

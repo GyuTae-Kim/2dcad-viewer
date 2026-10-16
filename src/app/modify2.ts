@@ -12,7 +12,8 @@ import { type EditResult, reverseEntity, transformEntity } from '../edit/geom';
 import { alignTransform } from '../edit/geom/align';
 import { type Continuity, blendEntities, blendPath } from '../edit/geom/blend';
 import { boundaryObjects } from '../edit/geom/bpoly';
-import { pathBox } from '../edit/geom/curve';
+import { pathBox, pathNearest } from '../edit/geom/curve';
+import { revcloudModify } from '../edit/geom/modgeom';
 import { extrim, isExtrimEdge } from '../edit/geom/extrim';
 import { cloudPolyline, makeWipeout, outlineOf } from '../edit/geom/markup';
 import { affScale, affTranslate } from '../edit/geom/math';
@@ -331,8 +332,11 @@ export function registerModify2Commands(app: App): void {
           { key: 'tol', label: '공차', type: 'number', value: Number(saved.tol ?? 0.000001) },
           ...PROPS.map(([k, label]) => ({ key: `ig_${k}`, label: `무시: ${label}`, type: 'check' as const, value: !!saved[`ig_${k}`] })),
           { key: 'opt', label: '폴리선 내의 세그먼트 최적화', type: 'check', value: saved.opt !== false },
+          { key: 'width', label: '폴리선 세그먼트 폭 무시', type: 'check', value: !!saved.width },
+          { key: 'nobreak', label: '폴리선 분할 안 함', type: 'check', value: !!saved.nobreak },
           { key: 'overlap', label: '부분 겹침 객체 결합', type: 'check', value: saved.overlap !== false },
           { key: 'end', label: '끝과 끝이 정렬된 동일 선상의 객체 결합', type: 'check', value: saved.end !== false },
+          { key: 'assoc', label: '연관 객체 유지', type: 'check', value: saved.assoc !== false },
         ],
         { ok: '확인', validate: (x) => (Number(x.tol) >= 0 ? null : '공차는 0 이상이어야 합니다.') },
       );
@@ -345,6 +349,9 @@ export function registerModify2Commands(app: App): void {
         optimizePolylines: !!v.opt,
         combineOverlap: !!v.overlap,
         combineEndToEnd: !!v.end,
+        ignoreWidths: !!v.width,
+        noBreakPolylines: !!v.nobreak,
+        keepAssociative: !!v.assoc,
       });
       st.selection.clear();
       commitResults(app, ctx, [{ ...r.result, message: undefined }], 'OVERKILL');
@@ -567,10 +574,84 @@ export function registerModify2Commands(app: App): void {
         else addEntities(app, ctx, [c.e], 'REVCLOUD');
         ctx.print('구름형 리비전을 완료했습니다.');
       };
+      /**
+       * 수정(M): 구름(폴리선)을 고른 점에서 시작해 새 점들을 그리고 구름 위로 돌아오면(또는 Enter) 끝 →
+       * 닫힌 구름은 지울 쪽을 고르고, 새 구간의 방향을 정한다. 결과는 같은 핸들의 폴리선.
+       */
+      const modifyCloud = async (): Promise<void> => {
+        let pick: { handle: string; point: Pt } | null = null;
+        let path: ReturnType<typeof entityPath> = null;
+        while (!pick) {
+          const o = await ctx.getEntity('수정할 폴리선 선택:');
+          if (!('handle' in o)) return;
+          const e = st.doc.entityIndex.get(o.handle);
+          path = e && (e.type === 'LWPOLYLINE' || (e.type === 'POLYLINE' && e.kind === '2d')) ? entityPath(e) : null;
+          if (!e || !path || !path.pieces.length || !unlockedOnly(app, [o.handle]).length) {
+            ctx.print('폴리선을 선택하십시오.', 'err');
+            continue;
+          }
+          pick = o;
+        }
+        const P = path!;
+        const src = st.doc.entityIndex.get(pick.handle)!;
+        const start = pathNearest(P, pick.point);
+        const pts: Pt[] = [start.p];
+        const px = typeof app.view?.pixelSize === 'function' ? app.view.pixelSize() : 0;
+        const onCloud = (q: Pt) => pathNearest(P, q).d <= Math.max(6 * px, 1e-9);
+        let endS: number | null = null;
+        for (;;) {
+          const q = await ctx.getPoint('다음 점 지정 또는 [명령 취소(U)]:', {
+            base: pts[pts.length - 1]!,
+            keywords: [{ key: 'U', label: '명령 취소' }],
+            rubber: (c) => [{ pts: [...pts, c].flatMap((v) => [v.x, v.y]), dashed: true }],
+            ghost: (c) => (pts.length >= 1 ? previewOf(app, [cloudOf([...pts, c], false).e]) : []),
+          });
+          if ('keyword' in q) {
+            if (pts.length > 1) pts.pop();
+            continue;
+          }
+          if ('enter' in q) {
+            if (pts.length < 2) return;
+            // Enter: 마지막 점을 구름 위로 옮긴다
+            const nr = pathNearest(P, pts[pts.length - 1]!);
+            pts[pts.length - 1] = nr.p;
+            endS = nr.s;
+            break;
+          }
+          if (!('point' in q)) return;
+          if (pts.length >= 2 && onCloud(q.point)) {
+            const nr = pathNearest(P, q.point);
+            pts.push(nr.p);
+            endS = nr.s;
+            break;
+          }
+          pts.push(q.point);
+        }
+        if (endS === null || Math.abs(endS - start.s) < 1e-9) {
+          ctx.print('시작점과 끝점이 같아 구름을 고칠 수 없습니다.', 'err');
+          return;
+        }
+        let erase: Pt | null = null;
+        if (P.closed) {
+          const er = await ctx.getPoint('지울 측면 선택:');
+          if (!('point' in er)) return;
+          erase = er.point;
+        }
+        const reverse = await yesNo(ctx, '방향 반전', false);
+        const seg = cloudOf(pts, false, reverse, src).e;
+        const segPath = seg ? entityPath(seg) : null;
+        const next = segPath ? revcloudModify(src, start.s, endS, segPath.pieces, erase) : null;
+        if (!next) {
+          ctx.print('구름형 리비전을 고칠 수 없습니다.', 'err');
+          return;
+        }
+        commitResults(app, ctx, [{ replace: [{ ...next, handle: src.handle } as Entity] }], 'REVCLOUD', { quiet: true });
+        ctx.print('구름형 리비전을 고쳤습니다.');
+      };
       for (;;) {
         ctx.print(`최소 호 길이: ${fmtLen(app, minArc)}   최대 호 길이: ${fmtLen(app, maxArc)}   스타일: ${calligraphy ? '컬리그래피' : '일반'}   유형: ${typeName()}`);
         const first = type === 'R' ? '첫 번째 구석점 지정' : type === 'P' ? '시작점 지정' : '첫 번째 점 지정';
-        const r = await ctx.getPoint(`${first} 또는 [호 길이(A)/객체(O)/직사각형(R)/폴리곤(P)/프리핸드(F)/스타일(S)] <객체>:`, {
+        const r = await ctx.getPoint(`${first} 또는 [호 길이(A)/객체(O)/직사각형(R)/폴리곤(P)/프리핸드(F)/스타일(S)/수정(M)] <객체>:`, {
           keywords: [
             { key: 'A', label: '호 길이' },
             { key: 'O', label: '객체' },
@@ -578,8 +659,13 @@ export function registerModify2Commands(app: App): void {
             { key: 'P', label: '폴리곤' },
             { key: 'F', label: '프리핸드' },
             { key: 'S', label: '스타일' },
+            { key: 'M', label: '수정' },
           ],
         });
+        if ('keyword' in r && r.keyword === 'M') {
+          await modifyCloud();
+          return;
+        }
         if ('keyword' in r && r.keyword !== 'O') {
           const k = r.keyword;
           if (k === 'A') {

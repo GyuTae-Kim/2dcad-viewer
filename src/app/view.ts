@@ -1,5 +1,6 @@
 /**
  * 도면 영역: 카메라(확대·이동), WebGL 그리기, 배치·뷰포트, 오버레이(커서·선택·스냅·고무줄).
+ * 그립 크기·십자선 길이·AutoSnap 표식기·휠 배율·시간에 민감한 오른쪽 클릭은 앱이 넣어 주는 prefs(settings.ts)를 따른다.
  */
 import { type Ucs, currentUcs, isWorld, toUcs, toWcs } from './ucs';
 import type { XrefPlacement } from './refs';
@@ -11,13 +12,14 @@ import type { Camera, DocState, Tile } from './docstate';
 import type { LoadPreview } from './loadpreview';
 import { type OverlayScene, type PaperInfo, type ViewportXf, layoutViewports, paperInfo, viewportXf } from './scene';
 import type { DisplayList } from '../render/displaylist';
+import { DEFAULT_SETTINGS, RightClickTimer, type Settings, crosshairArm, gripHalf, showSnapMarker, snapMarkerRadius, timedRightClick, wheelZoom } from './settings';
 
 export interface Pt {
   x: number;
   y: number;
 }
 
-export type SnapKind = 'end' | 'mid' | 'cen' | 'qua' | 'int' | 'nea' | 'ins' | 'nod' | 'per' | 'tan' | 'ext' | 'app' | 'gcen';
+export type SnapKind = 'end' | 'mid' | 'cen' | 'qua' | 'int' | 'nea' | 'ins' | 'nod' | 'per' | 'tan' | 'ext' | 'app' | 'gcen' | 'par';
 
 export interface OverlayGeom {
   /** 월드 좌표 선분 [x0, y0, x1, y1, …] */
@@ -44,8 +46,18 @@ export interface OverlayState {
   acquired: Pt[];
   /** 누른 그립(빨강) */
   hotGrip: Pt | null;
+  /** Shift+클릭으로 고른 핫 그립들(빨강) */
+  hotGrips: Pt[];
+  /** 커서가 올라간 그립(분홍) */
+  hoverGrip: Pt | null;
   /** 동적 입력: 커서 옆에 보이는 입력 중인 글자 */
   dynInput: string | null;
+  /** 동적 입력 칸(거리·각도 또는 X·Y). 있으면 dynInput 상자 대신 이 칸들을 그린다 */
+  dynFields: { text: string; locked: boolean; active: boolean }[] | null;
+  /** 올가미(화면 좌표 자취)와 종류 */
+  lasso: { pts: Pt[]; mode: 'crossing' | 'window' | 'fence' } | null;
+  /** 창·올가미를 끄는 동안 걸릴 객체(선택 미리보기) */
+  preview: OverlayGeom[];
   marks: { p: Pt; text?: string }[];
   /** 커서 옆 동적 입력 문구 */
   tip: string | null;
@@ -67,7 +79,8 @@ export interface ViewEvents {
   down(world: Pt, screen: Pt, ev: PointerEvent): void;
   click(world: Pt, screen: Pt, ev: PointerEvent): void;
   drag(a: Pt, b: Pt, done: boolean, ev: PointerEvent): void;
-  context(world: Pt, screen: Pt, ev: MouseEvent): void;
+  /** held: 시간에 민감한 오른쪽 클릭(SHORTCUTMENU 16)이 켜져 있을 때 누른 시간(밀리초). 모르면 없다 */
+  context(world: Pt, screen: Pt, ev: MouseEvent, held?: number): void;
   dblclick(world: Pt, screen: Pt, ev: MouseEvent): void;
   leave(): void;
   viewChanged(): void;
@@ -92,6 +105,8 @@ export class CadView {
   overlay: OverlayState = emptyOverlay();
   lwDisplay = false;
   modelBg = DARK_BG;
+  /** 화면 설정(GRIPSIZE·CURSORSIZE·AUTOSNAP·표식기 크기·ZOOMFACTOR·SHORTCUTMENU …). 앱이 시스템 변수를 읽어 넣는다(settings.ts) */
+  prefs: Settings = { ...DEFAULT_SETTINGS };
   private w = 1;
   private h = 1;
   private dpr = 1;
@@ -207,7 +222,10 @@ export class CadView {
     this.state = s;
     // 도면이 열려 있으면 시스템 커서 대신 십자선을 그린다
     this.el.classList.toggle('cursor-none', !!s);
+    // 선택 상자 크기(PICKBOX)는 도면이 바뀌어도 그대로
+    const pickbox = this.overlay.pickbox;
     this.overlay = emptyOverlay();
+    this.overlay.pickbox = pickbox;
     this.requestRender();
   }
 
@@ -937,21 +955,32 @@ export class CadView {
       g.clip();
     }
     if (o.hover) drawGeom(o.hover, dark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)', 2.2, null, 'rgba(120,170,255,0.25)');
+    // 창·올가미에 걸릴 객체(선택 미리보기)
+    for (const pv of o.preview ?? []) drawGeom(pv, dark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.7)', 1.8, null, 'rgba(120,170,255,0.18)');
     for (const sel of o.selection) drawGeom(sel, '#3d8dff', 1.6, [6, 4], 'rgba(61,141,255,0.25)');
-    // 그립
+    // 그립: 보통 파랑, 커서가 올라가면 분홍, 핫 그립 빨강(AutoCAD 기본 GRIPCOLOR·GRIPHOVER·GRIPHOT). 크기는 GRIPSIZE
+    const gh = gripHalf(this.prefs.gripSize);
     g.save();
     for (const p of o.grips) {
       const q = W(p.x, p.y);
       g.fillStyle = '#2f6fe0';
       g.strokeStyle = '#d8e6ff';
       g.lineWidth = 1;
-      g.fillRect(q.x - 4, q.y - 4, 8, 8);
-      g.strokeRect(q.x - 4.5, q.y - 4.5, 9, 9);
+      g.fillRect(q.x - gh, q.y - gh, gh * 2, gh * 2);
+      g.strokeRect(q.x - gh - 0.5, q.y - gh - 0.5, gh * 2 + 1, gh * 2 + 1);
     }
-    if (o.hotGrip) {
-      const q = W(o.hotGrip.x, o.hotGrip.y);
+    if (o.hoverGrip) {
+      const q = W(o.hoverGrip.x, o.hoverGrip.y);
+      g.fillStyle = '#ff7f8f';
+      g.strokeStyle = '#ffe0e6';
+      g.lineWidth = 1;
+      g.fillRect(q.x - gh - 0.5, q.y - gh - 0.5, gh * 2 + 1, gh * 2 + 1);
+      g.strokeRect(q.x - gh - 1, q.y - gh - 1, gh * 2 + 2, gh * 2 + 2);
+    }
+    for (const p of [...(o.hotGrips ?? []), ...(o.hotGrip ? [o.hotGrip] : [])]) {
+      const q = W(p.x, p.y);
       g.fillStyle = '#e8453c';
-      g.fillRect(q.x - 4.5, q.y - 4.5, 9, 9);
+      g.fillRect(q.x - gh - 0.5, q.y - gh - 0.5, gh * 2 + 1, gh * 2 + 1);
     }
     g.restore();
     if (vpRect) g.restore();
@@ -1058,9 +1087,27 @@ export class CadView {
       g.strokeRect(x + 0.5, y + 0.5, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
       g.restore();
     }
-    // 스냅 표지
-    if (o.snap) drawSnap(g, W(o.snap.p.x, o.snap.p.y), o.snap.kind);
-    // 십자선
+    // 올가미: 윈도우 파랑 실선, 걸침 초록 점선, 울타리 열린 점선
+    if (o.lasso && o.lasso.pts.length > 1) {
+      const { pts, mode } = o.lasso;
+      g.save();
+      g.beginPath();
+      g.moveTo(pts[0]!.x, pts[0]!.y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+      if (mode !== 'fence') {
+        g.closePath();
+        g.fillStyle = mode === 'crossing' ? 'rgba(80,200,120,0.16)' : 'rgba(70,130,255,0.16)';
+        g.fill();
+      }
+      g.strokeStyle = mode === 'crossing' ? '#57d68d' : mode === 'window' ? '#5b9bff' : '#ffb347';
+      g.lineWidth = 1;
+      if (mode !== 'window') g.setLineDash([5, 4]);
+      g.stroke();
+      g.restore();
+    }
+    // 스냅 표지(AUTOSNAP 표식기, 크기는 OPTIONS의 AutoSnap 표식기 크기)
+    if (o.snap && showSnapMarker(this.prefs.autosnap)) drawSnap(g, W(o.snap.p.x, o.snap.p.y), o.snap.kind, snapMarkerRadius(this.prefs.markerSize));
+    // 십자선(길이는 CURSORSIZE)
     if (o.cursor && o.crosshair) {
       const c = o.cursor;
       g.save();
@@ -1068,7 +1115,7 @@ export class CadView {
       g.lineWidth = 1;
       const x = Math.round(c.x) + 0.5;
       const y = Math.round(c.y) + 0.5;
-      const L = Math.max(this.w, this.h) * 0.05 + 20;
+      const L = crosshairArm(this.prefs.cursorSize, this.w, this.h);
       g.beginPath();
       g.moveTo(x - L, y);
       g.lineTo(x - o.pickbox, y);
@@ -1082,7 +1129,8 @@ export class CadView {
       g.strokeRect(x - o.pickbox, y - o.pickbox, o.pickbox * 2, o.pickbox * 2);
       g.restore();
     }
-    if ((o.tip || o.dynInput) && o.cursor) {
+    if (o.dynFields?.length && o.cursor) this.drawDynFields(g, o.cursor, o.tip ?? '', o.dynFields);
+    else if ((o.tip || o.dynInput) && o.cursor) {
       g.save();
       g.font = '11.5px ui-monospace, Menlo, monospace';
       const tip = o.tip ?? '';
@@ -1114,6 +1162,52 @@ export class CadView {
     if (tiles) g.restore();
   }
 
+  /** 동적 입력: 커서 옆 문구 아래에 칸 두 개(지금 칸 파란 테두리, 잠긴 칸 자물쇠) */
+  private drawDynFields(g: CanvasRenderingContext2D, c: Pt, tip: string, fields: { text: string; locked: boolean; active: boolean }[]): void {
+    g.save();
+    g.font = '11.5px ui-monospace, Menlo, monospace';
+    const lock = 11;
+    const widths = fields.map((f) => Math.max(46, g.measureText(f.text + (f.active ? '▏' : '')).width + 12 + (f.locked ? lock : 0)));
+    const total = widths.reduce((a, b) => a + b, 0) + (fields.length - 1) * 4;
+    const tw = tip ? g.measureText(tip).width + 12 : 0;
+    const boxW = Math.max(total, tw);
+    const hgt = (tip ? 22 : 0) + 20;
+    const x = Math.min(c.x + 18, this.w - boxW - 4);
+    let y = Math.min(c.y + 22, this.h - hgt - 4);
+    if (tip) {
+      g.fillStyle = 'rgba(37,44,54,0.95)';
+      g.strokeStyle = '#5b6a7e';
+      g.fillRect(x, y, tw, 20);
+      g.strokeRect(x + 0.5, y + 0.5, tw - 1, 19);
+      g.fillStyle = '#e8ebf0';
+      g.fillText(tip, x + 6, y + 14);
+      y += 22;
+    }
+    let fx = x;
+    fields.forEach((f, i) => {
+      const w = widths[i]!;
+      g.fillStyle = f.active ? 'rgba(20,24,30,0.96)' : 'rgba(37,44,54,0.92)';
+      g.strokeStyle = f.active ? '#4c9bff' : '#5b6a7e';
+      g.lineWidth = 1;
+      g.fillRect(fx, y, w, 20);
+      g.strokeRect(fx + 0.5, y + 0.5, w - 1, 19);
+      g.fillStyle = f.active ? '#ffffff' : '#c9d1dc';
+      g.fillText(f.text + (f.active ? '▏' : ''), fx + 6, y + 14);
+      if (f.locked) {
+        // 자물쇠
+        const lx = fx + w - lock - 2;
+        g.strokeStyle = '#ffd166';
+        g.beginPath();
+        g.arc(lx + 4, y + 8, 2.6, Math.PI, 0);
+        g.stroke();
+        g.fillStyle = '#ffd166';
+        g.fillRect(lx + 0.5, y + 8, 7, 6);
+      }
+      fx += w + 4;
+    });
+    g.restore();
+  }
+
   // -------------------------------------------------------------------------
   // 입력
   // -------------------------------------------------------------------------
@@ -1123,12 +1217,50 @@ export class CadView {
     return { x: ev.clientX - r.left, y: ev.clientY - r.top };
   }
 
+  /** 시간에 민감한 오른쪽 클릭(SHORTCUTMENU 16): 누른 시간과, 누른 채 온 contextmenu */
+  private readonly rightClick = new RightClickTimer();
+  private rightPending: { world: Pt; screen: Pt; ev: MouseEvent; timer: number } | null = null;
+
+  /** 기다리던 오른쪽 클릭을 누른 시간과 함께 넘긴다 */
+  private flushRight(held: number): void {
+    const pc = this.rightPending;
+    if (!pc) return;
+    clearTimeout(pc.timer);
+    this.rightPending = null;
+    this.events?.context(pc.world, pc.screen, pc.ev, held);
+  }
+
   private bindInput(): void {
     const el = this.el;
     el.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       const p = this.local(ev);
-      this.events?.context(this.screenToWorld(p.x, p.y), p, ev);
+      const w = this.screenToWorld(p.x, p.y);
+      const dur = timedRightClick(this.prefs);
+      if (dur === null) {
+        this.events?.context(w, p, ev);
+        return;
+      }
+      const r = this.rightClick.context(performance.now());
+      if (r !== 'wait') {
+        this.events?.context(w, p, ev, r);
+        return;
+      }
+      // 누른 채 왔다(macOS·Linux): 떼면 그 시간으로, 기준 시간이 지나도록 누르고 있으면 메뉴로
+      if (this.rightPending) clearTimeout(this.rightPending.timer);
+      this.rightPending = {
+        world: w,
+        screen: p,
+        ev,
+        timer: window.setTimeout(() => {
+          if (this.rightClick.timeout()) this.flushRight(dur);
+        }, dur),
+      };
+    });
+    window.addEventListener('pointerup', (ev) => {
+      if (ev.button !== 2) return;
+      const held = this.rightClick.up(performance.now());
+      if (held !== null) this.flushRight(held);
     });
     el.addEventListener(
       'wheel',
@@ -1139,8 +1271,8 @@ export class CadView {
         let dy = ev.deltaY;
         if (ev.deltaMode === 1) dy *= 32;
         else if (ev.deltaMode === 2) dy *= 300;
-        // 트랙패드 핀치(ctrlKey)는 세밀하게, 마우스 휠은 한 칸에 1.25배
-        const f = ev.ctrlKey ? Math.exp(-dy * 0.01) : Math.exp(-dy * 0.0022);
+        // 트랙패드 핀치(ctrlKey)는 세밀하게, 마우스 휠은 ZOOMFACTOR만큼(기본 60에서 한 칸에 1.25배)
+        const f = wheelZoom(dy, this.prefs.zoomFactor, ev.ctrlKey);
         // 타일 뷰포트: 커서 아래 타일을 활성으로
         const ti = this.tileAt(p);
         if (ti >= 0) this.activateTile(ti);
@@ -1149,6 +1281,7 @@ export class CadView {
       { passive: false },
     );
     el.addEventListener('pointerdown', (ev) => {
+      if (ev.button === 2) this.rightClick.down(performance.now());
       if (!this.state) return;
       const p = this.local(ev);
       if (ev.pointerType === 'touch') {
@@ -1326,12 +1459,33 @@ function isTyping(ev: KeyboardEvent): boolean {
 }
 
 export function emptyOverlay(): OverlayState {
-  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], hotGrip: null, dynInput: null, marks: [], tip: null };
+  return {
+    cursor: null,
+    crosshair: true,
+    pickbox: 5,
+    windowRect: null,
+    selection: [],
+    hover: null,
+    grips: [],
+    snap: null,
+    rubber: [],
+    ghost: [],
+    tracks: [],
+    acquired: [],
+    hotGrip: null,
+    hotGrips: [],
+    hoverGrip: null,
+    dynInput: null,
+    dynFields: null,
+    lasso: null,
+    preview: [],
+    marks: [],
+    tip: null,
+  };
 }
 
-/** AutoCAD 스냅 표지 모양 */
-function drawSnap(g: CanvasRenderingContext2D, p: Pt, kind: SnapKind): void {
-  const r = 6;
+/** AutoCAD 스냅 표지 모양(r: 반지름 픽셀) */
+function drawSnap(g: CanvasRenderingContext2D, p: Pt, kind: SnapKind, r = 6): void {
   g.save();
   g.strokeStyle = '#2fd16b';
   g.lineWidth = 2;

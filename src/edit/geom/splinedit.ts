@@ -10,7 +10,7 @@ import type { SplineEntity, Vec2, Vec3 } from '../../core/model';
 import { clampedKnots, interpolateFitPoints } from '../../geom/curves';
 import { pieceNearest } from './curve';
 import { dist } from './math';
-import { domain, insertKnot, normalizeNurbs, periodicInterpolate } from './nurbs';
+import { domain, elevateBezier, insertKnot, joinBeziers, joinNurbs, normalizeNurbs, periodicInterpolate, toBezier } from './nurbs';
 import { cloneEntity, splineNurbs } from './path';
 import { reverseSpline } from './query';
 
@@ -250,6 +250,108 @@ export function cvAdd(e: SplineEntity, q: Vec2): SplineEntity | null {
   if (m.weights) x.weights = m.weights;
   else delete x.weights;
   return x;
+}
+
+/**
+ * 정점 편집 삭제(D): 조정점 i를 지운다(모양이 바뀐다 — AutoCAD와 같다). 열린 곡선은 고정 균일 매듭으로 다시,
+ * 주기 형태는 남은 조정점으로 다시 닫는다. 조정점이 너무 적어지면 null.
+ */
+export function cvDelete(e: SplineEntity, i: number): SplineEntity | null {
+  const x = cvBase(e);
+  const p = x.degree;
+  const periodic = isPeriodicForm(x);
+  const base = periodic ? x.controlPoints.slice(0, x.controlPoints.length - p) : x.controlPoints.slice();
+  const w = x.weights && x.weights.length === x.controlPoints.length ? (periodic ? x.weights.slice(0, base.length) : x.weights.slice()) : null;
+  if (i < 0 || i >= base.length) return null;
+  if (base.length - 1 < (periodic ? 3 : 2)) return null;
+  base.splice(i, 1);
+  w?.splice(i, 1);
+  const out = cloneEntity(x);
+  if (periodic) {
+    const q = Math.min(p, base.length - 1);
+    out.degree = q;
+    out.controlPoints = [...base, ...base.slice(0, q)].map((v) => ({ ...v }));
+    out.knots = [];
+    for (let k = 0; k < out.controlPoints.length + q + 1; k++) out.knots.push(k);
+    if (w) out.weights = [...w, ...w.slice(0, q)];
+    else delete out.weights;
+    return out;
+  }
+  const q = Math.min(p, base.length - 1);
+  out.degree = q;
+  out.controlPoints = base.map((v) => ({ ...v }));
+  out.knots = clampedKnots(base.length, q);
+  if (w) out.weights = w;
+  else delete out.weights;
+  return out;
+}
+
+/** 정점 편집 순서 올리기(E): 순서(차수 + 1)를 order로(모양 그대로, 조정점이 늘어난다). 지금보다 낮거나 26을 넘으면 null */
+export function elevateOrder(e: SplineEntity, order: number): SplineEntity | null {
+  const x = cvBase(e);
+  const n = splineNurbs(x);
+  if (!n) return null;
+  const target = Math.round(order) - 1;
+  if (target <= n.degree || target > 25) return null;
+  const segs = toBezier(n).map((sg) => elevateBezier(sg, target - (sg.length - 1)));
+  const m = joinBeziers(segs);
+  if (!m) return null;
+  const out = cloneEntity(x);
+  out.degree = m.degree;
+  out.knots = m.knots;
+  out.controlPoints = m.ctrl;
+  if (m.weights) {
+    out.weights = m.weights;
+    out.flags |= 4;
+  } else {
+    delete out.weights;
+    out.flags &= ~4;
+  }
+  // 고정 매듭 곡선이 되므로 주기 표시는 뗀다(닫힘은 그대로)
+  out.flags &= ~2;
+  return out;
+}
+
+/**
+ * 맞춤 데이터 꼬임(K): 곡선 위 q에 맞춤점을 넣고 그 점에서 접선이 끊기게(뾰족하게) 한다.
+ * 맞춤 데이터는 꼬임을 담을 수 없어 결과는 조정점 정의(두 보간 곡선을 이은 것). 닫힌 곡선·맞춤점 스플라인이 아니면 null.
+ */
+export function fitKink(e: SplineEntity, q: Vec2): SplineEntity | null {
+  if (!isFitSpline(e) || isSplineClosed(e)) return null;
+  const n = splineNurbs(e);
+  if (!n) return null;
+  const [a, b] = domain(n);
+  const piece = { k: 'nurbs' as const, n, u0: a, u1: b };
+  const at = (p: Vec2) => pieceNearest(piece, p, true).t;
+  const t = at(q);
+  if (!(t > 1e-9) || !(t < 1 - 1e-9)) return null;
+  const Q = pieceNearest(piece, q, true).p;
+  const fit = e.fitPoints;
+  const ts = fit.map((f) => at(f));
+  let i = ts.findIndex((v) => v > t);
+  if (i < 0) i = fit.length;
+  const z = fit[Math.max(0, i - 1)]!.z;
+  const mid = { x: Q.x, y: Q.y, z };
+  const left = [...fit.slice(0, i), mid];
+  const right = [mid, ...fit.slice(i)];
+  if (left.length < 2 || right.length < 2) return null;
+  const L = interpolateFitPoints(left, e.startTangent, undefined);
+  const R = interpolateFitPoints(right, undefined, e.endTangent);
+  const j = joinNurbs([
+    { degree: L.degree, knots: L.knots, ctrl: L.ctrl },
+    { degree: R.degree, knots: R.knots, ctrl: R.ctrl },
+  ]);
+  if (!j) return null;
+  const out = cloneEntity(e);
+  out.degree = j.degree;
+  out.knots = j.knots;
+  out.controlPoints = j.ctrl;
+  delete out.weights;
+  out.flags &= ~(1 | 2 | 4);
+  out.fitPoints = [];
+  delete out.startTangent;
+  delete out.endTangent;
+  return out;
 }
 
 export function reverseSplineEntity(e: SplineEntity): SplineEntity {

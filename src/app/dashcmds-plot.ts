@@ -345,7 +345,7 @@ async function runDashPlot(app: App, ctx: CommandContext): Promise<void> {
         ],
         'A',
       );
-      if (shade !== 'A' && shade !== 'W') ctx.print('2D 뷰어라 화면표시대로 플롯합니다.');
+      if (shade !== 'A' && shade !== 'W') ctx.print('2D 캐드라 화면표시대로 플롯합니다.');
     } else {
       await askYN(ctx, '선가중치를 플롯 축척에 적용?', false);
       await askYN(ctx, '도면 공간을 먼저 플롯?', false);
@@ -475,7 +475,8 @@ async function runDashPsetupin(app: App, ctx: CommandContext): Promise<void> {
   }
 }
 
-async function runPsetupin(app: App, ctx: CommandContext): Promise<void> {
+/** PSETUPIN(대화상자, FILEDIA 0·스크립트는 명령행) — 페이지 설정 관리자의 가져오기도 쓴다 */
+export async function runPsetupin(app: App, ctx: CommandContext): Promise<void> {
   if (fileNameMode(app)) return runDashPsetupin(app, ctx);
   const st = app.active!;
   const src = await sourceDrawing(app, ctx, false);

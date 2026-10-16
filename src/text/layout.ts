@@ -8,6 +8,18 @@ import { latinFamilyOf, strokeFace } from './fonts';
 import type { ShxLibrary } from './shx';
 import { type Paragraph, type RunStyle, TOGGLE_OVERLINE, TOGGLE_STRIKE, TOGGLE_UNDERLINE, parseMText, parseTextString } from './mtext';
 
+/** 트루타입 기울임꼴을 기울기로 그릴 때의 각도(원호 정렬 문자와 같다) */
+const ITALIC_SLANT = (15 * Math.PI) / 180;
+/** 트루타입 굵게: 글리프를 이만큼(글자 크기 비율) 옆으로 한 번 더 그린다 */
+const BOLD_SHIFT = 0.035;
+
+/** 문자 스타일의 트루타입 굵게·기울임(확장 데이터 1071 비트, SHX 스타일은 없음) */
+function styleWeight(style: TextStyle | undefined): { bold: boolean; italic: boolean } {
+  const f = style?.fontFlags ?? 0;
+  const ttf = !!style && (!!style.fontFamily || !isShxFont(style.font || 'txt'));
+  return { bold: ttf && (f & 0x2000000) !== 0, italic: ttf && (f & 0x1000000) !== 0 };
+}
+
 /** 2D 아핀 [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f */
 export type Affine = [number, number, number, number, number, number];
 
@@ -201,7 +213,8 @@ export class TextEngine {
     const my = p.generation & 4 ? -1 : 1;
     const c = Math.cos(rot);
     const s = Math.sin(rot);
-    const sh = Math.tan(p.oblique || 0);
+    const sw = styleWeight(p.style);
+    const sh = Math.tan((p.oblique || 0) + (sw.italic ? ITALIC_SLANT : 0));
     // (u, v)[높이 단위] → OCS
     const sx = h * wf;
     const sy = h;
@@ -210,6 +223,7 @@ export class TextEngine {
     for (const g of gl) {
       const m = affMul(base, [1, 0, 0, 1, g.x, 0]);
       out.glyphs.push({ geom: g.geom, kind: g.kind, m, color: null });
+      if (sw.bold && g.kind === 'outline') out.glyphs.push({ geom: g.geom, kind: g.kind, m: affMul(base, [1, 0, 0, 1, g.x + BOLD_SHIFT, 0]), color: null });
     }
     for (const d of deco) {
       const yy = d.kind === TOGGLE_UNDERLINE ? -0.2 : d.kind === TOGGLE_OVERLINE ? 1.2 : 0.5;
@@ -252,6 +266,7 @@ export class TextEngine {
     if (!(h > 0)) h = p.style?.height || p.style?.lastHeight || 2.5;
     const styleFont = this.styleFont(p.style);
     const baseOblique = p.style?.oblique ?? 0;
+    const sw = styleWeight(p.style);
     const baseWidth = p.style?.widthFactor && p.style.widthFactor > 0 ? p.style.widthFactor : 1;
     const paras = parseMText(p.text, { baseHeight: h });
     const W = p.columns && p.columns.count > 1 ? p.columns.width : p.width;
@@ -355,6 +370,12 @@ export class TextEngine {
         // 한 단어가 폭보다 길어도 자르지 않는다(AutoCAD MTEXT와 같다). 한글·한자는 글자마다 끊을 수 있다.
         for (let k = i; k < j; k++) {
           const it = items[k]!;
+          // 탭 정지(\pt)가 있는 문단: 탭은 다음 정지까지(글머리 기호·번호 목록의 내어쓰기). 정지가 없으면 지금처럼 높이의 4배
+          if (it.kind === 'tab' && para.tabs.length) {
+            const pos = (cur.first ? para.indentFirst : 0) + para.indentLeft + cur.width;
+            const stop = para.tabs.find((t) => t > pos + 1e-9);
+            it.width = stop !== undefined ? stop - pos : Math.max(h * 0.25, Math.ceil((pos + 1e-9) / (h * 4)) * h * 4 - pos);
+          }
           cur.items.push(it);
           cur.width += it.width;
           cur.height = Math.max(cur.height, it.height);
@@ -408,10 +429,14 @@ export class TextEngine {
     const emitItem = (it: Item, x: number, base: number) => {
       if (!it.geom || it.kind === 'space') return;
       const st = it.style;
-      const sh = Math.tan((st.oblique || 0) + baseOblique);
+      // 트루타입 굵게·기울임: \f의 |b1·|i1, 정하지 않았으면 문자 스타일
+      const italic = (st.italic ?? (st.font ? false : sw.italic)) && it.gkind === 'outline';
+      const bold = (st.bold ?? (st.font ? false : sw.bold)) && it.gkind === 'outline';
+      const sh = Math.tan((st.oblique || 0) + baseOblique + (italic ? ITALIC_SLANT : 0));
       // \A 세로 정렬: 줄 높이 안에서
       const m: Affine = [it.sx, 0, sh * it.sy, it.sy, x, base];
       out.glyphs.push({ geom: it.geom, kind: it.gkind!, m, color: st.color });
+      if (bold) out.glyphs.push({ geom: it.geom, kind: it.gkind!, m: [it.sx, 0, sh * it.sy, it.sy, x + it.sx * BOLD_SHIFT, base], color: st.color });
     };
     for (let k = 0; k < lines.length; k++) {
       const l = lines[k]!;
