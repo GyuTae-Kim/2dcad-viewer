@@ -1,19 +1,21 @@
-# OpenCAD 2D 뷰어
+# OpenCAD DWG·DXF
 
-브라우저에서 DXF·DWG 도면을 열어 보고, 재고, 고쳐서 저장하는 무료 2D CAD입니다.
+브라우저에서 DXF·DWG 도면을 열거나 새로 만들어 그리고, 재고, 고쳐서 저장하는 무료 2D CAD입니다.
+보기 전용 뷰어가 아니라 그리기·수정·치수·블록·도면층·배치 편집과 DWG·DXF 저장까지 하는 편집기입니다.
 설치할 것이 없고, 서버도 쓰지 않습니다. 연 파일은 사용자 컴퓨터 밖으로 나가지 않습니다.
 
-**바로 쓰기: <https://gyutae-kim.github.io/2dcad-viewer/>**
+**바로 쓰기: <https://gyutae-kim.github.io/opencad-dwgdxf/>**
 
 CAD·CAM 분야는 파일을 만든 프로그램이 없으면 도면을 열어 보기도 어렵습니다.
-OpenCAD는 이 벽을 낮추려는 프로젝트이고, 이 저장소는 그 첫 번째인 2D 도면 뷰어입니다.
+OpenCAD는 이 벽을 낮추려는 프로젝트이고, 이 저장소는 그 첫 번째인 DWG·DXF 2D 캐드입니다.
+2026-10-16에 저장소 이름을 `2dcad-viewer`에서 다른 OpenCAD 저장소처럼 `opencad-dwgdxf`로 바꿨습니다.
 SKP·STEP·NC 형식은 별도 저장소에서 개발합니다:
 [opencad-nc](https://github.com/GyuTae-Kim/opencad-nc) · [opencad-step](https://github.com/GyuTae-Kim/opencad-step) ·
 [opencad-skp](https://github.com/GyuTae-Kim/opencad-skp), 공용 3D 뷰어 [opencad-viewer3d](https://github.com/GyuTae-Kim/opencad-viewer3d).
 
 ## 할 수 있는 것
 
-- **열기**: DXF R12~R2018(ASCII·이진), DWG R13~R2018. 파일을 끌어다 놓거나 고르면 됩니다. 수백만 객체 도면도 열리며, 장면을 다 만들기 전에 첫 화면부터 차례로 그려 보입니다.
+- **열기·새 도면**: DXF R12~R2018(ASCII·이진), DWG R13~R2018. 시작 화면의 ‘새 도면’(Ctrl+N)으로 빈 도면에서 바로 그릴 수 있습니다. 파일을 끌어다 놓거나 고르면 됩니다. 수백만 객체 도면도 열리며, 장면을 다 만들기 전에 첫 화면부터 차례로 그려 보입니다.
 - **보기**: 휠 확대·축소, 가운데 버튼 이동, 전체 보기. 모형 탭과 배치 탭(용지·뷰포트·뷰포트별 동결 도면층, PSLTSCALE), 채우기 끄기(FILL)·빠른 문자(QTEXT)
 - **도면 요소**: 선·호·원·타원·폴리선(폭·볼록도)·스플라인, 문자·여러 줄 문자(서식·쌓기·열), 블록·속성,
   치수(치수 블록), 지시선·다중 지시선, 해치(무늬·단색·그라데이션), 가리기, 여러 줄, 표, 선종류(복합 선종류 문자 포함), 선가중치
@@ -121,9 +123,9 @@ AutoCAD는 Autodesk의 상표이며, 이 프로젝트는 Autodesk와 관계가 �
 
 ## 검색 및 링크 공유
 
-대표 주소는 `https://gyutae-kim.github.io/2dcad-viewer/`입니다. `site/metadata.json`에서 제목·검색 설명·대표 주소·공유 이미지·작성자를 관리하고 `tools/site-metadata.mjs`가 canonical, Open Graph·Twitter, WebApplication·탐색경로 구조화 데이터를 함께 생성합니다. `index.html`의 `<!-- site-metadata -->`가 개발·배포 빌드에서 같은 메타데이터로 치환되므로 개별 태그에 제목이나 설명을 중복 작성하지 않습니다. 앱 실행 전에도 기능 안내와 포트폴리오 링크를 읽을 수 있고, 실행 후에는 같은 안내를 시작 화면에서 제공합니다. 공유 이미지는 `public/og-opencad.jpg`(1200×630)입니다.
+대표 주소는 `https://gyutae-kim.github.io/opencad-dwgdxf/`입니다. `site/metadata.json`에서 제목·검색 설명·대표 주소·공유 이미지·작성자를 관리하고 `tools/site-metadata.mjs`가 canonical, Open Graph·Twitter, WebApplication·탐색경로 구조화 데이터를 함께 생성합니다. `index.html`의 `<!-- site-metadata -->`가 개발·배포 빌드에서 같은 메타데이터로 치환되므로 개별 태그에 제목이나 설명을 중복 작성하지 않습니다. 앱 실행 전에도 기능 안내와 포트폴리오 링크를 읽을 수 있고, 실행 후에는 같은 안내를 시작 화면에서 제공합니다. 공유 이미지는 `public/og-opencad.jpg`(1200×630)입니다.
 
-`sitemap.xml`은 같은 생성 코드에서 만들며 이 뷰어 주소와 `lastmod`를 포함합니다. 개발 서버에서도 같은 주소로 제공합니다. 호스트 전체의 `robots.txt`와 통합 사이트맵은 포트폴리오 저장소에서 관리합니다. 하위 프로젝트의 `robots.txt`로 호스트 수집 규칙을 바꿀 수는 없습니다. 새 공개 도구를 추가하면 포트폴리오의 `OPENCAD_TOOLS`에도 실제 주소를 등록합니다.
+`sitemap.xml`은 같은 생성 코드에서 만들며 이 앱 주소와 `lastmod`를 포함합니다. 개발 서버에서도 같은 주소로 제공합니다. 호스트 전체의 `robots.txt`와 통합 사이트맵은 포트폴리오 저장소에서 관리합니다. 하위 프로젝트의 `robots.txt`로 호스트 수집 규칙을 바꿀 수는 없습니다. 새 공개 도구를 추가하면 포트폴리오의 `OPENCAD_TOOLS`에도 실제 주소를 등록합니다.
 
 `site/content-history.json`에 실제 수정 시각과 콘텐츠 지문을 기록합니다. 본문·메타데이터·공유 이미지·실행 코드 또는 CSS가 바뀌면 아래 명령으로 실제 수정 시각을 UTC로 지정하세요. 예시 시각은 작업 시각으로 바꿉니다.
 
@@ -133,11 +135,11 @@ npm run test:seo
 npm run build
 ```
 
-내용이 그대로면 재빌드해도 날짜를 유지합니다. 미래 날짜와 이전 수정일보다 이른 날짜는 거부하고, 콘텐츠 지문만 바뀌었는데 날짜 기록을 갱신하지 않으면 빌드가 실패합니다. 사이트맵 `lastmod`와 WebApplication `dateModified`는 이 기록 하나를 사용합니다. 기록 파일을 소스와 함께 커밋하고, 뷰어 배포 뒤 포트폴리오에서 `npm run sync:viewer-date`를 실행해 통합 사이트맵에도 반영합니다. CI에서도 메타데이터·날짜 테스트와 실제 빌드 검사를 수행합니다.
+내용이 그대로면 재빌드해도 날짜를 유지합니다. 미래 날짜와 이전 수정일보다 이른 날짜는 거부하고, 콘텐츠 지문만 바뀌었는데 날짜 기록을 갱신하지 않으면 빌드가 실패합니다. 사이트맵 `lastmod`와 WebApplication `dateModified`는 이 기록 하나를 사용합니다. 기록 파일을 소스와 함께 커밋하고, 배포 뒤 포트폴리오에서 `npm run sync:viewer-date`를 실행해 통합 사이트맵에도 반영합니다. CI에서도 메타데이터·날짜 테스트와 실제 빌드 검사를 수행합니다.
 
 상단 ‘← 포트폴리오’는 작업 중에도 표시되며, 시작 화면에는 OpenCAD 도구 목록과 포트폴리오 링크가 있습니다.
 
-검색 제목과 설명은 무료 2D 캐드 뷰어와 실제 지원 기능을 중심으로 작성합니다. `index.html`의 `#viewer-guide`는 지원 형식·무료 사용 범위·도면 처리 방식·제작자를 안내하며, 앱 시작 화면에서도 같은 요소를 사용합니다. 검색어를 반복하거나 지원하지 않는 형식·인증·호환성을 홍보하지 않습니다.
+검색 제목과 설명은 무료 DWG·DXF 웹 캐드(보기·그리기·편집·저장)와 실제 지원 기능을 중심으로 작성합니다. `index.html`의 `#viewer-guide`는 지원 형식·무료 사용 범위·도면 처리 방식·제작자를 안내하며, 앱 시작 화면에서도 같은 요소를 사용합니다. 검색어를 반복하거나 지원하지 않는 형식·인증·호환성을 홍보하지 않습니다.
 
 
 ## 웹 사용 안내와 초기 로딩

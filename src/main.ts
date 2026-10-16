@@ -81,7 +81,7 @@ try {
     h(
       'div',
       { style: 'padding:40px;max-width:640px;margin:auto;line-height:1.7' },
-      h('h2', {}, '이 브라우저에서는 뷰어를 실행할 수 없습니다'),
+      h('h2', {}, '이 브라우저에서는 OpenCAD를 실행할 수 없습니다'),
       h('p', {}, e instanceof Error ? e.message : String(e)),
       h('p', {}, '최신 Chrome, Edge, Firefox, Safari에서 열어 주십시오. 하드웨어 가속(WebGL2)이 꺼져 있으면 켜 주십시오.'),
       h('a', { href: 'https://gyutae-kim.github.io/' }, '김규태 포트폴리오로 돌아가기'),
@@ -273,14 +273,14 @@ app.register({
 });
 app.register({
   name: 'ABOUT',
-  title: '이 뷰어에 대하여',
+  title: 'OpenCAD 정보',
   noDoc: true,
   run: () => {
     dialog(
-      'OpenCAD 2D 뷰어',
-      `<p>CAD 파일을 특정 프로그램 없이 누구나 열어 볼 수 있게 하려는 OpenCAD 프로젝트의 2D 뷰어입니다. 서버 없이 브라우저 안에서만 동작하며, 연 파일은 이 컴퓨터를 떠나지 않습니다.</p>
-       <p>DXF 리더와 DWG 리더(ODA 공개 명세 기반)를 직접 구현했습니다. 글꼴: Hershey Roman Simplex(공개 도메인), Noto Sans KR(SIL OFL 1.1).</p>
-       <p>소스: <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">github.com/GyuTae-Kim/2dcad-viewer</a> (MIT)</p>`,
+      'OpenCAD DWG·DXF',
+      `<p>CAD 파일을 특정 프로그램 없이 누구나 열고 고칠 수 있게 하려는 OpenCAD 프로젝트의 2D 캐드입니다. DWG·DXF 도면을 열거나 새로 만들어 그리고 고친 뒤 DWG·DXF로 저장합니다. 서버 없이 브라우저 안에서만 동작하며, 연 파일은 이 컴퓨터를 떠나지 않습니다.</p>
+       <p>DXF·DWG 리더와 쓰기(DWG는 ODA 공개 명세 기반)를 직접 구현했습니다. 글꼴: Hershey Roman Simplex(공개 도메인), Noto Sans KR(SIL OFL 1.1).</p>
+       <p>소스: <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf" target="_blank" rel="noopener">github.com/GyuTae-Kim/opencad-dwgdxf</a> (MIT)</p>`,
     );
   },
 });

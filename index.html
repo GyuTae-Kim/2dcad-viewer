@@ -13,20 +13,21 @@
       <!-- 앱이 준비되면 같은 기능을 안내하는 시작 화면으로 교체됩니다. -->
       <main class="site-intro">
         <nav aria-label="사이트 이동"><a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a></nav>
-        <h1>OpenCAD 무료 캐드 뷰어</h1>
-        <p>DWG·DXF 도면을 열고, 치수를 재고, 고쳐서 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.</p>
+        <h1>OpenCAD 무료 DWG·DXF 캐드</h1>
+        <p>DWG·DXF 도면을 열거나 새로 만들어 그리고, 고치고, 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.</p>
         <h2>지원 형식과 기능</h2>
         <ul>
-          <li>DWG R13~R2018, DXF R12~R2018(ASCII·이진) 열기</li>
-          <li>모형·배치, 도면층, 블록, 치수, 해치, 문자 확인</li>
-          <li>거리·각도·면적 측정, 그리기·수정, DWG·DXF 저장</li>
+          <li>DWG R13~R2018, DXF R12~R2018(ASCII·이진) 열기, 새 도면 만들기</li>
+          <li>선·폴리선·원·호 그리기, 이동·복사·자르기·모깎기 같은 수정, 그립 편집</li>
+          <li>치수·지시선·문자·해치·표, 블록·도면층·배치 편집</li>
+          <li>DWG R2000~R2018, DXF R12~R2018 저장, 거리·각도·면적 측정</li>
           <li>PDF·PNG·SVG로 출력</li>
         </ul>
-        <p>뷰어가 준비되면 파일을 끌어다 놓거나 ‘파일 열기’를 누르세요. ‘예제 도면 열기’로 기능을 둘러볼 수도 있습니다. 최신 Chrome, Edge, Firefox, Safari 등 JavaScript와 WebGL2를 지원하는 브라우저가 필요합니다.</p>
+        <p>프로그램이 준비되면 ‘새 도면’으로 바로 그리기 시작하거나, 파일을 끌어다 놓거나 ‘파일 열기’를 누르세요. ‘예제 도면 열기’로 기능을 둘러볼 수도 있습니다. 최신 Chrome, Edge, Firefox, Safari 등 JavaScript와 WebGL2를 지원하는 브라우저가 필요합니다.</p>
         <section id="viewer-guide" class="viewer-guide" aria-labelledby="viewer-guide-title">
           <h2 id="viewer-guide-title">DWG·DXF 도면을 확인하고 수정하는 무료 캐드</h2>
-          <p>도면을 전달받아 내용을 확인하거나 제조 현장에서 치수를 재야 할 때, OpenCAD 캐드 뷰어를 브라우저에서 바로 열어 사용할 수 있습니다. 예제 도면으로 기능을 먼저 둘러보세요.</p>
-          <nav aria-label="캐드 뷰어 사용 안내">
+          <p>전달받은 도면을 확인하고 고치거나, 새 도면을 그려 DWG·DXF로 저장해야 할 때 OpenCAD를 브라우저에서 바로 열어 사용할 수 있습니다. 명령 이름·단축키·마우스 동작은 데스크톱 2D 캐드와 같게 맞췄습니다. 예제 도면으로 기능을 먼저 둘러보세요.</p>
+          <nav aria-label="OpenCAD 사용 안내">
             <p><a href="https://gyutae-kim.github.io/opencad/guides/open-dwg-dxf">DWG·DXF 파일 열기와 표시 문제 점검</a> · <a href="https://gyutae-kim.github.io/opencad/guides/measure-export">거리·면적 측정과 PDF 출력 방법</a></p>
           </nav>
           <details>
@@ -35,7 +36,7 @@
           </details>
           <details>
             <summary>무료로 도면을 편집하고 저장할 수 있나요?</summary>
-            <p>도면 보기와 거리·각도·면적 측정뿐 아니라 선 그리기와 수정, DWG·DXF 저장도 무료입니다. PDF·PNG·SVG 출력도 지원합니다. 소스 코드는 MIT 라이선스로 공개합니다.</p>
+            <p>도면 보기와 거리·각도·면적 측정뿐 아니라 새 도면 만들기, 그리기와 수정, 치수·블록·도면층 편집, DWG·DXF 저장도 무료입니다. PDF·PNG·SVG 출력도 지원합니다. 소스 코드는 MIT 라이선스로 공개합니다.</p>
           </details>
           <details>
             <summary>도면을 서버에 업로드해야 하나요?</summary>
@@ -43,13 +44,13 @@
           </details>
           <details>
             <summary>누가 만들고 관리하나요?</summary>
-            <p>AI·CAD/CAM 개발자 <a href="https://gyutae-kim.github.io/">김규태(Sean Kim)</a>의 개인 오픈소스 프로젝트입니다. <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener noreferrer">GitHub에서 소스 코드와 사용 안내</a>를 확인하고, 열리지 않는 도면이나 개선 의견은 <a href="https://github.com/GyuTae-Kim/2dcad-viewer/issues" target="_blank" rel="noopener noreferrer">GitHub 이슈</a>로 알려 주세요.</p>
+            <p>AI·CAD/CAM 개발자 <a href="https://gyutae-kim.github.io/">김규태(Sean Kim)</a>의 개인 오픈소스 프로젝트입니다. <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf" target="_blank" rel="noopener noreferrer">GitHub에서 소스 코드와 사용 안내</a>를 확인하고, 열리지 않는 도면이나 개선 의견은 <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf/issues" target="_blank" rel="noopener noreferrer">GitHub 이슈</a>로 알려 주세요.</p>
           </details>
         </section>
-        <p>개인 오픈소스 프로젝트(MIT)입니다. <a href="https://github.com/GyuTae-Kim/2dcad-viewer">소스 코드와 사용 안내</a></p>
+        <p>개인 오픈소스 프로젝트(MIT)입니다. <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf">소스 코드와 사용 안내</a></p>
       </main>
     </div>
-    <noscript>이 뷰어는 자바스크립트가 필요합니다.</noscript>
+    <noscript>OpenCAD는 자바스크립트가 필요합니다.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

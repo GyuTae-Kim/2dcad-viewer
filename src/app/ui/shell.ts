@@ -992,7 +992,7 @@ export class Shell implements UiHooks {
         { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
         { label: '단축키·도움말', icon: 'help', kbd: 'F1', run: () => void app.run('HELP') },
-        { label: '이 뷰어에 대하여', icon: 'info', run: () => void app.run('ABOUT') },
+        { label: 'OpenCAD 정보', icon: 'info', run: () => void app.run('ABOUT') },
       ]);
     });
     const qat = h(
@@ -1005,7 +1005,7 @@ export class Shell implements UiHooks {
       this.iconBtn('redo', '다시 실행 (Ctrl+Y)', () => void app.run('REDO')),
       this.iconBtn('print', 'PDF로 인쇄 (Ctrl+P)', () => void app.run('PLOT')),
     );
-    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' 2D 뷰어');
+    const titleText = h('div', { class: 'title' }, h('b', {}, 'OpenCAD'), ' DWG·DXF');
     const right = h(
       'div',
       { class: 'title-right' },
@@ -1703,8 +1703,8 @@ export class Shell implements UiHooks {
       h(
         'div',
         { class: 'start-inner' },
-        h('h1', {}, 'OpenCAD 무료 캐드 뷰어'),
-        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열고, 치수를 재고, 고쳐서 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
+        h('h1', {}, 'OpenCAD 무료 DWG·DXF 캐드'),
+        h('p', { class: 'lead' }, 'DWG·DXF 도면을 열거나 새로 만들어 그리고, 고치고, 저장하는 무료 2D 웹 캐드입니다. 설치나 회원가입 없이 브라우저에서 바로 사용하며, 도면 파일은 서버로 보내지 않고 이 컴퓨터에서 처리합니다.'),
         h(
           'div',
           { class: 'start-grid' },
@@ -1718,13 +1718,13 @@ export class Shell implements UiHooks {
               'div',
               { class: 'card' },
               h('h3', {}, '지원 범위'),
-              h('ul', {}, h('li', {}, 'DXF R12~R2018(ASCII·이진)'), h('li', {}, 'DWG R13~R2018'), h('li', {}, '모형·배치, 도면층, 블록, 치수, 해치, 문자'), h('li', {}, '측정, 객체 스냅, 특성 보기, PNG·SVG·PDF 내보내기')),
+              h('ul', {}, h('li', {}, 'DXF R12~R2018(ASCII·이진) 열기·저장'), h('li', {}, 'DWG R13~R2018 열기, R2000~R2018 저장'), h('li', {}, '그리기·수정·그립, 치수·해치·문자·표, 블록·도면층·배치 편집'), h('li', {}, '측정, 객체 스냅, PNG·SVG·PDF 출력')),
             ),
           ),
         ),
         h(
           'div',
-          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 2D 뷰어입니다(MIT). SKP·STEP·NC 형식도 차례로 추가합니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/2dcad-viewer" target="_blank" rel="noopener">GitHub</a>' },
+          { class: 'start-foot', html: '오픈소스 OpenCAD 프로젝트의 DWG·DXF 2D 캐드입니다(MIT). SKP·STEP·NC는 OpenCAD의 다른 도구로 엽니다. · <a href="https://gyutae-kim.github.io/opencad">OpenCAD 도구 목록</a> · <a href="https://gyutae-kim.github.io/">김규태 포트폴리오</a> · <a href="https://github.com/GyuTae-Kim/opencad-dwgdxf" target="_blank" rel="noopener">GitHub</a>' },
         ),
       ),
     );

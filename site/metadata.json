@@ -1,16 +1,16 @@
 {
-  "title": "OpenCAD | 무료 캐드 뷰어 · DWG·DXF 열기",
-  "description": "무료 캐드 뷰어 OpenCAD에서 DWG·DXF 도면을 열고 측정·편집·저장하세요. PDF·PNG·SVG 출력을 지원합니다. 설치·회원가입 없이 도면 파일을 이 컴퓨터의 브라우저에서 처리합니다.",
-  "url": "https://gyutae-kim.github.io/2dcad-viewer/",
-  "siteName": "OpenCAD 2D 캐드 뷰어",
+  "title": "OpenCAD 무료 DWG·DXF 캐드 | 웹에서 도면 그리기·편집·저장",
+  "description": "무료 웹 캐드 OpenCAD에서 DWG·DXF 도면을 열거나 새로 만들어 그리고 고친 뒤 DWG·DXF로 저장하세요. 치수·해치·블록·도면층 편집, 측정, PDF·PNG·SVG 출력을 지원합니다. 설치·회원가입 없이 도면 파일을 이 컴퓨터의 브라우저에서 처리합니다.",
+  "url": "https://gyutae-kim.github.io/opencad-dwgdxf/",
+  "siteName": "OpenCAD DWG·DXF 캐드",
   "language": "ko",
   "locale": "ko_KR",
   "image": {
-    "url": "https://gyutae-kim.github.io/2dcad-viewer/og-opencad.jpg",
+    "url": "https://gyutae-kim.github.io/opencad-dwgdxf/og-opencad.jpg",
     "type": "image/jpeg",
     "width": 1200,
     "height": 630,
-    "alt": "OpenCAD 프로젝트 소개와 DWG·DXF 예제 도면을 연 2D 뷰어 화면"
+    "alt": "OpenCAD 프로젝트 소개와 DWG·DXF 예제 도면을 연 2D 캐드 화면"
   },
   "author": {
     "@type": "Person",
@@ -23,21 +23,21 @@
     "operatingSystem": "Web browser",
     "browserRequirements": "JavaScript와 WebGL2 지원 브라우저",
     "isAccessibleForFree": true,
-    "license": "https://github.com/GyuTae-Kim/2dcad-viewer/blob/main/LICENSE",
+    "license": "https://github.com/GyuTae-Kim/opencad-dwgdxf/blob/main/LICENSE",
     "offers": {
       "@type": "Offer",
       "price": "0",
       "priceCurrency": "KRW"
     },
     "featureList": [
-      "DWG R13~R2018·DXF R12~R2018 열기",
-      "거리·각도·면적 측정, 도면층·치수 확인",
-      "그리기·편집, DWG·DXF 저장",
-      "PDF·PNG·SVG 출력"
+      "DWG R13~R2018·DXF R12~R2018 열기, 새 도면 만들기",
+      "그리기·수정·치수·해치·블록·도면층 편집",
+      "DWG R2000~R2018·DXF R12~R2018 저장",
+      "거리·각도·면적 측정, PDF·PNG·SVG 출력"
     ],
-    "alternateName": "OpenCAD 무료 캐드 뷰어",
-    "applicationSubCategory": "2D 캐드 뷰어",
-    "sameAs": "https://github.com/GyuTae-Kim/2dcad-viewer"
+    "alternateName": "OpenCAD 무료 웹 캐드",
+    "applicationSubCategory": "2D 캐드 편집기",
+    "sameAs": "https://github.com/GyuTae-Kim/opencad-dwgdxf"
   },
   "breadcrumbs": [
     {
@@ -55,8 +55,8 @@
     {
       "@type": "ListItem",
       "position": 3,
-      "name": "2D 도면 뷰어",
-      "item": "https://gyutae-kim.github.io/2dcad-viewer/"
+      "name": "DWG·DXF 캐드",
+      "item": "https://gyutae-kim.github.io/opencad-dwgdxf/"
     }
   ]
 }

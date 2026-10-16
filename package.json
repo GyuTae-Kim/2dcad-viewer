@@ -1,8 +1,8 @@
 {
-  "name": "2dcad-viewer",
+  "name": "opencad-dwgdxf",
   "version": "0.1.0",
   "private": true,
-  "description": "서버 없이 브라우저에서 DXF·DWG 도면을 열고 측정하는 2D CAD 뷰어 (OpenCAD)",
+  "description": "서버 없이 브라우저에서 DXF·DWG 도면을 열고 그리고 고쳐 저장하는 2D CAD (OpenCAD)",
   "license": "MIT",
   "type": "module",
   "scripts": {
