@@ -1,0 +1,10 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { updatedHistory } from './content-dates.mjs';
+import { appFingerprint } from './app-fingerprint.mjs';
+if (!process.argv.includes('--at')) throw new Error('Provide the actual content update time: --at YYYY-MM-DDTHH:mm:ssZ');
+const at = process.argv[process.argv.indexOf('--at') + 1];
+const file = new URL('../site/content-history.json', import.meta.url);
+const history = JSON.parse(readFileSync(file, 'utf8'));
+const next = updatedHistory({ '/': history }, { '/': appFingerprint() }, at)['/'];
+writeFileSync(file, JSON.stringify(next, null, 2) + '\n');
+console.log(next === history ? 'Content unchanged; lastmod retained.' : `Application content date: ${next.lastmod}. Rebuild before publishing.`);

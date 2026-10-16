@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:seo
       - run: npm run build
       - name: Publish dist to gh-pages
         uses: peaceiris/actions-gh-pages@v4
