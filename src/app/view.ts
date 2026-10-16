@@ -17,7 +17,7 @@ export interface Pt {
   y: number;
 }
 
-export type SnapKind = 'end' | 'mid' | 'cen' | 'qua' | 'int' | 'nea' | 'ins' | 'nod' | 'per' | 'tan' | 'ext' | 'app' | 'gcen';
+export type SnapKind = 'end' | 'mid' | 'cen' | 'qua' | 'int' | 'nea' | 'ins' | 'nod' | 'per' | 'tan' | 'ext' | 'app' | 'gcen' | 'par';
 
 export interface OverlayGeom {
   /** 월드 좌표 선분 [x0, y0, x1, y1, …] */
@@ -44,8 +44,18 @@ export interface OverlayState {
   acquired: Pt[];
   /** 누른 그립(빨강) */
   hotGrip: Pt | null;
+  /** Shift+클릭으로 고른 핫 그립들(빨강) */
+  hotGrips: Pt[];
+  /** 커서가 올라간 그립(분홍) */
+  hoverGrip: Pt | null;
   /** 동적 입력: 커서 옆에 보이는 입력 중인 글자 */
   dynInput: string | null;
+  /** 동적 입력 칸(거리·각도 또는 X·Y). 있으면 dynInput 상자 대신 이 칸들을 그린다 */
+  dynFields: { text: string; locked: boolean; active: boolean }[] | null;
+  /** 올가미(화면 좌표 자취)와 종류 */
+  lasso: { pts: Pt[]; mode: 'crossing' | 'window' | 'fence' } | null;
+  /** 창·올가미를 끄는 동안 걸릴 객체(선택 미리보기) */
+  preview: OverlayGeom[];
   marks: { p: Pt; text?: string }[];
   /** 커서 옆 동적 입력 문구 */
   tip: string | null;
@@ -937,8 +947,10 @@ export class CadView {
       g.clip();
     }
     if (o.hover) drawGeom(o.hover, dark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)', 2.2, null, 'rgba(120,170,255,0.25)');
+    // 창·올가미에 걸릴 객체(선택 미리보기)
+    for (const pv of o.preview ?? []) drawGeom(pv, dark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.7)', 1.8, null, 'rgba(120,170,255,0.18)');
     for (const sel of o.selection) drawGeom(sel, '#3d8dff', 1.6, [6, 4], 'rgba(61,141,255,0.25)');
-    // 그립
+    // 그립: 보통 파랑, 커서가 올라가면 분홍, 핫 그립 빨강(AutoCAD 기본 GRIPCOLOR·GRIPHOVER·GRIPHOT)
     g.save();
     for (const p of o.grips) {
       const q = W(p.x, p.y);
@@ -948,8 +960,16 @@ export class CadView {
       g.fillRect(q.x - 4, q.y - 4, 8, 8);
       g.strokeRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
-    if (o.hotGrip) {
-      const q = W(o.hotGrip.x, o.hotGrip.y);
+    if (o.hoverGrip) {
+      const q = W(o.hoverGrip.x, o.hoverGrip.y);
+      g.fillStyle = '#ff7f8f';
+      g.strokeStyle = '#ffe0e6';
+      g.lineWidth = 1;
+      g.fillRect(q.x - 4.5, q.y - 4.5, 9, 9);
+      g.strokeRect(q.x - 5, q.y - 5, 10, 10);
+    }
+    for (const p of [...(o.hotGrips ?? []), ...(o.hotGrip ? [o.hotGrip] : [])]) {
+      const q = W(p.x, p.y);
       g.fillStyle = '#e8453c';
       g.fillRect(q.x - 4.5, q.y - 4.5, 9, 9);
     }
@@ -1058,6 +1078,24 @@ export class CadView {
       g.strokeRect(x + 0.5, y + 0.5, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
       g.restore();
     }
+    // 올가미: 윈도우 파랑 실선, 걸침 초록 점선, 울타리 열린 점선
+    if (o.lasso && o.lasso.pts.length > 1) {
+      const { pts, mode } = o.lasso;
+      g.save();
+      g.beginPath();
+      g.moveTo(pts[0]!.x, pts[0]!.y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+      if (mode !== 'fence') {
+        g.closePath();
+        g.fillStyle = mode === 'crossing' ? 'rgba(80,200,120,0.16)' : 'rgba(70,130,255,0.16)';
+        g.fill();
+      }
+      g.strokeStyle = mode === 'crossing' ? '#57d68d' : mode === 'window' ? '#5b9bff' : '#ffb347';
+      g.lineWidth = 1;
+      if (mode !== 'window') g.setLineDash([5, 4]);
+      g.stroke();
+      g.restore();
+    }
     // 스냅 표지
     if (o.snap) drawSnap(g, W(o.snap.p.x, o.snap.p.y), o.snap.kind);
     // 십자선
@@ -1082,7 +1120,8 @@ export class CadView {
       g.strokeRect(x - o.pickbox, y - o.pickbox, o.pickbox * 2, o.pickbox * 2);
       g.restore();
     }
-    if ((o.tip || o.dynInput) && o.cursor) {
+    if (o.dynFields?.length && o.cursor) this.drawDynFields(g, o.cursor, o.tip ?? '', o.dynFields);
+    else if ((o.tip || o.dynInput) && o.cursor) {
       g.save();
       g.font = '11.5px ui-monospace, Menlo, monospace';
       const tip = o.tip ?? '';
@@ -1112,6 +1151,52 @@ export class CadView {
       g.restore();
     }
     if (tiles) g.restore();
+  }
+
+  /** 동적 입력: 커서 옆 문구 아래에 칸 두 개(지금 칸 파란 테두리, 잠긴 칸 자물쇠) */
+  private drawDynFields(g: CanvasRenderingContext2D, c: Pt, tip: string, fields: { text: string; locked: boolean; active: boolean }[]): void {
+    g.save();
+    g.font = '11.5px ui-monospace, Menlo, monospace';
+    const lock = 11;
+    const widths = fields.map((f) => Math.max(46, g.measureText(f.text + (f.active ? '▏' : '')).width + 12 + (f.locked ? lock : 0)));
+    const total = widths.reduce((a, b) => a + b, 0) + (fields.length - 1) * 4;
+    const tw = tip ? g.measureText(tip).width + 12 : 0;
+    const boxW = Math.max(total, tw);
+    const hgt = (tip ? 22 : 0) + 20;
+    const x = Math.min(c.x + 18, this.w - boxW - 4);
+    let y = Math.min(c.y + 22, this.h - hgt - 4);
+    if (tip) {
+      g.fillStyle = 'rgba(37,44,54,0.95)';
+      g.strokeStyle = '#5b6a7e';
+      g.fillRect(x, y, tw, 20);
+      g.strokeRect(x + 0.5, y + 0.5, tw - 1, 19);
+      g.fillStyle = '#e8ebf0';
+      g.fillText(tip, x + 6, y + 14);
+      y += 22;
+    }
+    let fx = x;
+    fields.forEach((f, i) => {
+      const w = widths[i]!;
+      g.fillStyle = f.active ? 'rgba(20,24,30,0.96)' : 'rgba(37,44,54,0.92)';
+      g.strokeStyle = f.active ? '#4c9bff' : '#5b6a7e';
+      g.lineWidth = 1;
+      g.fillRect(fx, y, w, 20);
+      g.strokeRect(fx + 0.5, y + 0.5, w - 1, 19);
+      g.fillStyle = f.active ? '#ffffff' : '#c9d1dc';
+      g.fillText(f.text + (f.active ? '▏' : ''), fx + 6, y + 14);
+      if (f.locked) {
+        // 자물쇠
+        const lx = fx + w - lock - 2;
+        g.strokeStyle = '#ffd166';
+        g.beginPath();
+        g.arc(lx + 4, y + 8, 2.6, Math.PI, 0);
+        g.stroke();
+        g.fillStyle = '#ffd166';
+        g.fillRect(lx + 0.5, y + 8, 7, 6);
+      }
+      fx += w + 4;
+    });
+    g.restore();
   }
 
   // -------------------------------------------------------------------------
@@ -1326,7 +1411,29 @@ function isTyping(ev: KeyboardEvent): boolean {
 }
 
 export function emptyOverlay(): OverlayState {
-  return { cursor: null, crosshair: true, pickbox: 5, windowRect: null, selection: [], hover: null, grips: [], snap: null, rubber: [], ghost: [], tracks: [], acquired: [], hotGrip: null, dynInput: null, marks: [], tip: null };
+  return {
+    cursor: null,
+    crosshair: true,
+    pickbox: 5,
+    windowRect: null,
+    selection: [],
+    hover: null,
+    grips: [],
+    snap: null,
+    rubber: [],
+    ghost: [],
+    tracks: [],
+    acquired: [],
+    hotGrip: null,
+    hotGrips: [],
+    hoverGrip: null,
+    dynInput: null,
+    dynFields: null,
+    lasso: null,
+    preview: [],
+    marks: [],
+    tip: null,
+  };
 }
 
 /** AutoCAD 스냅 표지 모양 */

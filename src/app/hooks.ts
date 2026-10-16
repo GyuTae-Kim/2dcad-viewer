@@ -9,6 +9,7 @@
  *  - App.dblClickHandlers   명령 없이 두 번 누른 객체(앱의 종류별 기본 편집보다 먼저) — 문자·다중 지시선·공차 편집기
  *  - App.gripMenuProviders  다기능 그립: 커서를 올리거나 오른쪽 클릭한 그립의 메뉴 항목 — 정점 추가·제거, 호로 변환, 길이 조정
  *  - App.commandFallbacks   등록되지 않은 이름을 명령행에 쳤을 때(알 수 없는 명령 안내보다 먼저) — 시스템 변수 이름 바로 입력
+ *  - App.contextMenuProviders 도면 영역 오른쪽 클릭 메뉴(기본·편집·명령 모드)에 항목 더하기
  *  - App.commitHooks        편집 확정 직전(before)·직후(after) — 주석 축척(before), 도면층 이전·연관 배열 경로 따라가기(after)
  *
  * 이 모듈은 형식과 작은 도우미만 두고 app.ts를 값으로 가져오지 않는다(기능 모듈과 app.ts 사이의 순환을 만들지 않는다).
@@ -81,6 +82,31 @@ export interface GripMenuProvider {
    * 맡지 않으면 null(다음 고리). 여러 고리의 항목은 등록 순서대로 이어 붙인다
    */
   items(grip: { readonly handle: string; readonly id: string; readonly point: Pt }, entity: Entity, st: DocState): GripMenuItem[] | null;
+}
+
+/** 바로 가기 메뉴 항목(ui/dom.ts의 MenuItem과 같은 모양). items가 있으면 누를 때 그 자리에 하위 메뉴를 펼친다 */
+export interface ContextMenuItem {
+  label?: string;
+  icon?: string;
+  kbd?: string;
+  disabled?: boolean;
+  separator?: boolean;
+  heading?: string;
+  run?: () => void;
+  items?: ContextMenuItem[];
+}
+
+/** 오른쪽 클릭 메뉴의 모드: default = 명령·선택 없음, edit = 선택 있음, command = 명령 중(옵션이 있는 프롬프트) */
+export type ContextMenuMode = 'default' | 'edit' | 'command';
+
+/** 오른쪽 클릭 메뉴 고리(App.contextMenuProviders) */
+export interface ContextMenuProvider {
+  readonly name: string;
+  /**
+   * 도면 영역 오른쪽 클릭 메뉴에 붙일 항목(누른 점은 도면 좌표). 맡지 않으면 null.
+   * 고리의 항목은 등록 순서대로 앱의 기본 항목 뒤(특성 앞)에 구분선을 두고 붙는다
+   */
+  items(ctx: { readonly mode: ContextMenuMode; readonly selection: readonly string[]; readonly point: Pt; readonly st: DocState | null }): ContextMenuItem[] | null;
 }
 
 /** 알 수 없는 명령 고리(App.commandFallbacks) */

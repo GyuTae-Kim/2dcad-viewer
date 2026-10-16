@@ -229,6 +229,7 @@ const OSNAP_BITS: [number, SnapKind][] = [
   [1024, 'gcen'],
   [2048, 'app'],
   [4096, 'ext'],
+  [8192, 'par'],
 ];
 
 const headerCodes = new Map(HEADER_VARS.map(([n, code]) => [n, code]));

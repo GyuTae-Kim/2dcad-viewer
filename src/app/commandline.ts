@@ -2,6 +2,8 @@
  * 명령행: 기록, 프롬프트(키워드 클릭), 입력, 명령 자동 완성.
  * AutoCAD처럼 Enter·Space로 입력을 마치고, 빈 입력의 Enter는 직전 명령을 다시 실행한다.
  * 닫히지 않은 AutoLISP 식("(" 로 시작)을 치는 동안은 Space가 글자다.
+ * 앱이 키를 먼저 볼 수 있다(intercept: 동적 입력의 Tab, 올가미 중 스페이스바). 기록·프롬프트의 오른쪽 클릭은 onContext로 넘긴다
+ * (입력란은 브라우저의 복사·붙여넣기 메뉴 그대로).
  */
 import { lispUnclosed } from '../edit/lisp/reader';
 export interface Suggestion {
@@ -60,7 +62,58 @@ export class CommandLine {
     this.input.addEventListener('keydown', (ev) => this.onKey(ev));
     this.input.addEventListener('input', () => this.updateSuggest());
     this.hist.addEventListener('dblclick', () => this.hist.classList.toggle('expanded'));
+    this.el.addEventListener('contextmenu', (ev) => {
+      if (ev.target === this.input || !this.onContext) return;
+      ev.preventDefault();
+      this.onContext(ev);
+    });
     this.setPrompt('');
+  }
+
+  /** 키를 앱이 먼저 본다(처리했으면 true, 기본 동작은 앱이 막는다) */
+  intercept: ((ev: KeyboardEvent) => boolean) | null = null;
+  /** 기록·프롬프트를 오른쪽 클릭했을 때(명령행 바로 가기 메뉴) */
+  onContext: ((ev: MouseEvent) => void) | null = null;
+
+  /** 자동 완성 목록이 떠 있는지 */
+  get suggesting(): boolean {
+    return !this.sugg.hidden;
+  }
+
+  /** 입력란 글을 비운다(동적 입력 칸을 잠근 뒤 등) */
+  clearInput(): void {
+    this.input.value = '';
+    this.onChange?.('');
+    this.sugg.hidden = true;
+  }
+
+  /** 입력란 끝에 글을 넣는다(붙여넣기) */
+  insertText(t: string): void {
+    this.input.focus({ preventScroll: true });
+    this.input.value += t;
+    this.updateSuggest();
+  }
+
+  /** 기록 전체(기록 복사) */
+  historyText(): string {
+    return [...this.hist.children].map((c) => c.textContent ?? '').join('\n');
+  }
+
+  /** 기록에서 고른 글(없으면 빈 글) */
+  selectedText(): string {
+    const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
+    return sel && !sel.isCollapsed && this.hist.contains(sel.anchorNode) ? sel.toString() : '';
+  }
+
+  /** 입력란의 글을 Enter로 넣은 것처럼(Ctrl+J·Ctrl+M) */
+  submitCurrent(): void {
+    this.finish(false);
+  }
+
+  /** Esc와 같다: 입력을 비우고 취소(Ctrl+\\) */
+  escape(): void {
+    this.clearInput();
+    this.host.cancel();
   }
 
   toggleHistory(): void {
@@ -167,12 +220,13 @@ export class CommandLine {
   }
 
   private onKey(ev: KeyboardEvent): void {
+    if (this.intercept?.(ev)) {
+      ev.preventDefault();
+      return;
+    }
     if (ev.key === 'Escape') {
       ev.preventDefault();
-      this.input.value = '';
-      this.onChange?.('');
-      this.sugg.hidden = true;
-      this.host.cancel();
+      this.escape();
       return;
     }
     if (!this.sugg.hidden && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
@@ -192,20 +246,25 @@ export class CommandLine {
     if (ev.key === 'Enter' || space || ev.key === 'Tab') {
       if (ev.key === 'Tab' && this.sugg.hidden) return;
       ev.preventDefault();
-      let v = this.input.value.trim();
-      if (!this.sugg.hidden && this.items.length && (ev.key === 'Tab' || ev.key === 'Enter' || space)) {
-        const exact = this.items.find((x) => x.name.toUpperCase() === v.toUpperCase());
-        if (ev.key === 'Tab' || !exact) v = this.items[this.selIdx]!.name;
-      }
-      this.input.value = '';
-      this.onChange?.('');
-      this.sugg.hidden = true;
-      if (!v && this.promptEl.hidden) {
-        this.host.repeat();
-        return;
-      }
-      this.submit(v);
+      this.finish(ev.key === 'Tab');
     }
+  }
+
+  /** 입력을 마친다(Tab이면 자동 완성 목록의 고른 항목) */
+  private finish(tab: boolean): void {
+    let v = this.input.value.trim();
+    if (!this.sugg.hidden && this.items.length) {
+      const exact = this.items.find((x) => x.name.toUpperCase() === v.toUpperCase());
+      if (tab || !exact) v = this.items[this.selIdx]!.name;
+    }
+    this.input.value = '';
+    this.onChange?.('');
+    this.sugg.hidden = true;
+    if (!v && this.promptEl.hidden) {
+      this.host.repeat();
+      return;
+    }
+    this.submit(v);
   }
 }
 

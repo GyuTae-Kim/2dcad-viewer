@@ -1,10 +1,13 @@
 /**
  * 앱 컨트롤러: 문서·화면·명령·선택·스냅을 묶는다.
+ * 직접 조작 입력(AutoCAD 2026 기본 설정과 같게): 동적 입력 칸·상대 좌표(dyninput.ts), 객체 스냅 재지정(osnap-override.ts),
+ * 연장선·평행 획득(snap.ts), 선택한 객체 끌어 옮기기(dragmove.ts), 올가미(lasso.ts), 오른쪽 클릭 메뉴(ctxmenu.ts),
+ * Ctrl 단축키(keys.ts), 다기능 그립 메뉴·여러 핫 그립, Shift 임시 직교. 화면 이벤트는 view.ts가 넘긴다.
  */
 import { currentUcs, dirToUcs, isWorld, toUcs, toWcs } from './ucs';
 import { viewportModel } from './psltscale';
 import type { Entity, ViewportEntity } from '../core/model';
-import { MODEL_SPACE, tableKey } from '../core/model';
+import { MODEL_SPACE, normalizeHandle, tableKey } from '../core/model';
 import { errorMessage } from '../core/errors';
 import type { CadErrorCode } from '../core/errors';
 import { formatLength } from '../core/units';
@@ -17,7 +20,7 @@ import { DocState } from './docstate';
 import { CadView, type OverlayGeom, type Pt, type SnapKind } from './view';
 import { CommandLine, parsePointInput } from './commandline';
 import { Picker } from './pick';
-import { SELECT_HELP, SELECT_METHODS, runSelectMethod, selectMethodOf } from './selmethod';
+import { SELECT_HELP, SELECT_METHODS, SELECT_OPTIONS, runSelectMethod, selectMethodOf } from './selmethod';
 import { DEFAULT_SNAPS, SNAP_NAMES, findSnap } from './snap';
 import { type Acquired, objectTrack, polarAngles, polarTrack } from './tracking';
 import { gripPoints } from '../edit/geom';
@@ -30,9 +33,17 @@ import { OverlayScene, layoutViewports, paperInfo } from './scene';
 import { expandXrefBounds } from './refs';
 import type { EditOp } from '../edit/session';
 import { isEditableTable } from '../edit/table/entity';
-import { type CommandFallback, type CommitHook, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
+import { type CommandFallback, type CommitHook, type ContextMenuItem, type ContextMenuMode, type ContextMenuProvider, type DblClickHandler, type EntityClickHandler, type GripMenuProvider, type InputFilter, type PendingInput, type PointFilter, type ResolvedPoint, bindCommitHooks } from './hooks';
 import { cycleIsoPlane } from './viewtools-iso';
 import { maximized } from './viewtools-vpmax';
+import { DynInput, dynRelative } from './dyninput';
+import { type Override, parseOverride, runPointOverride } from './osnap-override';
+import { type ExtAnchor, findExtAnchor, segmentDirAt } from './snap';
+import { DragGhost, commitDrag, pressKind } from './dragmove';
+import { Lasso } from './lasso';
+import { ctrlAction } from './keys';
+import { commandLineMenu, commandMenu, idleMenu, osnapItems, showContextMenu } from './ctxmenu';
+import { listGroups } from '../edit/util/groups';
 
 export class CancelError extends Error {
   constructor() {
@@ -52,7 +63,11 @@ export interface PointSnap {
   handle2?: string;
 }
 
-export type PointResult = { point: Pt; snap?: PointSnap | null } | { keyword: string } | { text: string } | { enter: true };
+/**
+ * 점 요청의 결과. 클릭으로 찍었으면 그때 누른 보조키(shift·ctrl, ⌘는 ctrl로)를 눌렀을 때만 true로 싣는다
+ * (그립 복사의 Ctrl 간격 맞춤 등). 좌표 입력·스냅 재지정으로 만든 점에는 없다
+ */
+export type PointResult = { point: Pt; snap?: PointSnap | null; shift?: boolean; ctrl?: boolean } | { keyword: string } | { text: string } | { enter: true };
 
 interface PointRequest {
   kind: 'point';
@@ -62,6 +77,8 @@ interface PointRequest {
   rubber?: (p: Pt) => { pts: number[]; closed?: boolean; fill?: boolean; dashed?: boolean }[];
   ghost?: (p: Pt) => OverlayGeom[];
   allowText: boolean;
+  /** 명령이 글을 받는다고 한 요청(allowText): 객체 스냅 재지정 이름도 글로 돌려준다 */
+  freeText: boolean;
   /** 숫자만 입력하면 직접 거리 입력 대신 문자로 돌려준다(각도·축척 입력) */
   preferNumber: boolean;
   /** 이 입력을 기다리는 명령(실행의 취소 신호). 명령이 끝날 때 자기 요청만 치운다 */
@@ -70,13 +87,30 @@ interface PointRequest {
   reject: (e: unknown) => void;
 }
 
+/** 객체를 고른 결과. shift: 고를 때 Shift를 누르고 있었는지(자르기·연장 전환 등) */
+export type EntityPick = { handle: string; point: Pt; shift?: boolean };
+export type EntityResult = EntityPick | { keyword: string } | { enter: true };
+/** getEntity(…, { emptyPick: true })에서 빈 곳을 누르거나 좌표를 입력한 결과(point는 도면 좌표, 스냅 없음) */
+export type EmptyPick = { point: Pt; empty: true; shift?: boolean };
+/** getEntity 옵션. emptyPick: 빈 곳 클릭·좌표 입력도 돌려받는다(EmptyPick) */
+export interface EntityOptions {
+  emptyPick?: boolean;
+}
+
 interface EntityRequest {
   kind: 'entity';
   prompt: string;
   keywords: Keyword[];
+  emptyPick: boolean;
   signal: AbortSignal;
-  resolve: (r: { handle: string; point: Pt } | { keyword: string } | { enter: true }) => void;
+  resolve: (r: EntityResult | EmptyPick) => void;
   reject: (e: unknown) => void;
+}
+
+/** 객체 선택 중 한 번의 고르기(명령 취소 U가 되돌린다) */
+interface SelectStep {
+  handles: string[];
+  mode: 'add' | 'remove';
 }
 
 interface SelectRequest {
@@ -84,6 +118,12 @@ interface SelectRequest {
   prompt: string;
   keywords: Keyword[];
   remove: boolean;
+  /** 단일(SI): 한 번 고르면 끝 */
+  single: boolean;
+  /** 다중(M): 강조 없이 모아 두었다가 Enter로 더한다 */
+  multiple: string[] | null;
+  /** 이 선택 프롬프트에서 고른 단계(U) */
+  history: SelectStep[];
   signal: AbortSignal;
   resolve: (r: { handles: string[] } | { keyword: string }) => void;
   reject: (e: unknown) => void;
@@ -91,13 +131,15 @@ interface SelectRequest {
 
 type Request = PointRequest | EntityRequest | SelectRequest;
 
-export type { CommitHook, EntityClickHandler, InputFilter, PendingInput, PointFilter, ResolvedPoint } from './hooks';
+export type { CommitHook, ContextMenuItem, ContextMenuProvider, EntityClickHandler, InputFilter, PendingInput, PointFilter, ResolvedPoint } from './hooks';
 
 export interface CommandContext {
   app: App;
   print(text: string, cls?: 'err' | 'res'): void;
   getPoint(prompt: string, opt?: { base?: Pt | null; keywords?: Keyword[]; rubber?: PointRequest['rubber']; ghost?: PointRequest['ghost']; allowText?: boolean; preferNumber?: boolean }): Promise<PointResult>;
-  getEntity(prompt: string, keywords?: Keyword[]): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }>;
+  getEntity(prompt: string, keywords?: Keyword[]): Promise<EntityResult>;
+  /** emptyPick: 빈 곳 클릭·좌표 입력도 EmptyPick으로 돌려받는다(기존 호출의 동작은 그대로) */
+  getEntity(prompt: string, keywords: Keyword[] | undefined, opt: EntityOptions): Promise<EntityResult | EmptyPick>;
   /** 객체 고르기(이미 고른 것이 있으면 그것). 빈 배열이면 아무것도 고르지 않음 */
   getSelection(prompt?: string, opt?: { keywords?: Keyword[]; noPickfirst?: boolean }): Promise<string[]>;
   /** 명령 안의 여러 단계를 한 번의 명령 취소로 묶는 번호 */
@@ -177,6 +219,36 @@ export class App {
   readonly commandFallbacks: CommandFallback[] = [];
   /** 확장 지점: 편집 확정 고리(문서를 열 때 편집 세션에 잇는다) — 주석 축척·도면층 이전·연관 배열 경로 따라가기 */
   readonly commitHooks: CommitHook[] = [];
+  /** 확장 지점: 도면 영역 오른쪽 클릭 메뉴(기본·편집·명령 모드)에 항목 더하기 */
+  readonly contextMenuProviders: ContextMenuProvider[] = [];
+  /** 누른 채 끌기를 올가미로(AutoCAD LASSO 켜짐). 끄면 직사각형 창 */
+  lassoOn = true;
+  /** 최근 명령(앞이 최근, 오른쪽 클릭·명령행 메뉴) */
+  readonly recentCommands: string[] = [];
+  /** 최근 입력(명령 중에 친 좌표·값, 앞이 최근) */
+  readonly recentInputs: string[] = [];
+  /** 동적 입력 칸(거리·각도 또는 X·Y)의 잠금 */
+  readonly dyn = new DynInput();
+  /** 객체 스냅 재지정(다음 한 점만): 그 점 요청과 쓸 스냅(빈 집합 = 스냅 없이) */
+  private snapOverride: { req: Request; modes: Set<SnapKind> } | null = null;
+  /** 임시 추적점(TT): 그 점 요청에서만 객체 스냅 추적이 꺼져 있어도 쓴다 */
+  private tempTrack: { req: Request; points: Acquired[] } | null = null;
+  /** 연장선 획득점·평행 방향(커서를 끝점·선분 위에 잠시 머물러 얻는다)과 얻는 중인 후보 */
+  private extAnchors: ExtAnchor[] = [];
+  private parDirs: { dir: Pt; at: Pt }[] = [];
+  private extCandidate: { key: string; timer: number } | null = null;
+  /** Shift를 누르고 있는지(임시 직교 반전) */
+  private shiftHeld = false;
+  /** 마지막 포인터 이동(Shift를 누르고 뗄 때 다시 해석) */
+  private lastMove: { w: Pt; s: Pt; ev: PointerEvent } | null = null;
+  /** 왼쪽 버튼을 누른 곳의 뜻(명령이 없을 때): 그립, 끌어 옮기기, 창·올가미 */
+  private press: { kind: 'grip' | 'move' | 'window'; world: Pt; screen: Pt; ghost?: DragGhost; lasso?: Lasso; started?: boolean } | null = null;
+  /** 핫 그립(Shift+클릭으로 여럿) */
+  private hotGrips: Pt[] = [];
+  /** 커서가 올라간 그립과 다기능 그립 메뉴 타이머 */
+  private hoverGrip: { point: Pt; timer: number; shown: boolean } | null = null;
+  /** 창·올가미 선택 미리보기를 다시 구할 시각 */
+  private previewAt = 0;
   /** 마지막 점 요청과 DRAG로 끌기 미리보기를 켠 점 요청(DRAGMODE 켜기) */
   private lastPointRequest: PointRequest | null = null;
   private dragFor: PointRequest | null = null;
@@ -198,7 +270,7 @@ export class App {
     this.view = new CadView(drawingParent);
     this.edits = new EditManager(this);
     this.cmd = new CommandLine(drawingParent, {
-      submit: (t) => this.onInput(t),
+      submit: (t) => this.onInput(t, true),
       cancel: () => this.cancel(),
       suggest: (p) => this.suggest(p),
       keyword: (k) => this.onInput(k),
@@ -208,7 +280,7 @@ export class App {
     });
     this.view.on({
       move: (w, s, ev) => this.onMove(w, s, ev),
-      down: () => {},
+      down: (w, s, ev) => this.onDown(w, s, ev),
       click: (w, s, ev) => this.onClick(w, s, ev),
       drag: (a, b, done, ev) => this.onDrag(a, b, done, ev),
       context: (w, s, ev) => this.onContext(w, s, ev),
@@ -225,8 +297,12 @@ export class App {
     });
     this.cmd.onChange = (t) => {
       this.view.overlay.dynInput = this.dynOn && t ? t : null;
+      this.updateDynFields();
       this.view.requestOverlay();
     };
+    // 동적 입력 칸의 Tab, 올가미 중 스페이스바(명령행 입력란에 초점이 있어도)
+    this.cmd.intercept = (ev) => this.interceptKey(ev);
+    this.cmd.onContext = (ev) => showContextMenu(ev.clientX, ev.clientY, commandLineMenu(this, () => this.cmd.historyText(), this.cmd.selectedText()));
     this.view.onRestore = () => {
       for (const d of this.docs) {
         for (const sc of d.scenes.values()) sc.reupload(this.view.renderer);
@@ -248,6 +324,22 @@ export class App {
       return { x: st.grid.x, y: st.grid.y, major: st.grid.major, baseX: st.snap.baseX, baseY: st.snap.baseY, limits, ucs: currentUcs(st) };
     };
     window.addEventListener('keydown', (ev) => this.onKey(ev));
+    window.addEventListener('keyup', (ev) => {
+      if (ev.key === 'Shift') this.setShift(false);
+    });
+    // 앱 안에서는 브라우저 기본 메뉴를 막는다(입력란·편집 가능한 곳·고른 글이 있을 때는 그대로)
+    if (typeof document.addEventListener === 'function')
+      document.addEventListener(
+        'contextmenu',
+        (ev) => {
+          const t = ev.target as HTMLElement | null;
+          if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || t.closest?.('a[href]'))) return;
+          const sel = window.getSelection?.();
+          if (sel && !sel.isCollapsed) return;
+          ev.preventDefault();
+        },
+        true,
+      );
     window.addEventListener('beforeunload', (ev) => {
       if (this.docs.some((d) => d.session?.dirty)) ev.preventDefault();
     });
@@ -332,13 +424,15 @@ export class App {
     const ctrl = new AbortController();
     if (!nested) this.running = { name: c.name, ctrl };
     this.lastCommand = c.name;
+    remember(this.recentCommands, c.name);
     this.cmd.print(`명령: ${c.name}`);
     this.clearHover();
+    this.clearGripHover();
     const ctx: CommandContext = {
       app: this,
       print: (t, cls) => this.cmd.print(t, cls),
       getPoint: (prompt, opt) => this.requestPoint(prompt, opt, ctrl.signal),
-      getEntity: (prompt, kws) => this.requestEntity(prompt, kws ?? [], ctrl.signal),
+      getEntity: ((prompt: string, kws?: Keyword[], opt?: EntityOptions) => this.requestEntity(prompt, kws ?? [], ctrl.signal, opt ?? {})) as CommandContext['getEntity'],
       getSelection: (prompt, opt) => this.requestSelection(prompt ?? '객체 선택:', opt ?? {}, ctrl.signal),
       group: ++this.groupSerial,
     };
@@ -375,6 +469,11 @@ export class App {
     o.ghost = [];
     o.marks = [];
     o.hotGrip = null;
+    o.hotGrips = [];
+    o.dynFields = null;
+    this.hotGrips = [];
+    this.snapOverride = null;
+    this.tempTrack = null;
     this.clearTracking();
     o.tip = null;
     this.view.requestOverlay();
@@ -382,6 +481,16 @@ export class App {
 
   get busyCommand(): string | null {
     return this.running?.name ?? null;
+  }
+
+  /** 직전 명령(Enter·오른쪽 클릭 반복) */
+  get lastCommandName(): string | null {
+    return this.lastCommand;
+  }
+
+  /** 명령 밖의 편집(끌어 옮기기 등)이 쓸 명령 취소 묶음 번호 */
+  nextGroup(): number {
+    return ++this.groupSerial;
   }
 
   /** 명령이 기다리는 입력(스크립트 실행기가 다음 입력을 넣을 때를 안다). 없으면 null */
@@ -398,9 +507,17 @@ export class App {
       this.running.ctrl.abort();
       this.running = null;
       if (!silent) this.cmd.print('*취소*');
-    } else if (this.windowStart) {
+    } else if (this.windowStart || this.press?.lasso) {
       this.windowStart = null;
+      this.press = null;
       this.view.overlay.windowRect = null;
+      this.view.overlay.lasso = null;
+      this.view.overlay.preview = [];
+      this.view.requestOverlay();
+    } else if (this.hotGrips.length) {
+      // Esc 한 번 = 핫 그립 풀기, 두 번 = 선택 해제(AutoCAD와 같다)
+      this.hotGrips = [];
+      this.view.overlay.hotGrips = [];
       this.view.requestOverlay();
     } else if (this.active && this.active.selection.size) {
       this.clearSelection();
@@ -432,6 +549,7 @@ export class App {
         rubber: opt.rubber,
         ghost: opt.ghost,
         allowText: !!opt.allowText || !!opt.preferNumber,
+        freeText: !!opt.allowText,
         preferNumber: !!opt.preferNumber,
         signal,
         resolve: (r) => {
@@ -442,6 +560,11 @@ export class App {
       };
       this.request = req;
       this.lastPointRequest = req;
+      this.dyn.sync(req);
+      // 연장선·평행 획득점은 점을 찍을 때마다 새로(AutoCAD와 같다)
+      this.extAnchors = [];
+      this.parDirs = [];
+      this.refreshAcquired();
       this.cmd.setPrompt(this.promptOf(req));
       this.view.overlay.tip = prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
       signal.addEventListener('abort', () => this.dropRequest(req, reject), { once: true });
@@ -465,9 +588,19 @@ export class App {
       { key: 'A', label: '추가' },
       ...(opt.keywords ?? []),
     ];
-    // 선택 방식(W·C·BOX·WP·CP·F): 명령의 키워드가 먼저
-    for (const m of SELECT_METHODS) if (!kws.some((k) => k.key.toUpperCase() === m.key)) kws.push(m);
+    // 선택 방식(W·C·BOX·WP·CP·F)과 그 밖의 옵션(G·M·AU·SI·U): 명령의 키워드가 먼저
+    for (const m of [...SELECT_METHODS, ...SELECT_OPTIONS]) if (!kws.some((k) => k.key.toUpperCase() === m.key)) kws.push(m);
     let removing = false;
+    let single = false;
+    let multiple: string[] | null = null;
+    const history: SelectStep[] = [];
+    /** 이 프롬프트에서 고른 단계(U가 되돌린다) */
+    const step = (hs: string[], mode: 'add' | 'remove') => this.selectStep(history, hs, mode);
+    const done = () => {
+      const hs = [...st.selection];
+      this.lastSelection = hs;
+      return hs;
+    };
     for (;;) {
       const r = await new Promise<{ handles: string[] } | { keyword: string }>((resolve, reject) => {
         if (signal.aborted) return reject(new CancelError());
@@ -476,10 +609,14 @@ export class App {
           prompt,
           keywords: kws,
           remove: removing,
+          single,
+          multiple,
+          history,
           signal,
           resolve: (x) => {
             if (this.request === req) this.request = null;
             removing = req.remove;
+            multiple = req.multiple;
             resolve(x);
           },
           reject,
@@ -495,6 +632,8 @@ export class App {
         return r.handles;
       }
       const k = r.keyword.toUpperCase();
+      const mode = removing ? 'remove' : 'add';
+      let picked = false;
       if (k === 'ALL') {
         const scene = st.scenes.get(st.space);
         const hs = (scene?.entities ?? []).map((b) => b.handle).filter((h) => {
@@ -504,25 +643,66 @@ export class App {
         });
         const ed = st.edits.get(st.space);
         for (const b of ed?.overlay?.entities ?? []) if (!hs.includes(b.handle)) hs.push(b.handle);
-        this.setSelection(hs.filter((h) => !ed?.hidden.has(h) || ed.live.has(h)), 'add');
+        step(hs.filter((h) => !ed?.hidden.has(h) || ed.live.has(h)), mode);
         this.cmd.print(`${st.selection.size}개를 찾음`);
-      } else if (k === 'P') this.setSelection(this.lastSelection.filter((h) => st.doc.entityIndex.has(h)), 'add');
-      else if (k === 'L') {
+        picked = true;
+      } else if (k === 'P') {
+        step(this.lastSelection.filter((h) => st.doc.entityIndex.has(h)), mode);
+        picked = true;
+      } else if (k === 'L') {
         const last = this.lastCreated.filter((h) => st.doc.entityIndex.has(h)).slice(-1);
-        this.setSelection(last, 'add');
+        step(last, mode);
+        picked = true;
       } else if (opt.keywords?.some((x) => x.key.toUpperCase() === k)) return Promise.reject(Object.assign(new Error('keyword'), { keyword: k }));
-      else {
+      else if (k === 'SI') single = true;
+      else if (k === 'AU') {
+        // 자동: 객체를 누르면 고르고 빈 곳이면 창(이미 기본 동작)
+      } else if (k === 'M') multiple = [];
+      else if (k === 'U') {
+        const last = history.pop();
+        if (!last) this.cmd.print('되돌릴 선택이 없습니다.');
+        else {
+          this.setSelection(last.handles, last.mode === 'add' ? 'remove' : 'add');
+          this.cmd.print(`${last.handles.length}개를 되돌림, 총 ${st.selection.size}개`);
+        }
+      } else if (k === 'G') {
+        const g = await this.requestPoint('그룹 이름 입력:', { allowText: true }, signal);
+        const name = 'text' in g ? g.text.trim() : '';
+        if (name) {
+          const grp = listGroups(st.doc).find((x) => x.name.toUpperCase() === name.toUpperCase());
+          if (!grp) this.cmd.print(`그룹 "${name}"이(가) 없습니다.`, 'err');
+          else {
+            const hs = grp.group.entities.map((h) => normalizeHandle(h)).filter((h) => st.doc.entityIndex.has(h));
+            step(this.expandPick(hs), mode);
+            this.cmd.print(`${hs.length}개를 찾음`);
+            picked = true;
+          }
+        }
+      } else {
         const m = selectMethodOf(k);
         const pk = m ? this.picker() : null;
         if (m && pk) {
           const hs = await runSelectMethod(m, { getPoint: (p, o) => this.requestPoint(p, o, signal), print: (t, c) => this.cmd.print(t, c) }, pk);
           if (hs) {
-            this.setSelection(this.expandPick(hs), removing ? 'remove' : 'add');
+            step(this.expandPick(hs), mode);
             this.cmd.print(`${hs.length}개를 찾음`);
+            picked = true;
           }
         }
       }
+      // 단일(SI): 한 번 고르면 끝
+      if (single && picked) return done();
     }
+  }
+
+  /** 객체 선택 중 한 번의 고르기: 실제로 바뀐 것만 단계로 남긴다(U) */
+  private selectStep(history: SelectStep[], hs: string[], mode: 'add' | 'remove'): void {
+    const st = this.active;
+    if (!st) return;
+    const before = new Set(st.selection);
+    this.setSelection(hs, mode);
+    const changed = mode === 'add' ? [...st.selection].filter((h) => !before.has(h)) : [...before].filter((h) => !st.selection.has(h));
+    if (changed.length) history.push({ handles: changed, mode });
   }
 
   /** 마지막으로 만든 객체(L 옵션) */
@@ -533,8 +713,11 @@ export class App {
   readonly pdfPages = new Map<string, readonly [number, number]>();
   /** 선택한 객체의 그립(화면에 보이는 것) */
   gripList: { handle: string; id: string; point: Pt }[] = [];
-  /** 누른 그립(GRIPEDIT 명령이 쓴다) */
-  hotGrip: { point: Pt; items: { handle: string; id: string }[] } | null = null;
+  /**
+   * 누른 그립(GRIPEDIT 명령이 쓴다). point = 누른 그립 점, items = 함께 움직일 그립(같은 점에 겹친 그립과
+   * Shift+클릭으로 고른 다른 핫 그립 — 항목마다 제 그립 점)
+   */
+  hotGrip: { point: Pt; items: { handle: string; id: string; point: Pt }[] } | null = null;
   /** 파일을 연 뒤(빠진 글꼴 안내 등) */
   onOpened: ((st: DocState) => void) | null = null;
   /** 뷰포트 표(타일 뷰포트 구성)가 편집으로 바뀌었을 때(VPORTS가 연결한다) */
@@ -545,13 +728,29 @@ export class App {
     this.onInput(text);
   }
 
-  private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal): Promise<{ handle: string; point: Pt } | { keyword: string } | { enter: true }> {
+  /** 사람이 Enter를 누른 것처럼(오른쪽 클릭 메뉴의 입력): 동적 입력 칸을 잠갔으면 그 점 */
+  acceptInput(): void {
+    this.onInput('', true);
+  }
+
+  /** 지금 점 요청에 객체 스냅 재지정(END·FROM·M2P·TT·.X …)을 건다(바로 가기 메뉴). 점 요청이 아니거나 이름이 아니면 false */
+  applyOverrideInput(key: string): boolean {
+    const r = this.request;
+    const ov = parseOverride(key);
+    if (r?.kind !== 'point' || !ov) return false;
+    this.cmd.print(`${this.promptOf(r)} ${key}`);
+    void this.applyOverride(r, ov);
+    return true;
+  }
+
+  private requestEntity(prompt: string, keywords: Keyword[], signal: AbortSignal, opt: EntityOptions = {}): Promise<EntityResult | EmptyPick> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) return reject(new CancelError());
       const req: EntityRequest = {
         kind: 'entity',
         prompt,
         keywords,
+        emptyPick: !!opt.emptyPick,
         signal,
         resolve: (r) => {
           if (this.request === req) this.request = null;
@@ -567,8 +766,11 @@ export class App {
     });
   }
 
-  /** 명령행 입력 */
-  private onInput(text: string): void {
+  /**
+   * 명령행 입력. interactive: 사람이 명령행·커서 옆에 친 입력(동적 입력의 상대 좌표 기본을 쓴다).
+   * 스크립트·AutoLISP·submitInput은 늘 절대 좌표(AutoCAD처럼 동적 입력과 무관)
+   */
+  private onInput(text: string, interactive = false): void {
     for (const f of this.inputFilters) if (f.input(text, this.request)) return;
     const r = this.request;
     if (!r) {
@@ -580,6 +782,15 @@ export class App {
     const t = text.trim();
     if (r.kind === 'select') {
       if (!t) {
+        // 다중(M): 모아 둔 것을 더하고 선택 프롬프트로 돌아간다
+        if (r.multiple) {
+          const hs = this.expandPick(r.multiple);
+          r.multiple = null;
+          this.selectStep(r.history, hs, r.remove ? 'remove' : 'add');
+          this.cmd.print(`${hs.length}개를 찾음, 총 ${this.active?.selection.size ?? 0}개`);
+          if (r.single) r.resolve({ handles: [...(this.active?.selection ?? [])] });
+          return;
+        }
         r.resolve({ handles: [...(this.active?.selection ?? [])] });
         return;
       }
@@ -607,6 +818,18 @@ export class App {
       this.cmd.print(`*잘못된 선택* ${SELECT_HELP}`, 'err');
       return;
     }
+    // 동적 입력 칸을 잠갔으면 Enter·값으로 그 칸들을 합친 점
+    if (r.kind === 'point' && this.dynOn && interactive && this.dyn.locked) {
+      const st = this.active;
+      const p = st ? this.dyn.resolve(t, r.base, this.cursorWorld, currentUcs(st), st.units.aunits) : null;
+      if (p) {
+        if (this.outsideLimits(p)) return;
+        this.cmd.print(`${this.promptOf(r)} ${[...this.dyn.locks.filter((x) => x !== null), t].filter(Boolean).join(' ')}`);
+        this.lastPoint = p;
+        this.finishPoint(r, { point: p, snap: null });
+        return;
+      }
+    }
     if (!t) {
       r.resolve({ enter: true });
       return;
@@ -625,25 +848,28 @@ export class App {
     if (r.kind === 'point') {
       if (r.preferNumber && /^-?[\d.]+(?:e-?\d+)?$/i.test(t)) {
         this.cmd.print(`${this.promptOf(r)} ${t}`);
+        remember(this.recentInputs, t);
         r.resolve({ text: t });
         return;
       }
-      const dir = this.cursorWorld && r.base ? { x: this.cursorWorld.x - r.base.x, y: this.cursorWorld.y - r.base.y } : null;
-      // 좌표는 현재 UCS로 읽는다(* 로 시작하면 WCS)
-      const u = currentUcs(this.active);
-      const wcs = t.startsWith('*');
-      const conv = !wcs && !isWorld(u);
-      const lastW = r.base ?? this.lastPoint;
-      const pu = parsePointInput(wcs ? t.slice(1) : t, lastW && conv ? toUcs(u, lastW) : lastW, dir && conv ? dirToUcs(u, dir) : dir);
-      const p = pu && conv ? toWcs(u, pu) : pu;
+      // 객체 스냅 재지정(END·FROM·M2P·TT·.X …): 글을 받는 프롬프트에서는 글 그대로
+      const ov = r.freeText ? null : parseOverride(t);
+      if (ov) {
+        this.cmd.print(`${this.promptOf(r)} ${t}`);
+        void this.applyOverride(r, ov);
+        return;
+      }
+      const p = this.parsePoint(r, interactive && this.dynOn && r.base ? dynRelative(t) : t);
       if (p) {
         if (this.outsideLimits(p)) return;
         this.cmd.print(`${this.promptOf(r)} ${t}`);
+        remember(this.recentInputs, t);
         this.lastPoint = p;
-        r.resolve({ point: p, snap: null });
+        this.finishPoint(r, { point: p, snap: null });
         return;
       }
       if (r.allowText) {
+        remember(this.recentInputs, t);
         r.resolve({ text: t });
         return;
       }
@@ -655,7 +881,92 @@ export class App {
       this.cmd.print('점이 올바르지 않습니다. 예: 100,50  @20,0  @30<45', 'err');
       return;
     }
+    // 객체 프롬프트에서 빈 곳을 받는 요청(emptyPick)은 좌표 입력도 점으로
+    if (r.emptyPick) {
+      const p = this.parsePoint(null, interactive && this.dynOn && this.lastPoint ? dynRelative(t) : t);
+      if (p) {
+        this.cmd.print(`${this.promptOf(r)} ${t}`);
+        this.lastPoint = p;
+        r.resolve({ point: p, empty: true });
+        return;
+      }
+    }
     this.cmd.print('객체를 선택하거나 옵션을 입력하십시오.', 'err');
+  }
+
+  /** 좌표 글 읽기: 현재 UCS(* 로 시작하면 WCS), @는 기준점(없으면 마지막 점)에서, 숫자 하나는 커서 방향 직접 거리 */
+  private parsePoint(r: PointRequest | null, t: string): Pt | null {
+    const base = r?.base ?? null;
+    const dir = this.cursorWorld && base ? { x: this.cursorWorld.x - base.x, y: this.cursorWorld.y - base.y } : null;
+    const u = currentUcs(this.active);
+    const wcs = t.startsWith('*');
+    const conv = !wcs && !isWorld(u);
+    const lastW = base ?? this.lastPoint;
+    const pu = parsePointInput(wcs ? t.slice(1) : t, lastW && conv ? toUcs(u, lastW) : lastW, dir && conv ? dirToUcs(u, dir) : dir);
+    return pu && conv ? toWcs(u, pu) : pu;
+  }
+
+  /** 점 요청을 점으로 끝낸다(그 요청의 스냅 재지정·임시 추적점도 끝) */
+  private finishPoint(r: PointRequest, res: PointResult): void {
+    if (this.snapOverride?.req === r) this.snapOverride = null;
+    if (this.tempTrack?.req === r) {
+      this.tempTrack = null;
+      this.refreshAcquired();
+    }
+    r.resolve(res);
+  }
+
+  /**
+   * 객체 스냅 재지정: 스냅은 다음 한 점에만 쓰고, TT는 임시 추적점을 더하고, FROM·M2P·점 필터는 점을 더 물어 그 점으로 끝낸다.
+   * 더 묻는 동안 Esc는 명령 전체를 취소한다(AutoCAD와 같다)
+   */
+  private async applyOverride(r: PointRequest, ov: Override): Promise<void> {
+    const back = () => {
+      if (r.signal.aborted) return false;
+      this.request = r;
+      this.cmd.setPrompt(this.promptOf(r));
+      this.view.overlay.tip = r.prompt.replace(/\[.*$/, '').replace(/:\s*$/, '');
+      this.view.requestOverlay();
+      return true;
+    };
+    if (ov.kind === 'snap') {
+      this.snapOverride = { req: r, modes: new Set(ov.modes) };
+      // AutoCAD처럼 "대상:"을 묻는다(NON은 원래 프롬프트)
+      if (ov.modes.length) this.cmd.setPrompt('대상:');
+      if (this.lastMove) this.onMove(this.lastMove.w, this.lastMove.s, this.lastMove.ev, true);
+      return;
+    }
+    try {
+      if (ov.kind === 'tt') {
+        const q = await this.requestPoint('임시 OTRACK 점 지정:', {}, r.signal);
+        if (!back()) return;
+        if ('point' in q) {
+          if (this.tempTrack?.req !== r) this.tempTrack = { req: r, points: [] };
+          this.tempTrack.points.push({ p: q.point, label: '임시 추적점' });
+          this.refreshAcquired();
+        }
+        return;
+      }
+      const st = this.active;
+      const p = await runPointOverride(ov, {
+        getPoint: (prompt, o) => this.requestPoint(prompt, o ?? {}, r.signal),
+        print: (t, c) => this.cmd.print(t, c),
+        ucs: currentUcs(st),
+      });
+      if (!back()) return;
+      if (p) {
+        if (this.outsideLimits(p)) return;
+        this.lastPoint = p;
+        this.finishPoint(r, { point: p, snap: null });
+      }
+    } catch (e) {
+      // 더 묻는 중에 취소하면 명령도 취소
+      if (!(e instanceof CancelError) || r.signal.aborted) return;
+      if (this.request === r || !this.request) {
+        this.request = null;
+        r.reject(new CancelError());
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1173,52 +1484,78 @@ export class App {
   // 화면 입력
   // -------------------------------------------------------------------------
 
-  /** 스냅·추적·직교를 적용한 점 */
+  /** 지금 점 요청에서 쓸 객체 스냅(재지정이 있으면 그것, 객체 스냅이 꺼져 있으면 null) */
+  private snapModesFor(r: Request | null): ReadonlySet<SnapKind> | null {
+    if (r?.kind !== 'point') return null;
+    if (this.snapOverride?.req === r) return this.snapOverride.modes;
+    return this.osnapOn ? this.snapModes : null;
+  }
+
+  /** 스냅·추적·직교를 적용한 점(동적 입력 칸을 잠갔으면 그 값에 묶는다) */
   private resolvePoint(w: Pt): ResolvedPoint {
     const r = this.request;
-    if (r?.kind === 'point' || !r) {
-      const pk = this.picker();
-      if (pk && this.osnapOn && r?.kind === 'point') {
-        const aperture = 10 * this.view.pixelSize();
-        const s = findSnap(this.active!.doc, pk, w, aperture, this.snapModes, r.base);
-        if (s) return { p: { x: s.x, y: s.y }, snap: { p: { x: s.x, y: s.y }, kind: s.kind, handle: s.handle, handle2: s.handle2 } };
-      }
-      if (r?.kind === 'point') {
-        // 확장 지점: 객체 스냅이 없으면 고리가 추적·격자 스냅·직교를 대신할 수 있다(등각투영 제도)
-        for (const f of this.pointFilters) {
-          const res = f.resolve(w, { base: r.base, acquired: this.acquired });
-          if (res) return res;
-        }
-        const tol = 8 * this.view.pixelSize();
-        const st = this.active!;
-        const fmt = (v: number) => formatLength(v, st.units);
-        // 극좌표 각도는 UCS X축 기준
-        const ua = currentUcs(st).angle;
-        const norm = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-        const pa = this.polarOn ? polarAngles(this.polarInc).map((a) => norm(a + ua)) : null;
-        if (this.otrackOn && this.acquired.length) {
-          // 획득점에서는 수평·수직(극좌표가 켜져 있으면 그 각도들도)
-          const t = objectTrack(this.acquired, w, pa ?? polarAngles(Math.PI / 2).map((a) => norm(a + ua)), tol, r.base, pa, fmt);
-          if (t) return { p: t.p, snap: null, track: t };
-        }
-        if (r.base && pa && !this.orthoOn) {
-          const t = polarTrack(r.base, w, pa, tol, fmt);
-          if (t) return { p: t.p, snap: null, track: t };
-        }
-      }
-      // 격자 스냅(객체 스냅·추적이 먼저)
-      if (r?.kind === 'point' && this.snapOn) w = this.snapToGrid(w);
-      if (r?.kind === 'point' && r.base && this.orthoOn) {
-        // 직교는 UCS 축 방향
-        const u = currentUcs(this.active);
-        const d = dirToUcs(u, { x: w.x - r.base.x, y: w.y - r.base.y });
-        const keep = Math.abs(d.x) >= Math.abs(d.y) ? { x: d.x, y: 0 } : { x: 0, y: d.y };
-        const c = Math.cos(u.angle);
-        const sn = Math.sin(u.angle);
-        return { p: { x: r.base.x + keep.x * c - keep.y * sn, y: r.base.y + keep.x * sn + keep.y * c }, snap: null };
+    if (r?.kind !== 'point') return { p: w, snap: null };
+    return this.dynLock(r, this.resolveRaw(r, w));
+  }
+
+  private resolveRaw(r: PointRequest, w: Pt): ResolvedPoint {
+    const st = this.active!;
+    const pk = this.picker();
+    const modes = this.snapModesFor(r);
+    if (pk && modes?.size) {
+      const aperture = 10 * this.view.pixelSize();
+      const s = findSnap(st.doc, pk, w, aperture, modes, r.base, { ext: this.extAnchors, par: this.parDirs.map((d) => d.dir) });
+      if (s) {
+        const p = { x: s.x, y: s.y };
+        // 연장선·평행은 정렬선을 함께 보인다
+        const track = s.lines?.length ? { p, lines: s.lines, tip: SNAP_NAMES[s.kind] ?? '' } : undefined;
+        return { p, snap: { p, kind: s.kind, handle: s.handle, handle2: s.handle2 }, track };
       }
     }
+    // 확장 지점: 객체 스냅이 없으면 고리가 추적·격자 스냅·직교를 대신할 수 있다(등각투영 제도)
+    for (const f of this.pointFilters) {
+      const res = f.resolve(w, { base: r.base, acquired: this.acquired });
+      if (res) return res;
+    }
+    const tol = 8 * this.view.pixelSize();
+    const fmt = (v: number) => formatLength(v, st.units);
+    // Shift를 누르는 동안 직교를 뒤집는다(켜져 있으면 끄고, 꺼져 있으면 켠다)
+    const ortho = this.orthoOn !== this.shiftHeld;
+    // 극좌표 각도는 UCS X축 기준
+    const ua = currentUcs(st).angle;
+    const norm = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const pa = this.polarOn && !ortho ? polarAngles(this.polarInc).map((a) => norm(a + ua)) : null;
+    // 획득점: 객체 스냅 추적이 켜져 있으면 획득한 점, 임시 추적점(TT)은 꺼져 있어도
+    const temp = this.tempTrack?.req === r ? this.tempTrack.points : [];
+    const acq = [...(this.otrackOn ? this.acquired : []), ...temp];
+    if (acq.length) {
+      // 획득점에서는 수평·수직(극좌표가 켜져 있으면 그 각도들도)
+      const t = objectTrack(acq, w, pa ?? polarAngles(Math.PI / 2).map((a) => norm(a + ua)), tol, r.base, pa, fmt);
+      if (t) return { p: t.p, snap: null, track: t };
+    }
+    if (r.base && pa) {
+      const t = polarTrack(r.base, w, pa, tol, fmt);
+      if (t) return { p: t.p, snap: null, track: t };
+    }
+    // 격자 스냅(객체 스냅·추적이 먼저)
+    if (this.snapOn) w = this.snapToGrid(w);
+    if (r.base && ortho) {
+      // 직교는 UCS 축 방향
+      const u = currentUcs(st);
+      const d = dirToUcs(u, { x: w.x - r.base.x, y: w.y - r.base.y });
+      const keep = Math.abs(d.x) >= Math.abs(d.y) ? { x: d.x, y: 0 } : { x: 0, y: d.y };
+      const c = Math.cos(u.angle);
+      const sn = Math.sin(u.angle);
+      return { p: { x: r.base.x + keep.x * c - keep.y * sn, y: r.base.y + keep.x * sn + keep.y * c }, snap: null };
+    }
     return { p: w, snap: null };
+  }
+
+  /** 동적 입력 칸을 잠갔으면 점을 그 값(거리·각도 또는 X·Y)에 묶는다 */
+  private dynLock(r: PointRequest, res: ResolvedPoint): ResolvedPoint {
+    const st = this.active;
+    if (!st || !this.dynOn || !this.dyn.locked) return res;
+    return { p: this.dyn.constrain(r.base, res.p, currentUcs(st), st.units.aunits), snap: null };
   }
 
   /** 스냅점 위에 잠시 머물면 추적용으로 획득(다시 머물면 해제) */
@@ -1242,28 +1579,107 @@ export class App {
           this.acquired.push({ p, label });
           if (this.acquired.length > 7) this.acquired.shift();
         }
-        this.view.overlay.acquired = this.acquired.map((a) => a.p);
+        this.refreshAcquired();
         this.view.requestOverlay();
       }, 450),
     };
+  }
+
+  /**
+   * 연장선(EXT)·평행(PAR) 획득: 선·호·열린 폴리선의 끝점 위에 잠시 머물면 연장선 획득점, 기준점이 있을 때 선분 위에 머물면 평행 방향.
+   * 같은 끝점·방향은 한 번만, 연장선은 네 개·평행은 두 개까지(오래된 것부터 버린다)
+   */
+  private updateExtPar(w: Pt): void {
+    const r = this.request;
+    const modes = this.snapModesFor(r);
+    const pk = this.picker();
+    const wantExt = !!modes?.has('ext');
+    const wantPar = !!modes?.has('par') && r?.kind === 'point' && !!r.base;
+    if (!pk || (!wantExt && !wantPar)) return this.dropExtCandidate();
+    const ap = 10 * this.view.pixelSize();
+    const a = wantExt ? findExtAnchor(pk, w, ap) : null;
+    const d = !a && wantPar ? segmentDirAt(pk, w, ap * 0.6) : null;
+    const key = a ? `e${a.p.x},${a.p.y}` : d ? `p${d.dir.x.toFixed(9)},${d.dir.y.toFixed(9)}` : '';
+    if (!key) return this.dropExtCandidate();
+    if (this.extCandidate?.key === key) return;
+    this.dropExtCandidate();
+    this.extCandidate = {
+      key,
+      timer: window.setTimeout(() => {
+        this.extCandidate = null;
+        if (this.request !== r) return;
+        if (a && !this.extAnchors.some((x) => samePt(x.p, a.p))) {
+          this.extAnchors.push(a);
+          if (this.extAnchors.length > 4) this.extAnchors.shift();
+        }
+        if (d && !this.parDirs.some((x) => Math.abs(x.dir.x * d.dir.y - x.dir.y * d.dir.x) < 1e-9)) {
+          this.parDirs.push(d);
+          if (this.parDirs.length > 2) this.parDirs.shift();
+        }
+        this.refreshAcquired();
+        this.view.requestOverlay();
+      }, 400),
+    };
+  }
+
+  private dropExtCandidate(): void {
+    if (this.extCandidate) clearTimeout(this.extCandidate.timer);
+    this.extCandidate = null;
+  }
+
+  /** 획득점 표시(+): 객체 스냅 추적·임시 추적점·연장선·평행 */
+  private refreshAcquired(): void {
+    const temp = this.tempTrack && this.tempTrack.req === this.request ? this.tempTrack.points : [];
+    this.view.overlay.acquired = [...this.acquired.map((a) => a.p), ...temp.map((a) => a.p), ...this.extAnchors.map((a) => a.p), ...this.parDirs.map((d) => d.at)];
   }
 
   private clearTracking(): void {
     this.acquired = [];
     if (this.acqCandidate) clearTimeout(this.acqCandidate.timer);
     this.acqCandidate = null;
+    this.extAnchors = [];
+    this.parDirs = [];
+    this.dropExtCandidate();
     this.view.overlay.acquired = [];
     this.view.overlay.tracks = [];
   }
 
-  private onMove(w: Pt, s: Pt, ev: PointerEvent): void {
+  /** Shift를 누르고 뗄 때(키보드): 임시 직교가 바로 보이게 마지막 커서 점을 다시 해석한다 */
+  private setShift(on: boolean): void {
+    if (this.shiftHeld === on) return;
+    this.shiftHeld = on;
+    const m = this.lastMove;
+    if (m && this.request?.kind === 'point') this.onMove(m.w, m.s, m.ev, true);
+  }
+
+  /** 동적 입력 칸(점 요청, 동적 입력이 켜져 있고 숫자·글 프롬프트가 아닐 때) */
+  private updateDynFields(p?: Pt): void {
+    const o = this.view.overlay;
+    const r = this.request;
+    const st = this.active;
+    const q = p ?? this.lastResolved ?? this.cursorWorld;
+    if (!st || !this.dynOn || r?.kind !== 'point' || r.allowText || !o.cursor || !q) {
+      o.dynFields = null;
+      return;
+    }
+    o.dynFields = this.dyn.fields(r.base, q, this.cmd.input.value, currentUcs(st), (v) => formatLength(v, st.units));
+  }
+
+  /** 마지막으로 해석한 커서 점(동적 입력 칸) */
+  private lastResolved: Pt | null = null;
+
+  private onMove(w: Pt, s: Pt, ev: PointerEvent, fromKey = false): void {
     const o = this.view.overlay;
     o.cursor = ev.pointerType === 'touch' ? null : s;
     this.cursorWorld = w;
+    this.lastMove = { w, s, ev };
+    if (!fromKey) this.shiftHeld = ev.shiftKey;
     const st = this.active;
     if (!st) return;
     const r = this.request;
+    if (r?.kind === 'point') this.updateExtPar(w);
     const { p, snap, track } = this.resolvePoint(w);
+    this.lastResolved = p;
     o.snap = snap;
     o.tracks = track ? track.lines.map((l) => ({ from: l.from, dir: l.dir })) : [];
     this.updateAcquire(snap);
@@ -1272,10 +1688,11 @@ export class App {
       const drag = this.dragPreviewOn(r);
       o.rubber = r.rubber && drag ? r.rubber(p) : r.base ? [{ pts: [r.base.x, r.base.y, p.x, p.y], dashed: false }] : [];
       o.ghost = r.ghost && drag ? r.ghost(p) : [];
+      this.updateDynFields(p);
       if (snap) o.tip = SNAP_NAMES[snap.kind] ?? null;
       else if (track) o.tip = track.tip;
       else if (!this.dynOn) o.tip = null;
-      else if (r.base) {
+      else if (r.base && !o.dynFields) {
         const d = Math.hypot(p.x - r.base.x, p.y - r.base.y);
         let a = (Math.atan2(p.y - r.base.y, p.x - r.base.x) * 180) / Math.PI;
         if (a < 0) a += 360;
@@ -1284,11 +1701,14 @@ export class App {
     }
     if (this.windowStart) {
       o.windowRect = { a: this.windowStart.screen, b: s };
+      this.updateSelectPreview();
     }
     const pu = toUcs(currentUcs(st), p);
     this.ui.setCoords(`${formatLength(pu.x, st.units)}, ${formatLength(pu.y, st.units)}, ${formatLength(0, st.units)}`);
+    // 다기능 그립: 선택한 객체의 그립 위(명령 없음)
+    if (!r && !this.running && !this.press) this.updateGripHover(w, ev);
     // 선택 미리보기(가만히 있을 때)
-    if (!r && !this.windowStart && ev.pointerType !== 'touch') {
+    if (!r && !this.windowStart && !this.press && ev.pointerType !== 'touch') {
       clearTimeout(this.hoverTimer);
       this.hoverTimer = window.setTimeout(() => this.updateHover(w), 40);
     } else if (r?.kind === 'entity' || r?.kind === 'select') {
@@ -1296,6 +1716,85 @@ export class App {
       this.hoverTimer = window.setTimeout(() => this.updateHover(w), 30);
     }
     this.view.requestOverlay();
+  }
+
+  // ------------------------------------------------------------------------- 다기능 그립
+
+  /** 커서 근처(6픽셀)의 그립 */
+  private gripAt(w: Pt, touch = false): { handle: string; id: string; point: Pt } | null {
+    if (!this.gripList.length) return null;
+    const gt = 6 * this.view.pixelSize() * (touch ? 2 : 1);
+    let best: { handle: string; id: string; point: Pt } | null = null;
+    let bd = Infinity;
+    for (const g of this.gripList) {
+      const d = Math.hypot(g.point.x - w.x, g.point.y - w.y);
+      if (d <= gt && d < bd) {
+        bd = d;
+        best = g;
+      }
+    }
+    return best;
+  }
+
+  /** 그립 위에 커서가 오면 분홍, 약 0.5초 머물면 다기능 그립 메뉴(항목이 있을 때). 메뉴는 그립에서 멀어지면 닫는다 */
+  private updateGripHover(w: Pt, ev: PointerEvent): void {
+    const g = ev.pointerType !== 'touch' && this.active?.selection.size ? this.gripAt(w) : null;
+    const cur = this.hoverGrip;
+    if (g && cur && samePt(cur.point, g.point)) return;
+    if (cur) {
+      clearTimeout(cur.timer);
+      if (cur.shown) {
+        // 커서를 메뉴로 옮기는 동안은 둔다
+        if (!g && Math.hypot(w.x - cur.point.x, w.y - cur.point.y) <= 40 * this.view.pixelSize()) return;
+        closeMenu();
+      }
+    }
+    if (!g && !cur) return;
+    const cx = ev.clientX;
+    const cy = ev.clientY;
+    this.hoverGrip = g ? { point: g.point, shown: false, timer: window.setTimeout(() => this.showGripMenu(g.point, cx, cy), 500) } : null;
+    this.view.overlay.hoverGrip = g ? g.point : null;
+    this.view.requestOverlay();
+  }
+
+  private clearGripHover(): void {
+    if (this.hoverGrip) clearTimeout(this.hoverGrip.timer);
+    this.hoverGrip = null;
+    if (this.view.overlay.hoverGrip) {
+      this.view.overlay.hoverGrip = null;
+      this.view.requestOverlay();
+    }
+  }
+
+  /** 그 점의 그립들에 고리(App.gripMenuProviders)가 붙인 메뉴 항목(같은 이름은 한 번) */
+  gripMenuItems(point: Pt): ContextMenuItem[] {
+    const st = this.active;
+    if (!st) return [];
+    const out: ContextMenuItem[] = [];
+    const seen = new Set<string>();
+    for (const g of this.gripList) {
+      if (!samePt(g.point, point)) continue;
+      const e = st.doc.entityIndex.get(g.handle);
+      if (!e) continue;
+      for (const pv of this.gripMenuProviders) {
+        for (const it of pv.items(g, e, st) ?? []) {
+          if (seen.has(it.label)) continue;
+          seen.add(it.label);
+          out.push({ label: it.label, run: () => void it.run() });
+        }
+      }
+    }
+    return out;
+  }
+
+  private showGripMenu(point: Pt, x: number, y: number): void {
+    const h = this.hoverGrip;
+    if (!h || !samePt(h.point, point) || this.request || this.running) return;
+    const items = this.gripMenuItems(point);
+    if (!items.length) return;
+    h.shown = true;
+    this.view.el.title = '';
+    showContextMenu(x + 6, y + 6, items);
   }
 
   /** 이 점 요청에서 명령의 끌기 미리보기(ghost·rubber)를 보이는지: 자동(2)이거나, 켜기(1)이고 이 요청에서 DRAG를 입력했을 때 */
@@ -1335,6 +1834,7 @@ export class App {
 
   private onClick(w: Pt, s: Pt, ev: PointerEvent): void {
     closeMenu();
+    this.press = null;
     const st = this.active;
     if (!st) return;
     if (st.msVp) {
@@ -1354,18 +1854,30 @@ export class App {
     }
     const r = this.request;
     if (r?.kind === 'point') {
+      this.shiftHeld = ev.shiftKey;
       const { p, snap } = this.resolvePoint(w);
+      // 스냅 재지정(NON 말고)이 잡히지 않은 곳이면 다시 묻는다
+      const ov = this.snapOverride?.req === r ? this.snapOverride.modes : null;
+      if (ov?.size && !snap && !(this.dynOn && this.dyn.locked)) {
+        this.cmd.print('객체 스냅 점을 찾지 못했습니다. 다시 지정하십시오.', 'err');
+        return;
+      }
       if (this.outsideLimits(p)) return;
       this.lastPoint = p;
-      r.resolve({ point: p, snap: snap ? { kind: snap.kind, handle: snap.handle, handle2: snap.handle2 } : null });
+      this.finishPoint(r, { point: p, snap: snap ? { kind: snap.kind, handle: snap.handle, handle2: snap.handle2 } : null, ...(ev.shiftKey ? { shift: true } : {}), ...(ev.ctrlKey || ev.metaKey ? { ctrl: true } : {}) });
       return;
     }
     const pk = this.picker();
     if (!pk) return;
     const tol = this.view.overlay.pickbox * this.view.pixelSize() * (ev.pointerType === 'touch' ? 3 : 1);
+    const shift = ev.shiftKey ? { shift: true as const } : {};
     if (r?.kind === 'entity') {
       const h = pk.pick(w.x, w.y, tol);
-      if (h) r.resolve({ handle: h, point: w });
+      if (h) r.resolve({ handle: h, point: w, ...shift });
+      else if (r.emptyPick) {
+        this.lastPoint = w;
+        r.resolve({ point: w, empty: true, ...shift });
+      }
       return;
     }
     if (r?.kind === 'select') {
@@ -1374,8 +1886,14 @@ export class App {
         return;
       }
       const pickIt = (h: string) => {
-        this.setSelection(this.expandPick([h]), r.remove || ev.shiftKey ? 'remove' : 'add');
         this.clearHover();
+        // 다중(M): 강조 없이 모았다가 Enter로 더한다
+        if (r.multiple) {
+          if (!r.multiple.includes(h)) r.multiple.push(h);
+          this.cmd.print('1개를 찾음');
+          return;
+        }
+        this.pickedInSelect(r, this.expandPick([h]), r.remove || ev.shiftKey ? 'remove' : 'add');
       };
       if (this.cycleMenu(pk, w, tol, ev, pickIt)) return;
       const h = pk.pick(w.x, w.y, tol);
@@ -1384,6 +1902,7 @@ export class App {
         return;
       }
       this.windowStart = { screen: s, world: w, viaClick: true };
+      this.previewAt = 0;
       this.view.overlay.windowRect = { a: s, b: s };
       this.view.requestOverlay();
       return;
@@ -1393,24 +1912,11 @@ export class App {
       this.finishWindow(this.windowStart.screen, s, ev);
       return;
     }
-    // 그립을 누르면 그립 편집
+    // 그립: 누르면 그립 편집, Shift+클릭은 핫 그립 더하기·빼기
     if (!r && st.selection.size && this.gripList.length && !this.busyCommand) {
-      const gt = 6 * this.view.pixelSize() * (ev.pointerType === 'touch' ? 2 : 1);
-      let best: Pt | null = null;
-      let bd = Infinity;
-      for (const g of this.gripList) {
-        const d = Math.hypot(g.point.x - w.x, g.point.y - w.y);
-        if (d <= gt && d < bd) {
-          bd = d;
-          best = g.point;
-        }
-      }
-      if (best) {
-        const bp = best;
-        const items = this.gripList.filter((g) => Math.hypot(g.point.x - bp.x, g.point.y - bp.y) <= 1e-9 * Math.max(1, Math.abs(bp.x) + Math.abs(bp.y))).map((g) => ({ handle: g.handle, id: g.id }));
-        this.hotGrip = { point: bp, items };
-        this.view.overlay.hotGrip = bp;
-        void this.run('GRIPEDIT');
+      const g = this.gripAt(w, ev.pointerType === 'touch');
+      if (g) {
+        this.clickGrip(g.point, ev.shiftKey);
         return;
       }
     }
@@ -1434,20 +1940,160 @@ export class App {
     }
     // 빈 곳: 창 선택 시작(클릭-클릭)
     this.windowStart = { screen: s, world: w, viaClick: true };
+    this.previewAt = 0;
     this.view.overlay.windowRect = { a: s, b: s };
     this.view.requestOverlay();
   }
 
+  /**
+   * 그립을 눌렀을 때. Shift면 핫 그립에 더하거나 빼고(명령은 시작하지 않는다), 아니면 그립 편집(GRIPEDIT):
+   * 누른 그립이 핫 그립 가운데 하나면 모든 핫 그립을, 아니면 그 그립 하나를(같은 점에 겹친 그립은 함께) 넘긴다
+   */
+  private clickGrip(point: Pt, shift: boolean): void {
+    this.clearGripHover();
+    closeMenu();
+    const i = this.hotGrips.findIndex((p) => samePt(p, point));
+    if (shift) {
+      if (i >= 0) this.hotGrips.splice(i, 1);
+      else this.hotGrips.push(point);
+      this.view.overlay.hotGrips = [...this.hotGrips];
+      this.view.requestOverlay();
+      return;
+    }
+    const points = i >= 0 ? [...this.hotGrips] : [point];
+    const items = this.gripList.filter((g) => points.some((p) => samePt(p, g.point))).map((g) => ({ handle: g.handle, id: g.id, point: g.point }));
+    this.hotGrips = [];
+    this.hotGrip = { point, items };
+    this.view.overlay.hotGrips = points.filter((p) => !samePt(p, point));
+    this.view.overlay.hotGrip = point;
+    void this.run('GRIPEDIT');
+  }
+
+  /** 객체 선택 프롬프트에서 고른 것(단계로 남기고, 단일이면 끝) */
+  private pickedInSelect(r: SelectRequest, hs: string[], mode: 'add' | 'remove'): void {
+    this.selectStep(r.history, hs, mode);
+    if (r.single && this.request === r) r.resolve({ handles: [...(this.active?.selection ?? [])] });
+  }
+
+  /** 왼쪽 버튼을 눌렀을 때(명령이 없거나 객체 선택 중): 그립·끌어 옮기기·창 가운데 무엇인지 정해 둔다 */
+  private onDown(w: Pt, s: Pt, ev: PointerEvent): void {
+    this.press = null;
+    const st = this.active;
+    const r = this.request;
+    if (!st || ev.pointerType === 'touch' || (r && r.kind !== 'select') || this.windowStart?.viaClick) return;
+    let kind: 'grip' | 'move' | 'window' = 'window';
+    if (!r && !this.running && st.selection.size) {
+      const onGrip = !!this.gripAt(w);
+      const hit = onGrip ? null : (this.picker()?.pick(w.x, w.y, this.view.overlay.pickbox * this.view.pixelSize()) ?? null);
+      kind = pressKind({ onGrip, hit, selected: st.selection, busy: false });
+    }
+    this.press = { kind, world: w, screen: s };
+    this.previewAt = 0;
+  }
+
   private onDrag(a: Pt, b: Pt, done: boolean, ev: PointerEvent): void {
-    if (!this.active || (this.request && this.request.kind !== 'select')) return;
+    const st = this.active;
+    // 그립을 눌러 끌기: 그립 편집을 시작하고, 놓은 곳을 그 점으로(클릭-클릭과 같은 결과)
+    if (this.press?.kind === 'grip') {
+      const pr = this.press;
+      if (!pr.started) {
+        pr.started = true;
+        const g = this.gripAt(pr.world);
+        if (g) this.clickGrip(g.point, false);
+      }
+      if (done) {
+        this.press = null;
+        if (this.request?.kind === 'point') this.onClick(this.view.screenToWorld(b.x, b.y), b, ev);
+      }
+      return;
+    }
+    if (!st || (this.request && this.request.kind !== 'select')) return;
+    const pr = this.press ?? (this.press = { kind: 'window', world: this.view.screenToWorld(a.x, a.y), screen: { x: a.x, y: a.y } });
+    this.clearGripHover();
+    if (pr.kind === 'move') {
+      this.dragMove(pr, b, done, ev);
+      return;
+    }
+    const remove = this.request?.kind === 'select' ? this.request.remove : false;
+    // 누른 채 끌기: 올가미(AutoCAD 기본), 끄면 직사각형 창
+    if (this.lassoOn && !this.windowStart) {
+      const lasso = pr.lasso ?? (pr.lasso = new Lasso(pr.screen));
+      lasso.add(b);
+      const o = this.view.overlay;
+      o.lasso = { pts: lasso.pts, mode: lasso.mode };
+      o.windowRect = null;
+      this.cmd.setPrompt(`${lasso.label} 옵션을 순환하려면 스페이스바를 누르십시오.`);
+      if (!done) {
+        this.updateSelectPreview();
+        this.view.requestOverlay();
+        return;
+      }
+      this.press = null;
+      o.lasso = null;
+      o.preview = [];
+      this.restorePrompt();
+      if (!lasso.usable) {
+        this.finishWindow(a, b, ev, remove);
+        return;
+      }
+      const pk = this.picker();
+      if (pk) this.applyPicked(this.expandPick(lasso.select(pk, (p) => this.view.screenToWorld(p.x, p.y))), ev.shiftKey || remove ? 'remove' : 'add');
+      this.view.requestOverlay();
+      return;
+    }
     this.view.overlay.windowRect = { a, b };
+    this.updateSelectPreview();
     this.view.requestOverlay();
-    if (done) this.finishWindow(a, b, ev, this.request?.kind === 'select' ? this.request.remove : false);
+    if (done) {
+      this.press = null;
+      this.finishWindow(a, b, ev, remove);
+    }
+  }
+
+  /** 올가미·창 선택이 끝난 뒤 명령행 프롬프트를 되돌린다 */
+  private restorePrompt(): void {
+    const r = this.request;
+    this.cmd.setPrompt(!r ? '' : r.kind === 'select' ? (r.remove ? '객체 제거:' : r.prompt) : this.promptOf(r));
+  }
+
+  /** 선택한 객체를 끌어 옮기기(놓을 때 Ctrl·⌘이면 복사) */
+  private dragMove(pr: NonNullable<App['press']>, b: Pt, done: boolean, ev: PointerEvent): void {
+    const st = this.active!;
+    const wb = this.view.screenToWorld(b.x, b.y);
+    const d = { x: wb.x - pr.world.x, y: wb.y - pr.world.y };
+    const copy = ev.ctrlKey || ev.metaKey;
+    const o = this.view.overlay;
+    if (!pr.ghost) {
+      const pk = this.picker();
+      pr.ghost = new DragGhost(pk ? [...st.selection].slice(0, 3000).map((h) => pk.geometry(h)) : []);
+      this.clearHover();
+    }
+    if (!done) {
+      o.ghost = pr.ghost.at(d.x, d.y);
+      o.rubber = [{ pts: [pr.world.x, pr.world.y, wb.x, wb.y], dashed: true }];
+      o.tip = copy ? '복사' : '이동';
+      this.view.requestOverlay();
+      return;
+    }
+    this.press = null;
+    o.ghost = [];
+    o.rubber = [];
+    o.tip = null;
+    this.view.requestOverlay();
+    void commitDrag(this, [...st.selection], d, copy);
+  }
+
+  /** 창·올가미로 고른 것을 선택에 더하거나 뺀다(객체 선택 중이면 단계로 남기고 단일이면 끝) */
+  private applyPicked(hits: string[], mode: 'add' | 'remove'): void {
+    const r = this.request;
+    if (r?.kind === 'select') this.pickedInSelect(r, hits, mode);
+    else this.setSelection(hits, mode);
   }
 
   private finishWindow(a: Pt, b: Pt, ev: PointerEvent, remove = false): void {
     this.windowStart = null;
     this.view.overlay.windowRect = null;
+    this.view.overlay.preview = [];
     const pk = this.picker();
     if (!pk) return;
     const wa = this.view.screenToWorld(a.x, a.y);
@@ -1455,8 +2101,31 @@ export class App {
     const crossing = b.x < a.x;
     const rect: [number, number, number, number] = [Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)];
     const hits = this.expandPick(pk.select(rect, crossing));
-    this.setSelection(hits, ev.shiftKey || remove ? 'remove' : 'add');
+    this.applyPicked(hits, ev.shiftKey || remove ? 'remove' : 'add');
     this.view.requestOverlay();
+  }
+
+  /** 창·올가미를 끄는 동안 걸릴 객체를 강조(선택 미리보기). 0.1초에 한 번, 300개까지 */
+  private updateSelectPreview(): void {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now < this.previewAt) return;
+    this.previewAt = now + 100;
+    const pk = this.picker();
+    const o = this.view.overlay;
+    if (!pk) return;
+    let hits: string[] = [];
+    if (o.lasso && this.press?.lasso?.usable) hits = this.press.lasso.select(pk, (p) => this.view.screenToWorld(p.x, p.y));
+    else if (o.windowRect) {
+      const { a, b } = o.windowRect;
+      const wa = this.view.screenToWorld(a.x, a.y);
+      const wb = this.view.screenToWorld(b.x, b.y);
+      if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) > 2) hits = pk.select([Math.min(wa.x, wb.x), Math.min(wa.y, wb.y), Math.max(wa.x, wb.x), Math.max(wa.y, wb.y)], b.x < a.x);
+    }
+    const sel = this.active?.selection;
+    o.preview = hits
+      .filter((h) => !sel?.has(h))
+      .slice(0, 300)
+      .map((h) => pk.geometry(h));
   }
 
   /** 선택 순환(SELECTIONCYCLING 2): 겹친 객체가 여럿이면 목록에서 고르게 한다. 목록을 띄웠으면 true */
@@ -1565,94 +2234,166 @@ export class App {
       void import('./editcmds').then((m) => m.editText(this, h));
       return;
     }
+    // 그 밖의 기본 편집(AutoCAD 2026 두 번 누르기 동작): 폴리선 PEDIT, 스플라인 SPLINEDIT, 블록 참조 BEDIT, 형상 객체 빠른 특성
+    const cmd = e ? dblClickCommand(e) : null;
     this.setSelection([h], 'replace');
+    if (cmd && this.findCommand(cmd)) {
+      void this.run(cmd);
+      return;
+    }
     this.ui.openPalette('props');
   }
 
+  /**
+   * 오른쪽 클릭(AutoCAD 2026 기본 SHORTCUTMENU 11): 명령 중 옵션이 없는 프롬프트·객체 선택은 바로 Enter, 옵션이 있으면 명령 모드 메뉴,
+   * Shift·Ctrl+오른쪽 클릭(점 프롬프트)은 객체 스냅 재지정 메뉴. 명령이 없으면 그립 위는 다기능 그립 메뉴, 그 밖은 편집·기본 모드 메뉴
+   */
   private onContext(w: Pt, _s: Pt, ev: MouseEvent): void {
     void _s;
-    void w;
+    closeMenu();
+    if (this.windowStart) {
+      this.windowStart = null;
+      this.view.overlay.windowRect = null;
+      this.view.overlay.preview = [];
+    }
+    const st = this.active;
     const r = this.request;
-    if (r?.kind === 'select') {
-      r.resolve({ handles: [...(this.active?.selection ?? [])] });
+    const providers = (mode: ContextMenuMode): ContextMenuItem[] => {
+      const out: ContextMenuItem[] = [];
+      const sel = st ? [...st.selection] : [];
+      for (const pv of this.contextMenuProviders) {
+        const its = pv.items({ mode, selection: sel, point: w, st });
+        if (its?.length) out.push({ separator: true }, ...its);
+      }
+      return out;
+    };
+    if (r?.kind === 'point' && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+      showContextMenu(ev.clientX, ev.clientY, [{ heading: '객체 스냅 재지정' }, ...osnapItems(this)]);
       return;
     }
     if (r) {
-      // 명령 중 오른쪽 클릭 = Enter(AutoCAD 기본 설정과 같은 바로가기 메뉴 대신)
-      const items = [{ label: 'Enter', run: () => r.resolve({ enter: true } as never) }, { label: '취소', kbd: 'Esc', run: () => this.cancel() }, { separator: true }];
-      for (const k of r.keywords) items.push({ label: `${k.label}(${k.key})`, run: () => r.resolve({ keyword: k.key } as never) } as never);
-      if (r.kind === 'point') {
-        items.push({ separator: true } as never, { heading: '객체 스냅 재지정' } as never);
-        for (const kind of ['end', 'mid', 'cen', 'qua', 'int', 'per', 'nea', 'ins', 'nod'] as SnapKind[]) {
-          items.push({ label: SNAP_NAMES[kind]!, run: () => this.snapOnce(kind) } as never);
-        }
+      if (r.kind === 'select' || !r.keywords.length) {
+        this.onInput('', true);
+        return;
       }
-      showMenu(ev.clientX, ev.clientY, items as never);
+      showContextMenu(ev.clientX, ev.clientY, commandMenu(this, r, providers('command')));
       return;
     }
-    const st = this.active;
-    const sel = st?.selection.size ?? 0;
-    const one = sel === 1 ? st!.doc.entityIndex.get([...st!.selection][0]!) : undefined;
-    const dynRef: boolean = !!st && isDynamicReference(st.doc, one);
-    showMenu(ev.clientX, ev.clientY, [
-      ...(this.lastCommand ? [{ label: `반복 ${this.lastCommand}`, run: () => void this.run(this.lastCommand!) }, { separator: true }] : []),
-      { label: '특성', icon: 'props', kbd: 'Ctrl+1', disabled: !sel, run: () => this.ui.openPalette('props') },
-      { label: '리스트', icon: 'list', disabled: !sel, run: () => void this.run('LIST') },
-      { label: '선택한 객체로 확대', icon: 'zoomWindow', disabled: !sel, run: () => void this.run('ZOOM', 'O') },
-      { label: '선택 해제', disabled: !sel, kbd: 'Esc', run: () => this.clearSelection() },
-      { separator: true },
-      { label: '붙여넣기', kbd: 'Ctrl+V', run: () => void this.run('PASTECLIP') },
-      { label: '블록으로 붙여넣기', kbd: 'Ctrl+Shift+V', run: () => void this.run('PASTEBLOCK') },
-      { label: '원래 좌표에 붙여넣기', run: () => void this.run('PASTEORIG') },
-      ...(dynRef
-        ? [
-            { separator: true },
-            { label: '동적 블록 특성', run: () => void this.run('DYNPROPS') },
-            { label: '블록 재설정', run: () => void this.run('RESETBLOCK') },
-          ]
-        : []),
-      { separator: true },
-      { label: '객체 격리', disabled: !sel, run: () => void this.run('ISOLATEOBJECTS') },
-      { label: '객체 숨기기', disabled: !sel, run: () => void this.run('HIDEOBJECTS') },
-      { label: '객체 격리 끝', disabled: !st?.hiddenObjects.size, run: () => void this.run('UNISOLATEOBJECTS') },
-      { separator: true },
-      { label: '거리 측정', icon: 'dist', run: () => void this.run('DIST') },
-      { label: '면적 측정', icon: 'area', run: () => void this.run('AREA') },
-      { label: '좌표 확인', icon: 'id', run: () => void this.run('ID') },
-      { separator: true },
-      { label: '전체 보기', icon: 'extents', kbd: '휠 두 번', run: () => this.view.zoomExtents() },
-      { label: '이전 화면', icon: 'zoomPrev', run: () => this.view.zoomPrevious() },
-      { label: '모두 선택', icon: 'selectAll', kbd: 'Ctrl+A', run: () => void this.run('SELECTALL') },
-    ]);
-  }
-
-  private snapOnce(kind: SnapKind): void {
-    const prev = new Set(this.snapModes);
-    const prevOn = this.osnapOn;
-    this.snapModes.clear();
-    this.snapModes.add(kind);
-    this.osnapOn = true;
-    const r = this.request;
-    if (r?.kind === 'point') {
-      const orig = r.resolve;
-      r.resolve = (res) => {
-        this.snapModes.clear();
-        for (const k of prev) this.snapModes.add(k);
-        this.osnapOn = prevOn;
-        orig(res);
-      };
+    if (st && !this.running && st.selection.size) {
+      const g = this.gripAt(w);
+      const items = g ? this.gripMenuItems(g.point) : [];
+      if (items.length) {
+        this.clearGripHover();
+        showContextMenu(ev.clientX, ev.clientY, items);
+        return;
+      }
     }
+    const sel = st ? [...st.selection] : [];
+    const extra: ContextMenuItem[] = [];
+    if (st && sel.length === 1 && isDynamicReference(st.doc, st.doc.entityIndex.get(sel[0]!))) {
+      extra.push({ label: '동적 블록 특성', run: () => void this.run('DYNPROPS') }, { label: '블록 재설정', run: () => void this.run('RESETBLOCK') });
+    }
+    extra.push(...providers(sel.length ? 'edit' : 'default'));
+    showContextMenu(ev.clientX, ev.clientY, idleMenu(this, w, extra).items);
   }
 
   // -------------------------------------------------------------------------
   // 키보드
   // -------------------------------------------------------------------------
 
+  /**
+   * 명령행 입력란이 키를 처리하기 전에 본다: 올가미 중 스페이스바(종류 순환), 동적 입력의 Tab(칸 잠그고 옮기기).
+   * 처리했으면 true(명령행은 기본 동작을 막고 넘어간다)
+   */
+  private interceptKey(ev: KeyboardEvent): boolean {
+    if (ev.key === ' ' && this.press?.lasso) return this.cycleLasso();
+    if (ev.key === 'Tab' && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !this.cmd.suggesting) return this.dynTab();
+    return false;
+  }
+
+  /** 올가미를 끄는 중 스페이스바: 걸침 → 윈도우 → 울타리 */
+  private cycleLasso(): boolean {
+    const l = this.press?.lasso;
+    if (!l) return false;
+    l.cycle();
+    this.view.overlay.lasso = { pts: l.pts, mode: l.mode };
+    this.cmd.setPrompt(`${l.label} 옵션을 순환하려면 스페이스바를 누르십시오.`);
+    this.previewAt = 0;
+    this.updateSelectPreview();
+    this.view.requestOverlay();
+    return true;
+  }
+
+  /** 동적 입력의 Tab: 지금 칸에 친 값을 잠그고 다음 칸으로(점 요청에서만, 그 밖에는 Tab을 넘긴다) */
+  private dynTab(): boolean {
+    const r = this.request;
+    const st = this.active;
+    if (!st || !this.dynOn || r?.kind !== 'point' || r.allowText) return false;
+    if (this.dyn.tab(this.cmd.input.value, !!r.base, st.units.aunits)) this.cmd.clearInput();
+    const m = this.lastMove;
+    if (m) this.onMove(m.w, m.s, m.ev, true);
+    else {
+      this.updateDynFields();
+      this.view.requestOverlay();
+    }
+    return true;
+  }
+
+  /** Enter(Ctrl+J·Ctrl+M·도면 위 Enter): 명령 중이면 입력, 아니면 직전 명령 반복 */
+  private pressEnter(inCmd: boolean): void {
+    if (inCmd) this.cmd.submitCurrent();
+    else if (this.request) this.onInput('', true);
+    else if (this.lastCommand) void this.run(this.lastCommand);
+  }
+
+  /** Ctrl 단축키(keys.ts)의 동작 */
+  private ctrlKey(a: NonNullable<ReturnType<typeof ctrlAction>>, inCmd: boolean): void {
+    if ('enter' in a) return this.pressEnter(inCmd);
+    if ('cancel' in a) {
+      if (inCmd) this.cmd.escape();
+      else this.cancel();
+      return;
+    }
+    if ('run' in a) {
+      void this.run(a.run);
+      return;
+    }
+    switch (a.toggle) {
+      case 'grid':
+        return this.toggleGrid();
+      case 'snap':
+        return this.toggleSnap();
+      case 'ortho':
+        return this.toggleOrtho();
+      case 'osnap':
+        return this.toggleOsnap();
+      case 'polar':
+        return this.togglePolar();
+      case 'pickstyle':
+        void import('./util2-select').then((m) => {
+          const v = m.pickstyle() ^ 1;
+          m.setPickstyle(v);
+          this.cmd.print(`<그룹 ${v & 1 ? '켜기' : '끄기'}>`);
+        });
+        return;
+    }
+  }
+
   private onKey(ev: KeyboardEvent): void {
     const t = ev.target as HTMLElement | null;
     const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
     const inCmd = t === this.cmd.input;
     const mod = ev.ctrlKey || ev.metaKey;
+    if (ev.key === 'Shift') this.setShift(true);
+    // 명령행 입력란의 키는 명령행이 먼저 처리했다(intercept). 여기서는 막힌 키를 다시 보지 않는다
+    if (inCmd && ev.defaultPrevented && (ev.key === ' ' || ev.key === 'Tab')) return;
+    // Ctrl 제도 보조·입력 키(글을 고치는 다른 입력란에서는 그 입력란의 키)
+    const ca = !typing || inCmd ? ctrlAction(ev) : null;
+    if (ca) {
+      ev.preventDefault();
+      this.ctrlKey(ca, inCmd);
+      return;
+    }
     // 기능 키는 어디서나
     switch (ev.key) {
       case 'F1':
@@ -1810,10 +2551,13 @@ export class App {
       this.cancel();
       return;
     }
+    if (this.interceptKey(ev)) {
+      ev.preventDefault();
+      return;
+    }
     if ((ev.key === 'Enter' || ev.key === ' ') && !mod) {
       ev.preventDefault();
-      if (this.request) this.onInput('');
-      else if (this.lastCommand) void this.run(this.lastCommand);
+      this.pressEnter(false);
       return;
     }
     if (ev.key === 'Delete' || (ev.key === 'Backspace' && !this.request)) {
@@ -1876,6 +2620,7 @@ export class App {
     this.dynOn = !this.dynOn;
     if (!this.dynOn) {
       this.view.overlay.dynInput = null;
+      this.view.overlay.dynFields = null;
       this.view.requestOverlay();
     }
     this.cmd.print(`<동적 입력 ${this.dynOn ? '켜기' : '끄기'}>`);
@@ -1923,5 +2668,48 @@ export class App {
   /** 선택 하이라이트 형상(오버레이) */
   geometryOf(handle: string): OverlayGeom | null {
     return this.picker()?.geometry(handle) ?? null;
+  }
+}
+
+/** 최근 목록 앞에 넣는다(같은 것은 앞으로, 열 개까지) */
+function remember(list: string[], v: string): void {
+  const t = v.trim();
+  if (!t) return;
+  const i = list.indexOf(t);
+  if (i >= 0) list.splice(i, 1);
+  list.unshift(t);
+  if (list.length > 10) list.length = 10;
+}
+
+/** 같은 점(그립·획득점 비교) */
+function samePt(a: Pt, b: Pt): boolean {
+  return Math.abs(a.x - b.x) <= 1e-9 * Math.max(1, Math.abs(a.x) + Math.abs(a.y)) && Math.abs(a.y - b.y) <= 1e-9 * Math.max(1, Math.abs(a.x) + Math.abs(a.y));
+}
+
+/** 두 번 누른 객체의 기본 편집 명령(표·참조·호 문자·여러 줄·해치·문자는 앞에서 처리). 없으면 null(특성 팔레트) */
+export function dblClickCommand(e: Entity): string | null {
+  switch (e.type) {
+    case 'LWPOLYLINE':
+    case 'POLYLINE':
+      return 'PEDIT';
+    case 'SPLINE':
+      return e.helix ? 'QUICKPROPERTIES' : 'SPLINEDIT';
+    case 'INSERT':
+      return 'BEDIT';
+    case 'LINE':
+    case 'CIRCLE':
+    case 'ARC':
+    case 'ELLIPSE':
+    case 'POINT':
+    case 'RAY':
+    case 'XLINE':
+    case 'SOLID':
+    case 'TRACE':
+    case '3DFACE':
+    case 'LEADER':
+    case 'WIPEOUT':
+      return 'QUICKPROPERTIES';
+    default:
+      return null;
   }
 }

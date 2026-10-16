@@ -28,8 +28,21 @@ export function selectMethodOf(text: string): SelMethod | null {
   return ALIASES[text.trim().replace(/^_+/, '').toUpperCase()] ?? null;
 }
 
+/**
+ * 선택 프롬프트의 그 밖의 옵션(app.ts requestSelection이 처리): 그룹(G) 이름으로, 다중(M) 강조 없이 모았다가 Enter로,
+ * 자동(AU) 객체를 누르면 고르고 빈 곳이면 창(기본 동작), 단일(SI) 한 번 고르면 끝, 명령 취소(U) 마지막 고르기를 되돌린다.
+ * 명령이 같은 열쇠를 쓰면 명령의 키워드가 먼저다.
+ */
+export const SELECT_OPTIONS: readonly Keyword[] = [
+  { key: 'G', label: '그룹' },
+  { key: 'M', label: '다중' },
+  { key: 'AU', label: '자동' },
+  { key: 'SI', label: '단일' },
+  { key: 'U', label: '명령 취소' },
+];
+
 /** 잘못된 선택 입력에 보이는 안내 */
-export const SELECT_HELP = '점 또는 윈도우(W)/최종(L)/걸침(C)/상자(BOX)/모두(ALL)/울타리(F)/윈도우 폴리곤(WP)/걸침 폴리곤(CP)/추가(A)/제거(R)/이전(P)이(가) 필요함';
+export const SELECT_HELP = '점 또는 윈도우(W)/최종(L)/걸침(C)/상자(BOX)/모두(ALL)/울타리(F)/윈도우 폴리곤(WP)/걸침 폴리곤(CP)/그룹(G)/추가(A)/제거(R)/다중(M)/이전(P)/명령 취소(U)/자동(AU)/단일(SI)이(가) 필요함';
 
 // --------------------------------------------------------------------------- 대화
 
