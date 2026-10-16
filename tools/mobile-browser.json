@@ -1,0 +1,1 @@
+{"browser":{"browserName":"chromium","launchOptions":{"channel":"chrome","headless":true,"args":["--no-sandbox","--enable-unsafe-swiftshader"]},"contextOptions":{"viewport":{"width":390,"height":844},"isMobile":true,"hasTouch":true,"deviceScaleFactor":1}}}
