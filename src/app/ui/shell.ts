@@ -110,6 +110,17 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           [
             { cmd: 'HELIX', label: '나선', icon: 'spline', tip: '나선 (HELIX)' },
             { cmd: 'SKETCH', label: '스케치', icon: 'pline', tip: '마우스로 그리는 자유 곡선 (SKETCH)' },
+            {
+              cmd: '3DPOLY',
+              label: '3D 폴리선',
+              icon: 'pline',
+              tip: '3D 폴리선 (3P)',
+              menu: [
+                { label: '3D 폴리선', cmd: '3DPOLY', icon: 'pline' },
+                { label: '3D 면', cmd: '3DFACE', icon: 'polygon' },
+                { label: '트레이스', cmd: 'TRACE', icon: 'pline' },
+              ],
+            },
           ],
           [
             { cmd: 'REVCLOUD', label: '구름형 수정 기호', icon: 'polygon', tip: '구름형 수정 기호 (REVCLOUD)' },
@@ -141,6 +152,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
               menu: [
                 { label: '복사', cmd: 'COPY', icon: 'copy' },
                 { label: '여러 번 복사', cmd: 'COPYM', icon: 'copy' },
+                { label: '이동·복사·회전·축척', cmd: 'MOCORO', icon: 'move' },
               ],
             },
             { cmd: 'STRETCH', label: '신축', icon: 'stretch', tip: '신축 (S)' },
@@ -176,6 +188,7 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
                 { label: '직사각형 배열', cmd: 'ARRAYRECT', icon: 'arrayRect' },
                 { label: '원형 배열', cmd: 'ARRAYPOLAR', icon: 'arrayPolar' },
                 { label: '경로 배열', cmd: 'ARRAYPATH', icon: 'spline' },
+                { label: '배열 대화상자', cmd: 'ARRAYCLASSIC', icon: 'settings' },
                 { label: '배열 편집', cmd: 'ARRAYEDIT', icon: 'arrayRect' },
                 { label: '배열 원본 편집 저장', cmd: 'ARRAYCLOSE S', icon: 'save' },
                 { label: '배열 원본 편집 취소', cmd: 'ARRAYCLOSE D', icon: 'close' },
@@ -700,7 +713,18 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
           ],
           [
             { cmd: 'UNITS', label: '단위', icon: 'coord' },
+            { cmd: 'DWGPROPS', label: '도면 특성', icon: 'props', tip: '제목·작성자·키워드·사용자 특성 (DWGPROPS)' },
             { cmd: 'DWGINFO', label: '도면 정보', icon: 'info' },
+          ],
+        ],
+      },
+      {
+        title: '사용자화',
+        cols: [
+          [
+            { cmd: 'OPTIONS', label: '옵션', icon: 'settings', noDoc: true, tip: '열기 및 저장·화면표시·선택·제도 설정 (OP)' },
+            { cmd: 'SYSVDLG', label: '시스템 변수', icon: 'list', noDoc: true, tip: '시스템 변수 찾기·편집 (SYSVDLG)' },
+            { cmd: 'ALIASEDIT', label: '별칭 편집', icon: 'text', noDoc: true, tip: '명령 별칭 추가·편집 (ALIASEDIT)' },
           ],
         ],
       },
@@ -713,11 +737,12 @@ const RIBBON: { tab: string; panels: Panel[] }[] = [
         title: '플롯',
         large: [
           { cmd: 'PLOT', label: '플롯', icon: 'print', tip: '용지·축척·플롯 스타일을 골라 PDF로 출력 (Ctrl+P)' },
-          { cmd: 'PUBLISH', label: '모든 배치', icon: 'exportPdf', tip: '모든 배치를 PDF 하나로' },
+          { cmd: 'PUBLISH', label: '게시', icon: 'exportPdf', tip: '고른 배치를 PDF 하나로 (PUBLISH)' },
           { cmd: 'ETRANSMIT', label: '전자 전송', icon: 'folder', tip: '도면과 참조 파일을 zip 하나로' },
         ],
         cols: [
           [
+            { cmd: 'PAGESETUP', label: '페이지 설정 관리자', icon: 'paper', tip: '명명된 페이지 설정 만들기·고치기·현재로 설정 (PAGESETUP)' },
             { cmd: 'PSETUPIN', label: '페이지 설정 가져오기', icon: 'paper', tip: '다른 도면의 페이지 설정 가져오기 (PSETUPIN)' },
             { cmd: 'PLOTSTAMP', label: '플롯 스탬프', icon: 'settings', tip: '출력에 도면 이름·날짜 등을 찍기 (PLOTSTAMP)' },
             { cmd: 'PLOTSTYLE', label: '플롯 스타일', icon: 'props', tip: '객체의 이름 있는 플롯 스타일 (PLOTSTYLE)' },
@@ -984,13 +1009,15 @@ export class Shell implements UiHooks {
         { label: 'PNG로 내보내기', icon: 'exportPng', disabled: !app.active, run: () => void app.run('PNGOUT') },
         { label: 'SVG로 내보내기', icon: 'exportSvg', disabled: !app.active, run: () => void app.run('SVGOUT') },
         { label: '플롯(PDF)…', icon: 'print', kbd: 'Ctrl+P', disabled: !app.active, run: () => void app.run('PLOT') },
-        { label: '모든 배치를 PDF로', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
+        { label: '게시(배치를 PDF로)…', icon: 'exportPdf', disabled: !app.active, run: () => void app.run('PUBLISH') },
         { separator: true },
+        { label: '도면 특성…', icon: 'props', disabled: !app.active, run: () => void app.run('DWGPROPS') },
         { label: '도면 정보', icon: 'info', disabled: !app.active, run: () => void app.run('DWGINFO') },
         { label: '닫기', icon: 'close', disabled: !app.active, run: () => app.active && app.close(app.active) },
         { label: '모두 닫기', icon: 'close', disabled: !app.active, run: () => void app.run('CLOSEALL') },
         { label: '모두 저장', icon: 'save', disabled: !app.active, run: () => void app.run('SAVEALL') },
         { separator: true },
+        { label: '옵션…', icon: 'settings', run: () => void app.run('OPTIONS') },
         { label: '단축키·도움말', icon: 'help', kbd: 'F1', run: () => void app.run('HELP') },
         { label: 'OpenCAD 정보', icon: 'info', run: () => void app.run('ABOUT') },
       ]);
@@ -1391,7 +1418,7 @@ export class Shell implements UiHooks {
           if (paper && st.displaySpace !== key) await app.setSpace(l.blockName);
           void app.run(cmd, arg);
         };
-        showMenu(ev.clientX, ev.clientY - (paper ? 190 : 80), [
+        showMenu(ev.clientX, ev.clientY - (paper ? 214 : 80), [
           { label: '새 배치', run: () => void app.run('LAYOUT', 'N') },
           ...(paper
             ? [
@@ -1399,6 +1426,7 @@ export class Shell implements UiHooks {
                 { label: '이름 바꾸기…', run: () => void go('LAYOUT', 'R') },
                 { label: '삭제', run: () => void go('LAYOUT', 'D') },
                 { label: '다른 이름으로 저장…', run: () => void go('LAYOUT', 'SA') },
+                { label: '이동 또는 복사…', run: () => void app.run('LAYOUTMOVE', label) },
               ]
             : []),
           { label: '템플릿에서…', run: () => void app.run('LAYOUT', 'T') },
